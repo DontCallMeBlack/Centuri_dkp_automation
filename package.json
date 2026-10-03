@@ -1,0 +1,27 @@
+{
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "bcryptjs": "^3.0.3",
+    "googleapis": "^183.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.51.0",
+    "mongoose": "^9.10.4",
+    "next": "^16.3.8",
+    "postcss": "^8.5.28",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "26.6.4",
+    "@types/react": "19.3.0",
+    "typescript": "7.0.2"
+  }
+}
