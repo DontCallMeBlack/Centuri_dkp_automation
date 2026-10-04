@@ -16,7 +16,7 @@ export async function GET() {
     await dbConnect();
     const [pendingUsers, members, roster] = await Promise.all([
       User.find({ status: 'pending' }).select('_id nickname role status sheetRecordName').sort({ createdAt: 1 }).lean(),
-      User.find({ status: 'approved', role: { $in: MEMBER_ROLES } })
+      User.find({ status: 'approved' })
         .select('_id nickname role status sheetRecordName')
         .sort({ nickname: 1 })
         .lean(),
@@ -64,8 +64,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, message: 'Clan member account removed' });
     }
 
-    if (action === 'link' && (target.status !== 'approved' || !(MEMBER_ROLES as readonly string[]).includes(target.role))) {
-      return NextResponse.json({ error: 'Only approved clan member accounts can be linked' }, { status: 400 });
+    if (action === 'link' && target.status !== 'approved') {
+      return NextResponse.json({ error: 'Only approved accounts can be linked' }, { status: 400 });
     }
     if (action === 'approve' && target.status !== 'pending') {
       return NextResponse.json({ error: 'Only pending requests can be approved' }, { status: 400 });

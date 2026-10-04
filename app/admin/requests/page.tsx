@@ -233,8 +233,8 @@ export default function AdminRequestsPage() {
 
         {section === 'members' && (
           <section className="mt-6">
-            <h2 className="text-lg font-bold text-white">Approved clan accounts</h2>
-            <p className="mb-4 mt-1 text-sm text-slate-400">Change a member’s sheet mapping or remove their app account.</p>
+            <h2 className="text-lg font-bold text-white">Approved accounts</h2>
+            <p className="mb-4 mt-1 text-sm text-slate-400">Link any account to a sheet name. Removal is available for clan members.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
               <div className="divide-y divide-slate-800 border-y border-slate-800">
                 {members.map((member) => (
@@ -256,9 +256,11 @@ export default function AdminRequestsPage() {
                       <button disabled={busyId === member._id} onClick={() => linkMember(member._id)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50">
                         <UserCheck className="h-4 w-4" /> Link
                       </button>
-                      <button disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} className="inline-flex items-center justify-center rounded-lg border border-red-500/40 px-3 py-2 text-red-300 hover:bg-red-500/10 disabled:opacity-50">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {(member.role === 'clansman' || member.role === 'guardian') && (
+                        <button disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} className="inline-flex items-center justify-center rounded-lg border border-red-500/40 px-3 py-2 text-red-300 hover:bg-red-500/10 disabled:opacity-50">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </article>
                 ))}

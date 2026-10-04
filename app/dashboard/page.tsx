@@ -167,7 +167,7 @@ export default function DashboardPage() {
             <p className="text-lg font-bold text-white">
               {currentUserRecord ? `${currentUserRecord.available} pts` : 'Not Linked Yet'}
             </p>
-            <p className="text-[10px] text-slate-500">{currentUserRecord ? `Linked to: ${currentUserRecord.owner}` : 'Contact Chief to map account'}</p>
+            <p className="text-[10px] text-slate-500">{currentUserRecord ? `Linked to: ${currentUserRecord.owner}` : userSession?.role === 'chief' || userSession?.role === 'general' ? 'Link your account in Clan administration' : 'Ask a Chief or General to link your account'}</p>
           </div>
         </div>
 
