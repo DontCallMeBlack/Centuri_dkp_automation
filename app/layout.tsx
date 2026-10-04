@@ -4,7 +4,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Centuri DKP — Celtic Heroes',
-  description: 'Clan DKP Management System for Axiom',
+  description: 'Clan DKP Management System for Centuri',
 };
 
 export default function RootLayout({
