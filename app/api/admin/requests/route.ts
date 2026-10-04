@@ -10,7 +10,9 @@ const MEMBER_ROLES = ['clansman', 'guardian'] as const;
 export async function GET() {
   const manager = await getSessionUser();
   if (!manager) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageClan(manager.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+  if (!canManageClan(manager.role)) {
+    return NextResponse.json({ error: 'This page is limited to Chief and General accounts', role: manager.role }, { status: 403 });
+  }
 
   try {
     await dbConnect();
