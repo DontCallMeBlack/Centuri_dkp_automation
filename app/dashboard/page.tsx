@@ -133,7 +133,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center space-x-3">
-          {userSession?.role === 'chief' && (
+          {(userSession?.role === 'chief' || userSession?.role === 'general') && (
             <button
               onClick={() => router.push('/admin/requests')}
               className="flex items-center space-x-2 text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 px-3.5 py-2 rounded-xl border border-indigo-500/40 transition-all"
@@ -224,7 +224,7 @@ export default function DashboardPage() {
         {activeTab === 'dkp' ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left Column: Boss & Submit Form (Only shown to Chief or kept accessible) */}
-            <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl h-fit space-y-6 shadow-xl">
+            {(userSession?.role === 'chief' || userSession?.role === 'general' || userSession?.role === 'guardian') && <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl h-fit space-y-6 shadow-xl">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-indigo-500" />
                 Log Boss Kill
@@ -277,10 +277,10 @@ export default function DashboardPage() {
                   </div>
                 )}
               </form>
-            </div>
+            </div>}
 
             {/* Right Column: Searchable Roster Selector */}
-            <div className="lg:col-span-2 bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl space-y-5 shadow-xl">
+            <div className={`${userSession?.role === 'chief' || userSession?.role === 'general' || userSession?.role === 'guardian' ? 'lg:col-span-2' : 'lg:col-span-3'} bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl space-y-5 shadow-xl`}>
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h2 className="text-base font-bold text-white">Clan Roster Selection</h2>
