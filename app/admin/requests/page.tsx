@@ -38,6 +38,7 @@ export default function AdminRequestsPage() {
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [selectedBoss, setSelectedBoss] = useState('Base');
   const [loading, setLoading] = useState(true);
+  const [accessRole, setAccessRole] = useState('');
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -46,11 +47,15 @@ export default function AdminRequestsPage() {
   const loadData = async () => {
     try {
       const res = await fetch('/api/admin/requests');
-      if (res.status === 401 || res.status === 403) {
-        router.push('/dashboard');
+      const data = await res.json();
+      if (res.status === 401) {
+        router.push('/login');
         return;
       }
-      const data = await res.json();
+      if (res.status === 403) {
+        setAccessRole(data.role || 'member');
+        return;
+      }
       if (!res.ok) throw new Error(data.error || 'Failed to load clan administration data');
       setPendingUsers(data.pendingUsers);
       setMembers(data.members);
@@ -150,6 +155,19 @@ export default function AdminRequestsPage() {
 
   if (loading) {
     return <div className="min-h-screen bg-[#07090e] p-8 text-sm text-slate-400">Loading clan administration...</div>;
+  }
+
+  if (accessRole) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#07090e] px-5 text-slate-100">
+        <section className="w-full max-w-md border-y border-slate-800 py-8 text-center">
+          <Shield className="mx-auto h-8 w-8 text-amber-300" />
+          <h1 className="mt-4 text-lg font-bold text-white">Manager access required</h1>
+          <p className="mt-2 text-sm text-slate-400">This page is for Chief and General accounts. Your current role is <span className="capitalize text-slate-200">{accessRole}</span>.</p>
+          <button onClick={() => router.push('/dashboard')} className="mt-5 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800">Back to dashboard</button>
+        </section>
+      </main>
+    );
   }
 
   return (

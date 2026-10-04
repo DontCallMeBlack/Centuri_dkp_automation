@@ -118,7 +118,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#07090e] text-slate-100 flex flex-col">
       {/* Top Navigation Bar */}
-      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex justify-between items-center sticky top-0 z-30">
+      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-4 sm:px-6 py-4 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center sticky top-0 z-30">
         <div className="flex items-center space-x-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center">
             <Shield className="w-5 h-5 text-indigo-400" />
@@ -127,12 +127,12 @@ export default function DashboardPage() {
             <h1 className="font-bold tracking-tight text-white text-base">Centuri Clan</h1>
             <p className="text-xs text-slate-400">
               Welcome, <span className="text-indigo-400 font-semibold">{userSession?.nickname}</span>
-              {userSession?.role === 'chief' && ' (Chief)'}
+              {userSession?.role && <span className="capitalize"> ({userSession.role})</span>}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center justify-end space-x-3">
           {(userSession?.role === 'chief' || userSession?.role === 'general') && (
             <button
               onClick={() => router.push('/admin/requests')}
@@ -168,6 +168,11 @@ export default function DashboardPage() {
               {currentUserRecord ? `${currentUserRecord.available} pts` : 'Not Linked Yet'}
             </p>
             <p className="text-[10px] text-slate-500">{currentUserRecord ? `Linked to: ${currentUserRecord.owner}` : userSession?.role === 'chief' || userSession?.role === 'general' ? 'Link your account in Clan administration' : 'Ask a Chief or General to link your account'}</p>
+            {!currentUserRecord && (userSession?.role === 'chief' || userSession?.role === 'general') && (
+              <button onClick={() => router.push('/admin/requests')} className="mt-2 text-xs font-semibold text-indigo-300 hover:text-indigo-200">
+                Open clan administration
+              </button>
+            )}
           </div>
         </div>
 
