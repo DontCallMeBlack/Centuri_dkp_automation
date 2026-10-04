@@ -1,12 +1,7 @@
 // app/api/dkp/route.ts
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/mongodb';
-import User from '@/lib/models/User';
 import { getSheetRoster, updatePlayerDKP } from '@/lib/googleSheets';
-import jwt from 'jsonwebtoken';
-import { cookies } from 'next/headers';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+import { getAuthenticatedUser } from '@/lib/session';
 
 const BOSS_POINTS: { [key: string]: number } = {
   Base: 1,
@@ -17,37 +12,26 @@ const BOSS_POINTS: { [key: string]: number } = {
   Crom: 12,
 };
 
-// Helper to verify user session from cookies (await cookies() for Next.js 15+)
-async function getUserFromCookie() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('token')?.value;
-  if (!token) return null;
-  try {
-    return jwt.verify(token, JWT_SECRET) as { userId: string; nickname: string; role: string };
-  } catch {
-    return null;
-  }
-}
-
 // GET endpoint to fetch player roster from Google Sheets
 export async function GET() {
-  const user = await getUserFromCookie();
+  const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
     const roster = await getSheetRoster();
-    return NextResponse.json({ success: true, roster });
+    return NextResponse.json({ success: true, roster, user });
   } catch (error: any) {
+    console.error('Failed to load DKP roster:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
 // POST endpoint to log boss kill & assign DKP points
 export async function POST(req: Request) {
-  const user = await getUserFromCookie();
+  const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  if (!['chief', 'general', 'guardian'].includes(user.role)) {
+  if (!['chief', 'general'].includes(user.role)) {
     return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
   }
 
