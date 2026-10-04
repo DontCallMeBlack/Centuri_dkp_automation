@@ -113,7 +113,10 @@ export default function AdminRequestsPage() {
               <div key={user._id} className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                   <h2 className="font-bold text-lg text-white">{user.nickname}</h2>
-                  <p className="text-xs text-slate-400">Requested account mapping to sheet record</p>
+                  <p className="text-xs text-slate-400">
+                    Requested role: <span className="capitalize text-indigo-300">{user.role}</span>
+                    {' · '}Select the matching sheet record to approve
+                  </p>
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">

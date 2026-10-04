@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Sparkles, Lock, User as UserIcon } from 'lucide-react';
+import { Shield, Sparkles, Lock, User as UserIcon, ShieldCheck } from 'lucide-react';
 
 export default function LoginPage() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
+  const [requestedRole, setRequestedRole] = useState('clansman');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,6 +28,7 @@ export default function LoginPage() {
           action: isSignUp ? 'signup' : 'signin',
           nickname,
           password,
+          requestedRole,
         }),
       });
 
@@ -114,6 +116,31 @@ export default function LoginPage() {
             </div>
           </div>
 
+          {isSignUp && (
+            <div>
+              <label htmlFor="requested-role" className="block text-xs uppercase tracking-wider text-slate-400 font-semibold mb-1.5">
+                Request Account Role
+              </label>
+              <div className="relative">
+                <ShieldCheck className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                <select
+                  id="requested-role"
+                  value={requestedRole}
+                  onChange={(e) => setRequestedRole(e.target.value)}
+                  className="w-full appearance-none bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-slate-100 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                >
+                  <option value="clansman">Clansman</option>
+                  <option value="general">General</option>
+                  <option value="guardian">Guardian</option>
+                  <option value="chief">Chief</option>
+                </select>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Role requests need Chief approval. The first account is registered as Chief automatically.
+              </p>
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={loading}
@@ -125,10 +152,15 @@ export default function LoginPage() {
 
         <div className="mt-6 text-center">
           <button
-            onClick={() => setIsSignUp(!isSignUp)}
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setError('');
+              setMessage('');
+            }}
+            type="button"
             className="text-xs font-medium text-slate-400 hover:text-indigo-400 transition-colors"
           >
-            {isSignUp ? 'Already registered? Sign In' : "Don't have an account? Sign Up"}
+            {isSignUp ? 'Already registered? Sign In' : 'Create an account or request a role'}
           </button>
         </div>
       </div>

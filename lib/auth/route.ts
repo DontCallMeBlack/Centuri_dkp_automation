@@ -7,13 +7,23 @@ import jwt from 'jsonwebtoken';
 import { cookies } from 'next/headers';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+const SIGNUP_ROLES = ['chief', 'general', 'guardian', 'clansman'] as const;
+type SignupRole = (typeof SIGNUP_ROLES)[number];
+
+function isSignupRole(value: unknown): value is SignupRole {
+  return typeof value === 'string' && (SIGNUP_ROLES as readonly string[]).includes(value);
+}
 
 export async function POST(req: Request) {
   await dbConnect();
   try {
-    const { action, nickname, password } = await req.json();
+    const { action, nickname, password, requestedRole } = await req.json();
 
     if (action === 'signup') {
+      if (!isSignupRole(requestedRole)) {
+        return NextResponse.json({ error: 'Please select a valid account role' }, { status: 400 });
+      }
+
       const existingUser = await User.findOne({ nickname });
       if (existingUser) {
         return NextResponse.json({ error: 'Nickname already exists' }, { status: 400 });
@@ -21,7 +31,7 @@ export async function POST(req: Request) {
 
       const passwordHash = await bcrypt.hash(password, 10);
       const userCount = await User.countDocuments();
-      const role = userCount === 0 ? 'chief' : 'clansman';
+      const role = userCount === 0 ? 'chief' : requestedRole;
       const status = userCount === 0 ? 'approved' : 'pending';
 
       await User.create({
@@ -33,7 +43,9 @@ export async function POST(req: Request) {
 
       return NextResponse.json({ 
         success: true, 
-        message: userCount === 0 ? 'Registered as Chief!' : 'Account created. Waiting for Chief approval.' 
+        message: userCount === 0
+          ? 'Registered as Chief!'
+          : `Your ${role} account request was submitted. Waiting for Chief approval.`
       });
     }
 
@@ -49,7 +61,10 @@ export async function POST(req: Request) {
       }
 
       if (user.status !== 'approved') {
-        return NextResponse.json({ error: 'Your account is pending Chief approval.' }, { status: 403 });
+        const message = user.status === 'rejected'
+          ? 'Your account request was rejected. Please contact the Chief for help.'
+          : 'Your account is pending Chief approval.';
+        return NextResponse.json({ error: message }, { status: 403 });
       }
 
       const token = jwt.sign(
