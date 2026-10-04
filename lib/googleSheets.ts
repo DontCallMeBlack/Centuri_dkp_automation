@@ -9,9 +9,17 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
+function getSpreadsheetId() {
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID?.trim();
+  if (!spreadsheetId) {
+    throw new Error('Google Sheets is not configured: set GOOGLE_SHEET_ID in the deployment environment.');
+  }
+  return spreadsheetId;
+}
+
 export async function getSheetRoster() {
   const sheets = google.sheets({ version: 'v4', auth });
-  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  const spreadsheetId = getSpreadsheetId();
 
   // Assuming your data sheet is named "Sheet1" and columns run from A to H
   // Owner (A), Account (B), Sub class (C), Earned (D), Spent (E), Earned (F), Spent (G), Available (H)
@@ -34,7 +42,7 @@ export async function getSheetRoster() {
 
 export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {
   const sheets = google.sheets({ version: 'v4', auth });
-  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  const spreadsheetId = getSpreadsheetId();
 
   // First, get the current available value to correctly increment it
   const currentCellRange = `Sheet1!H${rowIndex}`;
