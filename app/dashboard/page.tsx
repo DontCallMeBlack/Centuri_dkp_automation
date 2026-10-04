@@ -110,7 +110,7 @@ export default function DashboardPage() {
             <Shield className="w-5 h-5 text-indigo-400" />
           </div>
           <div>
-            <h1 className="font-bold tracking-tight text-white text-base">Axiom Clan</h1>
+            <h1 className="font-bold tracking-tight text-white text-base">Centuri Clan</h1>
             <p className="text-xs text-slate-400">DKP Management Portal</p>
           </div>
         </div>
