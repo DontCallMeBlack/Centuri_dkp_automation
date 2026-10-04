@@ -134,15 +134,13 @@ export default function DashboardPage() {
         </div>
 
         <div className="flex items-center justify-end space-x-3">
-          {(userSession?.role === 'chief' || userSession?.role === 'general') && (
-            <button
-              onClick={() => router.push('/admin/requests')}
-              className="flex items-center space-x-2 text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 px-3.5 py-2 rounded-xl border border-indigo-500/40 transition-all"
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Review Requests</span>
-            </button>
-          )}
+          <button
+            onClick={() => router.push('/admin/requests')}
+            className="flex items-center space-x-2 text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 px-3.5 py-2 rounded-xl border border-indigo-500/40 transition-all"
+          >
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>Member Requests</span>
+          </button>
 
           <button
             onClick={() => {
