@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap } from 'lucide-react';
+import AdminPanel from './AdminPanel';
 
 interface RosterMember {
   rowIndex: number;
@@ -22,8 +23,9 @@ const BOSSES = [
 ];
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<'dkp' | 'auction'>('dkp');
+  const [activeTab, setActiveTab] = useState<'dkp' | 'auction' | 'admin'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
+  const [userRole, setUserRole] = useState('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBoss, setSelectedBoss] = useState('Base');
@@ -46,6 +48,7 @@ export default function DashboardPage() {
       const data = await res.json();
       if (data.success) {
         setRoster(data.roster);
+        setUserRole(data.user.role);
       }
     } catch (err) {
       console.error('Failed to load roster', err);
@@ -182,11 +185,25 @@ export default function DashboardPage() {
         >
           <span>Auction House</span>
         </button>
+        {['chief', 'general'].includes(userRole) && (
+          <button
+            onClick={() => setActiveTab('admin')}
+            className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${
+              activeTab === 'admin'
+                ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span>Admin</span>
+          </button>
+        )}
       </div>
 
       {/* Main Content Area */}
       <main className="flex-1 p-6 max-w-6xl w-full mx-auto">
-        {activeTab === 'dkp' ? (
+        {activeTab === 'admin' ? (
+          <AdminPanel />
+        ) : activeTab === 'dkp' ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left Column: Boss & Submit Form */}
             <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl h-fit space-y-6 shadow-xl">
