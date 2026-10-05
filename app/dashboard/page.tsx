@@ -280,6 +280,11 @@ export default function DashboardPage() {
                 )}
               </section>
             )}
+            {!canSubmitDkp && (
+              <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+                Boss DKP distribution is available to Chiefs, Generals, and Guardians.
+              </p>
+            )}
 
             <section>
               <div className="mb-4 flex items-end justify-between gap-3">
