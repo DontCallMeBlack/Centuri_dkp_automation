@@ -1,6 +1,8 @@
 // lib/googleSheets.ts
 import { google } from 'googleapis';
 
+const SHEET_NAME = "'DKP Sheet'";
+
 const auth = new google.auth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -21,11 +23,10 @@ export async function getSheetRoster() {
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = getSpreadsheetId();
 
-  // Assuming your data sheet is named "Sheet1" and columns run from A to H
   // Owner (A), Account (B), Sub class (C), Earned (D), Spent (E), Earned (F), Spent (G), Available (H)
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'Sheet1!A2:H1000', // Adjust "Sheet1" if your tab has a different name
+    range: `${SHEET_NAME}!A2:H1000`,
   });
 
   const rows = response.data.values;
@@ -45,7 +46,7 @@ export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {
   const spreadsheetId = getSpreadsheetId();
 
   // First, get the current available value to correctly increment it
-  const currentCellRange = `Sheet1!H${rowIndex}`;
+  const currentCellRange = `${SHEET_NAME}!H${rowIndex}`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: currentCellRange,
