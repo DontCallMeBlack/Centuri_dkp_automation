@@ -169,8 +169,14 @@ export default function DashboardPage() {
       first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
       (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
   });
+  const roleRanks = new Map<string, number>();
   const rankedActiveToons = sortedActiveToons
-    .map((toon, index) => ({ ...toon, rank: index + 1 }))
+    .map((toon, index) => {
+      const role = toon.subClass.trim().toLowerCase() || 'unassigned';
+      const roleRank = (roleRanks.get(role) ?? 0) + 1;
+      roleRanks.set(role, roleRank);
+      return { ...toon, rank: index + 1, roleRank };
+    })
     .filter((toon) =>
       `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`
         .toLowerCase()
@@ -425,6 +431,52 @@ export default function DashboardPage() {
               ) : rankedActiveToons.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-800 py-12 text-center text-sm text-slate-500">
                   No active toons match that search.
+                </div>
+              ) : toonSort === 'role-dkp' ? (
+                <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                  <table className="w-full min-w-[760px] border-collapse text-left">
+                    <thead className="sticky top-0 border-b border-slate-800 bg-slate-950 text-[11px] uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th scope="col" className="px-4 py-3 text-center">Role rank</th>
+                        <th scope="col" className="px-4 py-3">Toon</th>
+                        <th scope="col" className="px-4 py-3">Owner</th>
+                        <th scope="col" className="px-4 py-3">Website account</th>
+                        <th scope="col" className="px-4 py-3 text-right">All-time earned</th>
+                        <th scope="col" className="px-4 py-3 text-right">All-time spent</th>
+                        <th scope="col" className="px-4 py-3 text-right">Available DKP</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {rankedActiveToons.map((toon) => (
+                        <tr key={toon.rowIndex} className="bg-slate-950/40 transition hover:bg-indigo-950/30">
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-lg border px-2 text-sm font-black ${
+                              toon.roleRank === 1
+                                ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+                                : 'border-slate-800 bg-slate-900 text-slate-400'
+                            }`}>
+                              {toon.roleRank}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-white">{toon.account || toon.owner}</span>
+                              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                                ROLE_STYLES[toon.subClass.trim().toLowerCase()] ?? 'border-slate-700 bg-slate-800 text-slate-300'
+                              }`}>
+                                {toon.subClass || 'Unassigned'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-300">{toon.owner}</td>
+                          <td className="px-4 py-3 text-sm text-slate-400">{toon.memberNickname}</td>
+                          <td className="px-4 py-3 text-right tabular-nums text-slate-300">{toon.earned.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right tabular-nums text-slate-300">{toon.spent.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right text-base font-black tabular-nums text-emerald-300">{toon.available.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
