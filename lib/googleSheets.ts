@@ -19,6 +19,12 @@ function getSpreadsheetId() {
   return spreadsheetId;
 }
 
+function readDkpValue(value: string | undefined) {
+  if (!value || value.trim() === '-') return 0;
+  const parsed = Number(value.replace(/,/g, '').trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export async function getSheetRoster() {
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = getSpreadsheetId();
@@ -37,7 +43,11 @@ export async function getSheetRoster() {
     owner: row[0] || '',
     account: row[1] || '',
     subClass: row[2] || '',
-    available: Number(row[7]) || 0, // Column H
+    weeklyEarned: readDkpValue(row[3]),
+    weeklySpent: readDkpValue(row[4]),
+    earned: readDkpValue(row[5]),
+    spent: readDkpValue(row[6]),
+    available: readDkpValue(row[7]),
   })).filter(r => r.owner); // Filter out empty rows
 }
 

@@ -3,14 +3,24 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck, X } from 'lucide-react';
 
 interface RosterMember {
   rowIndex: number;
   owner: string;
   account: string;
   subClass: string;
+  weeklyEarned: number;
+  weeklySpent: number;
+  earned: number;
+  spent: number;
   available: number;
+}
+
+interface ClanMember {
+  nickname: string;
+  role: string;
+  toons: RosterMember[];
 }
 
 interface UserSession {
@@ -31,11 +41,14 @@ const BOSSES = [
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<'dkp' | 'auction'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
+  const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedBoss, setSelectedBoss] = useState('Base');
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [memberQuery, setMemberQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const router = useRouter();
@@ -54,6 +67,7 @@ export default function DashboardPage() {
       const data = await res.json();
       if (data.success) {
         setRoster(data.roster);
+        setClanMembers(data.clanMembers);
         setUserSession(data.user);
       }
     } catch (err) {
@@ -94,7 +108,9 @@ export default function DashboardPage() {
 
       setStatusMessage(data.message);
       setSelectedMembers([]);
-      fetchData();
+      setPickerOpen(false);
+      setPickerQuery('');
+      await fetchData();
     } catch (err: any) {
       alert(err.message || 'Error submitting DKP');
     } finally {
@@ -105,15 +121,18 @@ export default function DashboardPage() {
   const currentUserRecords = roster.filter(
     (member) => userSession?.sheetRecordRows.includes(member.rowIndex)
   );
-  const currentUserDkp = currentUserRecords.reduce((total, member) => total + member.available, 0);
 
-  const filteredRoster = roster.filter(
-    (m) =>
-      m.owner.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.account.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredClanMembers = clanMembers.filter((member) =>
+    `${member.nickname} ${member.role} ${member.toons.map((toon) => `${toon.owner} ${toon.account} ${toon.subClass}`).join(' ')}`
+      .toLowerCase()
+      .includes(memberQuery.toLowerCase())
   );
 
-  const totalDkpDistributedPool = roster.reduce((acc, curr) => acc + curr.available, 0);
+  const filteredRoster = roster.filter((member) =>
+    `${member.owner} ${member.account} ${member.subClass}`
+      .toLowerCase()
+      .includes(pickerQuery.toLowerCase())
+  );
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(userSession?.role ?? '');
 
   return (
@@ -162,13 +181,13 @@ export default function DashboardPage() {
             <Award className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-xs text-slate-400 uppercase font-medium">Your Sheet DKP</p>
+            <p className="text-xs text-slate-400 uppercase font-medium">Your linked toons</p>
             <p className="text-lg font-bold text-white">
-              {currentUserRecords.length > 0 ? `${currentUserDkp} pts` : 'Not Linked Yet'}
+              {currentUserRecords.length}
             </p>
             <p className="text-[10px] text-slate-500">
               {currentUserRecords.length > 0
-                ? `Toons: ${currentUserRecords.map((member) => member.account || member.owner).join(', ')}`
+                ? 'Each toon’s DKP is shown below'
                 : userSession?.role === 'chief' || userSession?.role === 'general'
                   ? 'Link your account in Clan administration'
                   : 'Ask a Chief or General to link your account'}
@@ -186,8 +205,9 @@ export default function DashboardPage() {
             <Users className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-xs text-slate-400 uppercase font-medium">Total Clan DKP Pool</p>
-            <p className="text-lg font-bold text-white">{totalDkpDistributedPool.toLocaleString()} pts</p>
+            <p className="text-xs text-slate-400 uppercase font-medium">Active clan accounts</p>
+            <p className="text-lg font-bold text-white">{clanMembers.length}</p>
+            <p className="text-[10px] text-slate-500">Approved members and their linked toons</p>
           </div>
         </div>
 
@@ -232,150 +252,145 @@ export default function DashboardPage() {
       {/* Main Content Area */}
       <main className="flex-1 p-6 max-w-6xl w-full mx-auto">
         {activeTab === 'dkp' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Left Column: Boss & Submit Form (Only shown to Chief or kept accessible) */}
-            <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl h-fit space-y-6 shadow-xl">
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-indigo-500" />
-                Log Boss Kill
-              </h2>
-
-              <form onSubmit={handleDkpSubmit} className="space-y-5">
-                <div>
-                  <label className="block text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">
-                    Select Boss Killed
-                  </label>
-                  <select
-                    value={selectedBoss}
-                    onChange={(e) => setSelectedBoss(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-slate-100 text-sm focus:outline-none focus:border-indigo-500"
-                  >
-                    {BOSSES.map((b) => (
-                      <option key={b.name} value={b.name}>
-                        {b.name} — {b.points} DKP ({b.tier})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80 flex items-center justify-between">
+          <div className="space-y-8">
+            {canSubmitDkp && (
+              <section className="relative overflow-hidden rounded-3xl border border-indigo-400/20 bg-gradient-to-br from-indigo-950 via-slate-900 to-violet-950 p-6 shadow-2xl shadow-indigo-950/30 sm:p-8">
+                <div className="pointer-events-none absolute -right-12 -top-24 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
+                <div className="relative flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
                   <div>
-                    <span className="text-xs text-slate-400 font-medium block">Selected Raiders</span>
-                    <span className="text-2xl font-black text-indigo-400">{selectedMembers.length}</span>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Raid operations</p>
+                    <h2 className="mt-2 text-2xl font-black tracking-tight text-white">Distribute boss DKP</h2>
+                    <p className="mt-2 max-w-xl text-sm text-slate-300">Choose a boss, find every participating toon, and record the award.</p>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs text-slate-400 font-medium block">Points Per Member</span>
-                    <span className="text-2xl font-black text-emerald-400">
-                      +{BOSSES.find((b) => b.name === selectedBoss)?.points || 0}
-                    </span>
-                  </div>
+                  <button
+                    onClick={() => {
+                      setPickerQuery('');
+                      setPickerOpen(true);
+                    }}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-3 font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400"
+                  >
+                    <Plus className="h-4 w-4" /> Submit &amp; distribute
+                  </button>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={submitting || !canSubmitDkp || selectedMembers.length === 0}
-                  className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/20 flex items-center justify-center space-x-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{submitting ? 'Updating Sheets...' : 'Submit & Distribute DKP'}</span>
-                </button>
-
-                {!canSubmitDkp && (
-                  <p className="text-xs text-amber-300/80">Adding points requires a Chief, General, or Guardian account.</p>
-                )}
-
                 {statusMessage && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 p-3.5 rounded-xl text-xs flex items-center space-x-2">
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>{statusMessage}</span>
+                  <div role="status" className="relative mt-5 flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-sm text-emerald-300">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    {statusMessage}
                   </div>
                 )}
-              </form>
-            </div>
+              </section>
+            )}
 
-            {/* Right Column: Searchable Roster Selector */}
-            <div className="lg:col-span-2 bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-6 rounded-2xl space-y-5 shadow-xl">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <section>
+              <div className="mb-4 flex items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-bold text-white">Clan Roster Selection</h2>
-                  <p className="text-xs text-slate-400 mt-0.5">Click members who participated in the kill</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-300">Personal DKP</p>
+                  <h2 className="mt-1 text-xl font-bold text-white">My toons</h2>
+                  <p className="mt-1 text-sm text-slate-400">Each toon has its own earned, spent, and remaining balance.</p>
                 </div>
-                <div className="relative w-full sm:w-72">
-                  <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                <Award className="mb-1 h-6 w-6 text-indigo-300" />
+              </div>
+
+              {currentUserRecords.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
+                  <Users className="mx-auto h-7 w-7 text-slate-500" />
+                  <p className="mt-3 font-semibold text-slate-200">No toons linked yet</p>
+                  <p className="mt-1 text-sm text-slate-500">Ask a Chief or General to link your sheet rows to your account.</p>
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {currentUserRecords.map((toon) => (
+                    <article key={toon.rowIndex} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70 shadow-xl shadow-black/10">
+                      <div className="flex items-start justify-between gap-3 border-b border-slate-800 p-4">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-lg font-bold text-white">{toon.account || toon.owner}</h3>
+                          <p className="mt-1 truncate text-xs text-slate-400">{toon.owner} · {toon.subClass || 'Class not listed'}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-300">
+                          {toon.available.toLocaleString()} left
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 p-4">
+                        {[
+                          ['All-time earned', toon.earned],
+                          ['All-time spent', toon.spent],
+                          ['Available', toon.available],
+                        ].map(([label, value]) => (
+                          <div key={label} className="rounded-xl bg-slate-950/70 p-3">
+                            <p className="text-[10px] font-semibold uppercase leading-tight text-slate-500">{label}</p>
+                            <p className="mt-2 text-lg font-black text-slate-100">{Number(value).toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="px-4 pb-4 text-xs text-slate-500">
+                        This week: <span className="text-slate-300">{toon.weeklyEarned.toLocaleString()} earned</span>
+                        {' · '}
+                        <span className="text-slate-300">{toon.weeklySpent.toLocaleString()} spent</span>
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-3xl border border-slate-800 bg-slate-900/50 p-5 shadow-xl sm:p-6">
+              <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-300">The roster</p>
+                  <h2 className="mt-1 text-xl font-bold text-white">Active clan members</h2>
+                  <p className="mt-1 text-sm text-slate-400">Approved clan accounts and the toons linked to them.</p>
+                </div>
+                <div className="relative w-full sm:max-w-xs">
+                  <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
                   <input
-                    type="text"
-                    placeholder="Search member name..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+                    type="search"
+                    placeholder="Find a member or toon..."
+                    value={memberQuery}
+                    onChange={(event) => setMemberQuery(event.target.value)}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
               </div>
 
               {loading ? (
-                <div className="text-center py-16 text-slate-500 text-sm animate-pulse">
-                  Syncing roster from Google Sheets...
+                <div className="animate-pulse py-12 text-center text-sm text-slate-500">Syncing active clan roster...</div>
+              ) : filteredClanMembers.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-800 py-12 text-center text-sm text-slate-500">
+                  No active members or toons match that search.
                 </div>
               ) : (
-                <div className="border border-slate-800 rounded-xl overflow-hidden max-h-[500px] overflow-y-auto custom-scrollbar">
-                  <table className="w-full text-left border-collapse">
-                    <thead className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider sticky top-0 z-10 border-b border-slate-800">
-                      <tr>
-                        <th className="p-3.5 pl-4">Select</th>
-                        <th className="p-3.5">Owner / Nickname</th>
-                        <th className="p-3.5">Account</th>
-                        <th className="p-3.5">Sub Class</th>
-                        <th className="p-3.5 pr-4 text-right">Available DKP</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-sm">
-                      {filteredRoster.map((member) => {
-                        const isSelected = selectedMembers.includes(member.rowIndex);
-                        const isMe = userSession?.sheetRecordRows.includes(member.rowIndex) ?? false;
-                        return (
-                          <tr
-                            key={member.rowIndex}
-                            onClick={() => toggleMemberSelection(member.rowIndex)}
-                            className={`cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-indigo-950/40 hover:bg-indigo-950/60'
-                                : isMe
-                                ? 'bg-indigo-900/10 hover:bg-indigo-900/20'
-                                : 'hover:bg-slate-800/30'
-                            }`}
-                          >
-                            <td className="p-3.5 pl-4">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => {}}
-                                className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                              />
-                            </td>
-                            <td className="p-3.5 font-medium text-slate-200 flex items-center gap-2">
-                              {member.owner}
-                              {isMe && <span className="bg-indigo-500/20 text-indigo-300 text-[10px] px-2 py-0.5 rounded-full border border-indigo-500/30">You</span>}
-                            </td>
-                            <td className="p-3.5 text-slate-400 text-xs">{member.account}</td>
-                            <td className="p-3.5 text-slate-400 text-xs">{member.subClass || '—'}</td>
-                            <td className="p-3.5 pr-4 text-right font-bold text-indigo-400">
-                              {member.available}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {filteredRoster.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="p-8 text-center text-slate-500 text-sm">
-                            No matching clan members found.
-                          </td>
-                        </tr>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {filteredClanMembers.map((member) => (
+                    <article key={member.nickname} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-indigo-500/30">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 font-black text-indigo-300">
+                            {member.nickname.slice(0, 1).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="truncate font-bold text-white">{member.nickname}</h3>
+                            <p className="text-xs capitalize text-slate-500">{member.role} · {member.toons.length} toon{member.toons.length === 1 ? '' : 's'}</p>
+                          </div>
+                        </div>
+                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-300">Active</span>
+                      </div>
+                      {member.toons.length > 0 ? (
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {member.toons.map((toon) => (
+                            <span key={toon.rowIndex} className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 text-xs">
+                              <span className="font-semibold text-slate-200">{toon.account || toon.owner}</span>
+                              <span className="text-slate-500">{toon.available.toLocaleString()} DKP</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-4 rounded-lg border border-dashed border-slate-800 px-3 py-2 text-xs text-slate-500">No toons linked yet</p>
                       )}
-                    </tbody>
-                  </table>
+                    </article>
+                  ))}
                 </div>
               )}
-            </div>
+            </section>
           </div>
         ) : (
           /* Auction House Placeholder Tab */
@@ -390,6 +405,153 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
+
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 p-0 backdrop-blur-sm sm:items-center sm:p-5"
+          onClick={() => !submitting && setPickerOpen(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="award-picker-title"
+            className="flex max-h-[95vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-slate-700 bg-[#0b1020] shadow-2xl shadow-black/60 sm:rounded-3xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="relative overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 p-5 sm:p-6">
+              <div className="pointer-events-none absolute -right-8 -top-16 h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl" />
+              <div className="relative flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Raid operations</p>
+                  <h2 id="award-picker-title" className="mt-1 text-xl font-black text-white sm:text-2xl">Choose boss &amp; participants</h2>
+                  <p className="mt-1 text-sm text-slate-400">Search every toon in the sheet and select everyone who attended.</p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close participant menu"
+                  disabled={submitting}
+                  onClick={() => setPickerOpen(false)}
+                  className="rounded-lg border border-slate-700 p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleDkpSubmit} className="flex min-h-0 flex-1 flex-col">
+              <div className="grid gap-4 border-b border-slate-800 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:p-6">
+                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Boss defeated
+                  <select
+                    value={selectedBoss}
+                    onChange={(event) => setSelectedBoss(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm font-semibold normal-case text-white outline-none focus:border-indigo-400"
+                  >
+                    {BOSSES.map((boss) => (
+                      <option key={boss.name} value={boss.name}>
+                        {boss.name} · +{boss.points} DKP · {boss.tier}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex items-center justify-between rounded-xl border border-indigo-400/20 bg-indigo-500/10 px-4 py-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">Raid reward</p>
+                    <p className="mt-1 text-sm text-slate-300">{selectedBoss} attendance award</p>
+                  </div>
+                  <p className="text-2xl font-black text-emerald-300">
+                    +{BOSSES.find((boss) => boss.name === selectedBoss)?.points ?? 0}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col p-5 sm:p-6">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-white">All sheet toons</h3>
+                    <p className="mt-1 text-xs text-slate-500">{selectedMembers.length} selected · select any toon that attended</p>
+                  </div>
+                  <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-semibold text-slate-300">
+                    {roster.length} toons
+                  </span>
+                </div>
+                <div className="relative mb-3">
+                  <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+                  <input
+                    autoFocus
+                    type="search"
+                    placeholder="Search owner, toon, or class..."
+                    value={pickerQuery}
+                    onChange={(event) => setPickerQuery(event.target.value)}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-slate-600 outline-none focus:border-indigo-400"
+                  />
+                </div>
+
+                {selectedMembers.length > 0 && (
+                  <div className="mb-3 flex max-h-20 flex-wrap gap-2 overflow-y-auto">
+                    {roster.filter((toon) => selectedMembers.includes(toon.rowIndex)).map((toon) => (
+                      <span key={toon.rowIndex} className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200">
+                        {toon.account || toon.owner}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {filteredRoster.map((toon) => {
+                    const selected = selectedMembers.includes(toon.rowIndex);
+                    return (
+                      <button
+                        key={toon.rowIndex}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => toggleMemberSelection(toon.rowIndex)}
+                        className={`flex items-center justify-between gap-3 rounded-xl border p-3 text-left transition ${
+                          selected
+                            ? 'border-indigo-400/60 bg-indigo-500/15 shadow-lg shadow-indigo-950/30'
+                            : 'border-slate-800 bg-slate-900/60 hover:border-slate-600 hover:bg-slate-800/80'
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-white">{toon.account || toon.owner}</span>
+                          <span className="mt-1 block truncate text-xs text-slate-500">{toon.owner} · {toon.subClass || 'Class not listed'}</span>
+                        </span>
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                          selected ? 'border-indigo-300 bg-indigo-400 text-slate-950' : 'border-slate-700 text-slate-500'
+                        }`}>
+                          {selected ? '✓' : '+'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {filteredRoster.length === 0 && (
+                    <p className="col-span-full py-10 text-center text-sm text-slate-500">No sheet toons match that search.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 border-t border-slate-800 bg-slate-950/70 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(false)}
+                  disabled={submitting}
+                  className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting || selectedMembers.length === 0}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {submitting ? <Zap className="h-4 w-4 animate-pulse" /> : <Plus className="h-4 w-4" />}
+                  {submitting ? 'Applying award...' : `Distribute to ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

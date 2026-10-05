@@ -3,6 +3,7 @@ import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster, adjustPlayersDKP } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
+import User from '@/lib/models/User';
 
 const BOSS_POINTS: Record<string, number> = {
   Base: 1,
@@ -27,11 +28,28 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const roster = await getSheetRoster();
+    const [roster, activeUsers] = await Promise.all([
+      getSheetRoster(),
+      User.find({ status: 'approved' })
+        .select('nickname role sheetRecordName sheetRecords')
+        .sort({ nickname: 1 })
+        .lean(),
+    ]);
+    const recordsByRow = new Map(roster.map((record) => [record.rowIndex, record]));
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
+    const clanMembers = activeUsers.map((member) => ({
+      nickname: member.nickname,
+      role: member.role,
+      toons: getLinkedSheetRecordRows(member, roster)
+        .flatMap((rowIndex) => {
+          const record = recordsByRow.get(rowIndex);
+          return record ? [record] : [];
+        }),
+    }));
     return NextResponse.json({
       success: true,
       roster,
+      clanMembers,
       user: {
         nickname: user.nickname,
         role: user.role,
