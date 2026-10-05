@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
-import { getSheetRoster, updatePlayerDKP } from '@/lib/googleSheets';
+import { getSheetRoster, adjustPlayersDKP } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
+import BossAward from '@/lib/models/BossAward';
 
 const BOSS_POINTS: Record<string, number> = {
   Base: 1,
@@ -11,6 +12,15 @@ const BOSS_POINTS: Record<string, number> = {
   Dino: 7,
   Crom: 12,
 };
+
+function isRosterRowArray(value: unknown, allowEmpty = false): value is number[] {
+  return Array.isArray(value) &&
+    (allowEmpty || value.length > 0) &&
+    value.every((rowIndex): rowIndex is number =>
+      typeof rowIndex === 'number' && Number.isInteger(rowIndex)
+    ) &&
+    new Set(value).size === value.length;
+}
 
 export async function GET() {
   const user = await getSessionUser();
@@ -42,31 +52,50 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { bossName, selectedRows } = await req.json();
+    const body: unknown = await req.json();
+    if (typeof body !== 'object' || body === null) {
+      return NextResponse.json({ error: 'Invalid boss award request' }, { status: 400 });
+    }
+    const { bossName, selectedRows } = body as { bossName?: unknown; selectedRows?: unknown };
     if (typeof bossName !== 'string' || !Object.prototype.hasOwnProperty.call(BOSS_POINTS, bossName)) {
       return NextResponse.json({ error: 'Invalid boss selection' }, { status: 400 });
     }
-    if (!Array.isArray(selectedRows) || selectedRows.length === 0 || !selectedRows.every(Number.isInteger)) {
+    if (!isRosterRowArray(selectedRows)) {
       return NextResponse.json({ error: 'Select at least one valid roster record' }, { status: 400 });
-    }
-    if (new Set(selectedRows).size !== selectedRows.length) {
-      return NextResponse.json({ error: 'Duplicate roster records are not allowed' }, { status: 400 });
     }
 
     const roster = await getSheetRoster();
-    const rosterRows = new Set(roster.map((member) => member.rowIndex));
-    if (!selectedRows.every((rowIndex: number) => rosterRows.has(rowIndex))) {
+    const recordsByRow = new Map(roster.map((member) => [member.rowIndex, member]));
+    const participants = selectedRows.map((rowIndex) => recordsByRow.get(rowIndex));
+    if (participants.some((record) => record === undefined)) {
       return NextResponse.json({ error: 'One or more selected roster records no longer exist' }, { status: 400 });
     }
 
+    const validParticipants = participants.filter((record) => record !== undefined);
     const points = BOSS_POINTS[bossName];
-    for (const rowIndex of selectedRows as number[]) {
-      await updatePlayerDKP(rowIndex, points);
+    const award = await BossAward.create({
+      bossName,
+      points,
+      participants: validParticipants,
+      createdBy: user.nickname,
+      status: 'pending',
+    });
+
+    try {
+      await adjustPlayersDKP(validParticipants.map(({ rowIndex }) => ({ rowIndex, points })));
+    } catch (error: unknown) {
+      award.status = 'failed';
+      award.failureReason = error instanceof Error ? error.message : 'Unable to apply award to Google Sheets';
+      await award.save();
+      throw error;
     }
+
+    award.status = 'applied';
+    await award.save();
 
     return NextResponse.json({
       success: true,
-      message: `${bossName} recorded: +${points} DKP for ${selectedRows.length} roster member(s)`,
+      message: `${bossName} recorded: +${points} DKP for ${validParticipants.length} toon(s)`,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unable to record the boss award';

@@ -41,27 +41,57 @@ export async function getSheetRoster() {
   })).filter(r => r.owner); // Filter out empty rows
 }
 
-export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {
+export async function adjustPlayersDKP(
+  adjustments: Array<{ rowIndex: number; points: number }>,
+) {
+  if (adjustments.length === 0) return;
+
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = getSpreadsheetId();
-
-  // First, get the current available value to correctly increment it
-  const currentCellRange = `${SHEET_NAME}!H${rowIndex}`;
-  const res = await sheets.spreadsheets.values.get({
+  const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: currentCellRange,
+    range: `${SHEET_NAME}!D3:H1000`,
+  });
+  const rows = response.data.values ?? [];
+  const updates = adjustments.flatMap(({ rowIndex, points }) => {
+    if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
+      throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
+    }
+    if (!Number.isFinite(points)) {
+      throw new Error('DKP adjustment must be a finite number.');
+    }
+
+    const row = rows[rowIndex - 3];
+    if (!row) {
+      throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
+    }
+
+    const readValue = (columnIndex: number, columnName: string) => {
+      const value = row[columnIndex];
+      if (value === undefined || value === '') return 0;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
+      }
+      return parsed;
+    };
+
+    return [
+      { range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(0, 'D') + points]] },
+      { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(2, 'F') + points]] },
+      { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(4, 'H') + points]] },
+    ];
   });
 
-  const currentVal = Number(res.data.values?.[0]?.[0] || 0);
-  const newVal = currentVal + pointsToAdd;
-
-  // Update the Available DKP column (Column H)
-  await sheets.spreadsheets.values.update({
+  await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
-    range: currentCellRange,
-    valueInputOption: 'USER_ENTERED',
     requestBody: {
-      values: [[newVal]],
+      valueInputOption: 'USER_ENTERED',
+      data: updates,
     },
   });
+}
+
+export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {
+  await adjustPlayersDKP([{ rowIndex, points: pointsToAdd }]);
 }
