@@ -8,7 +8,7 @@ interface ClanUser {
   _id: string;
   nickname: string;
   role: string;
-  sheetRecordName?: string;
+  sheetRecordRows?: number[];
 }
 
 interface RosterMember {
@@ -34,7 +34,7 @@ export default function AdminRequestsPage() {
   const [pendingUsers, setPendingUsers] = useState<ClanUser[]>([]);
   const [members, setMembers] = useState<ClanUser[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
-  const [selectedMappings, setSelectedMappings] = useState<Record<string, string>>({});
+  const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [selectedBoss, setSelectedBoss] = useState('Base');
   const [loading, setLoading] = useState(true);
@@ -60,13 +60,12 @@ export default function AdminRequestsPage() {
       setPendingUsers(data.pendingUsers);
       setMembers(data.members);
       setRoster(data.roster);
-      setSelectedMappings((current) => {
-        const next = { ...current };
-        for (const member of data.members as ClanUser[]) {
-          if (!next[member._id] && member.sheetRecordName) next[member._id] = member.sheetRecordName;
-        }
-        return next;
-      });
+      setSelectedMappings(Object.fromEntries(
+        [...data.pendingUsers, ...data.members].map((member: ClanUser) => [
+          member._id,
+          member.sheetRecordRows ?? [],
+        ]),
+      ));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load clan administration data');
     } finally {
@@ -78,7 +77,7 @@ export default function AdminRequestsPage() {
     void loadData();
   }, []);
 
-  const sendAdminAction = async (userId: string, action: string, sheetRecordName?: string) => {
+  const sendAdminAction = async (userId: string, action: string, sheetRecordRows?: number[]) => {
     setBusyId(userId);
     setError('');
     setNotice('');
@@ -86,7 +85,7 @@ export default function AdminRequestsPage() {
       const res = await fetch('/api/admin/requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, action, sheetRecordName }),
+        body: JSON.stringify({ userId, action, sheetRecordRows }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'The request could not be completed');
@@ -100,23 +99,53 @@ export default function AdminRequestsPage() {
   };
 
   const approveRequest = (userId: string) => {
-    const name = selectedMappings[userId];
-    if (!name) {
-      setError('Choose a Google Sheets roster name before approving this request.');
+    const rows = selectedMappings[userId] ?? [];
+    if (rows.length === 0) {
+      setError('Select at least one toon row before approving this request.');
       return;
     }
-    void sendAdminAction(userId, 'approve', name);
+    void sendAdminAction(userId, 'approve', rows);
   };
 
   const denyRequest = (userId: string) => void sendAdminAction(userId, 'deny');
   const linkMember = (userId: string) => {
-    const name = selectedMappings[userId];
-    if (!name) {
-      setError('Choose a Google Sheets roster name before linking this account.');
+    const rows = selectedMappings[userId] ?? [];
+    if (rows.length === 0) {
+      setError('Select at least one toon row before linking this account.');
       return;
     }
-    void sendAdminAction(userId, 'link', name);
+    void sendAdminAction(userId, 'link', rows);
   };
+
+  const toggleMapping = (userId: string, rowIndex: number) => {
+    setSelectedMappings((current) => {
+      const rows = current[userId] ?? [];
+      return {
+        ...current,
+        [userId]: rows.includes(rowIndex)
+          ? rows.filter((selectedRow) => selectedRow !== rowIndex)
+          : [...rows, rowIndex],
+      };
+    });
+  };
+
+  const renderMappingSelector = (userId: string, label: string) => (
+    <fieldset className="max-h-48 w-full overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 p-2">
+      <legend className="sr-only">{label}</legend>
+      {roster.map((record) => (
+        <label key={record.rowIndex} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800">
+          <input
+            type="checkbox"
+            checked={(selectedMappings[userId] ?? []).includes(record.rowIndex)}
+            onChange={() => toggleMapping(userId, record.rowIndex)}
+            className="h-4 w-4 accent-indigo-500"
+          />
+          <span className="min-w-0 truncate">{record.owner} · {record.account || 'Unnamed toon'}</span>
+        </label>
+      ))}
+      {roster.length === 0 && <p className="px-2 py-3 text-sm text-slate-500">No roster records found.</p>}
+    </fieldset>
+  );
 
   const removeMember = (member: ClanUser) => {
     if (window.confirm(`Remove ${member.nickname}'s account from the app? This cannot be undone.`)) {
@@ -215,7 +244,7 @@ export default function AdminRequestsPage() {
             <div className="mb-5 flex items-end justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-white">Pending sign-ups</h2>
-                <p className="mt-1 text-sm text-slate-400">Approve a request and link it to a roster record, or deny it.</p>
+                <p className="mt-1 text-sm text-slate-400">Select one or more toon rows to link when approving a request.</p>
               </div>
               <ClipboardList className="mb-1 h-5 w-5 text-slate-500" />
             </div>
@@ -227,16 +256,11 @@ export default function AdminRequestsPage() {
                   <h3 className="font-semibold text-white">{user.nickname}</h3>
                   <p className="mt-1 text-xs text-slate-500">Awaiting approval and roster mapping</p>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <select
-                    aria-label={`Roster record for ${user.nickname}`}
-                    value={selectedMappings[user._id] || ''}
-                    onChange={(event) => setSelectedMappings({ ...selectedMappings, [user._id]: event.target.value })}
-                    className="min-w-56 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200"
-                  >
-                    <option value="">Select roster name</option>
-                    {roster.map((record) => <option key={record.rowIndex} value={record.owner}>{record.owner} ({record.account})</option>)}
-                  </select>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                  <div className="min-w-56 flex-1">
+                    {renderMappingSelector(user._id, `Toon rows for ${user.nickname}`)}
+                    <p className="mt-1 text-xs text-slate-500">{(selectedMappings[user._id] ?? []).length} toon(s) selected</p>
+                  </div>
                   <button disabled={busyId === user._id} onClick={() => approveRequest(user._id)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50">
                     {busyId === user._id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Approve
                   </button>
@@ -252,24 +276,16 @@ export default function AdminRequestsPage() {
         {section === 'members' && (
           <section className="mt-6">
             <h2 className="text-lg font-bold text-white">Approved accounts</h2>
-            <p className="mb-4 mt-1 text-sm text-slate-400">Link any account to a sheet name. Removal is available for clan members.</p>
+            <p className="mb-4 mt-1 text-sm text-slate-400">Select all toon rows belonging to each account. Saving replaces its linked rows.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
               <div className="divide-y divide-slate-800 border-y border-slate-800">
                 {members.map((member) => (
                   <article key={member._id} className="grid gap-3 py-4 md:grid-cols-[minmax(10rem,1fr)_minmax(14rem,20rem)_auto] md:items-center">
                     <div>
                       <h3 className="font-semibold text-white">{member.nickname}</h3>
-                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {member.sheetRecordName || 'Not linked'}</p>
+                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(selectedMappings[member._id] ?? []).length} toon(s) linked</p>
                     </div>
-                    <select
-                      aria-label={`Roster record for ${member.nickname}`}
-                      value={selectedMappings[member._id] || ''}
-                      onChange={(event) => setSelectedMappings({ ...selectedMappings, [member._id]: event.target.value })}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200"
-                    >
-                      <option value="">Select roster name</option>
-                      {roster.map((record) => <option key={record.rowIndex} value={record.owner}>{record.owner} ({record.account})</option>)}
-                    </select>
+                    {renderMappingSelector(member._id, `Toon rows for ${member.nickname}`)}
                     <div className="flex gap-2">
                       <button disabled={busyId === member._id} onClick={() => linkMember(member._id)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50">
                         <UserCheck className="h-4 w-4" /> Link

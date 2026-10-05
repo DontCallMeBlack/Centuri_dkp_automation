@@ -16,7 +16,7 @@ interface RosterMember {
 interface UserSession {
   nickname: string;
   role: string;
-  sheetRecordName?: string;
+  sheetRecordRows: number[];
 }
 
 const BOSSES = [
@@ -102,10 +102,10 @@ export default function DashboardPage() {
     }
   };
 
-  // Find the currently logged-in user's specific record from the spreadsheet roster
-  const currentUserRecord = roster.find(
-    (m) => m.owner.toLowerCase() === userSession?.sheetRecordName?.toLowerCase()
+  const currentUserRecords = roster.filter(
+    (member) => userSession?.sheetRecordRows.includes(member.rowIndex)
   );
+  const currentUserDkp = currentUserRecords.reduce((total, member) => total + member.available, 0);
 
   const filteredRoster = roster.filter(
     (m) =>
@@ -164,10 +164,16 @@ export default function DashboardPage() {
           <div>
             <p className="text-xs text-slate-400 uppercase font-medium">Your Sheet DKP</p>
             <p className="text-lg font-bold text-white">
-              {currentUserRecord ? `${currentUserRecord.available} pts` : 'Not Linked Yet'}
+              {currentUserRecords.length > 0 ? `${currentUserDkp} pts` : 'Not Linked Yet'}
             </p>
-            <p className="text-[10px] text-slate-500">{currentUserRecord ? `Linked to: ${currentUserRecord.owner}` : userSession?.role === 'chief' || userSession?.role === 'general' ? 'Link your account in Clan administration' : 'Ask a Chief or General to link your account'}</p>
-            {!currentUserRecord && (userSession?.role === 'chief' || userSession?.role === 'general') && (
+            <p className="text-[10px] text-slate-500">
+              {currentUserRecords.length > 0
+                ? `Toons: ${currentUserRecords.map((member) => member.account || member.owner).join(', ')}`
+                : userSession?.role === 'chief' || userSession?.role === 'general'
+                  ? 'Link your account in Clan administration'
+                  : 'Ask a Chief or General to link your account'}
+            </p>
+            {currentUserRecords.length === 0 && (userSession?.role === 'chief' || userSession?.role === 'general') && (
               <button onClick={() => router.push('/admin/requests')} className="mt-2 text-xs font-semibold text-indigo-300 hover:text-indigo-200">
                 Open clan administration
               </button>
@@ -325,7 +331,7 @@ export default function DashboardPage() {
                     <tbody className="divide-y divide-slate-800/60 text-sm">
                       {filteredRoster.map((member) => {
                         const isSelected = selectedMembers.includes(member.rowIndex);
-                        const isMe = member.owner.toLowerCase() === userSession?.sheetRecordName?.toLowerCase();
+                        const isMe = userSession?.sheetRecordRows.includes(member.rowIndex) ?? false;
                         return (
                           <tr
                             key={member.rowIndex}

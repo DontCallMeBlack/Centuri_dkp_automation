@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster, updatePlayerDKP } from '@/lib/googleSheets';
+import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 
 const BOSS_POINTS: Record<string, number> = {
   Base: 1,
@@ -17,13 +18,14 @@ export async function GET() {
 
   try {
     const roster = await getSheetRoster();
+    const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
     return NextResponse.json({
       success: true,
       roster,
       user: {
         nickname: user.nickname,
         role: user.role,
-        sheetRecordName: user.sheetRecordName,
+        sheetRecordRows,
       },
     });
   } catch (error: unknown) {

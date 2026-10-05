@@ -14,7 +14,7 @@ export async function getSessionUser() {
     if (typeof payload === 'string' || typeof payload.userId !== 'string') return null;
 
     await dbConnect();
-    const user = await User.findById(payload.userId).select('_id nickname role status sheetRecordName');
+    const user = await User.findById(payload.userId).select('_id nickname role status sheetRecordName sheetRecords');
     if (!user || user.status !== 'approved') return null;
     return user;
   } catch {
