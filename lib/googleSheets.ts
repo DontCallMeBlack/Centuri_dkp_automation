@@ -42,7 +42,12 @@ export async function getSheetRoster() {
 }
 
 export async function adjustPlayersDKP(
-  adjustments: Array<{ rowIndex: number; points: number }>,
+  adjustments: Array<{
+    rowIndex: number;
+    points: number;
+    owner?: string;
+    account?: string;
+  }>,
 ) {
   if (adjustments.length === 0) return;
 
@@ -50,10 +55,10 @@ export async function adjustPlayersDKP(
   const spreadsheetId = getSpreadsheetId();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!D3:H1000`,
+    range: `${SHEET_NAME}!A3:H1000`,
   });
   const rows = response.data.values ?? [];
-  const updates = adjustments.flatMap(({ rowIndex, points }) => {
+  const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
     if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
       throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
     }
@@ -62,8 +67,14 @@ export async function adjustPlayersDKP(
     }
 
     const row = rows[rowIndex - 3];
-    if (!row) {
+    if (!row || !row[0]) {
       throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
+    }
+    if (
+      (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
+      (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
+    ) {
+      throw new Error(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
     }
 
     const readValue = (columnIndex: number, columnName: string) => {
@@ -77,9 +88,9 @@ export async function adjustPlayersDKP(
     };
 
     return [
-      { range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(0, 'D') + points]] },
-      { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(2, 'F') + points]] },
-      { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(4, 'H') + points]] },
+      { range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] },
+      { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(5, 'F') + points]] },
+      { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
     ];
   });
 

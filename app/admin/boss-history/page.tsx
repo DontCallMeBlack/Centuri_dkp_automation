@@ -15,6 +15,7 @@ interface BossAward {
   bossName: string;
   points: number;
   participants: RosterMember[];
+  selectedRows: number[];
   createdBy: string;
   updatedBy?: string;
   status: 'pending' | 'applied' | 'failed' | 'updating';
@@ -52,7 +53,7 @@ export default function BossHistoryPage() {
       setSelectedRows(Object.fromEntries(
         data.awards.map((award: BossAward) => [
           award.id,
-          award.participants.map((participant) => participant.rowIndex),
+          award.selectedRows,
         ]),
       ));
     } catch (loadError) {
@@ -79,6 +80,17 @@ export default function BossHistoryPage() {
   };
 
   const saveAttendance = async (awardId: string) => {
+    const award = awards.find((entry) => entry.id === awardId);
+    const currentRows = new Set(award?.selectedRows ?? []);
+    const nextRows = selectedRows[awardId] ?? [];
+    const removals = [...currentRows].filter((rowIndex) => !nextRows.includes(rowIndex)).length;
+    if (
+      removals > 0 &&
+      !window.confirm(`This will remove ${award?.points ?? 0} DKP per removed toon from Weekly Earned, All-time Earned, and Available. Available may become negative. Continue?`)
+    ) {
+      return;
+    }
+
     setBusyId(awardId);
     setError('');
     setNotice('');
@@ -209,7 +221,7 @@ export default function BossHistoryPage() {
                       onClick={() => {
                         setSelectedRows((current) => ({
                           ...current,
-                          [award.id]: award.participants.map((participant) => participant.rowIndex),
+                          [award.id]: award.selectedRows,
                         }));
                         setEditingId('');
                       }}

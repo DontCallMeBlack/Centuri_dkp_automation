@@ -1,4 +1,5 @@
 export interface SheetRecordIdentity {
+  rowIndex?: number;
   owner: string;
   account: string;
 }
@@ -22,10 +23,23 @@ export function getSheetRecordKey(record: SheetRecordIdentity) {
 
 export function getLinkedSheetRecordRows(user: UserSheetLinks, roster: RosterRecord[]) {
   if (user.sheetRecords?.length) {
-    const linkedRecords = new Set(user.sheetRecords.map(getSheetRecordKey));
-    return roster
-      .filter((record) => linkedRecords.has(getSheetRecordKey(record)))
-      .map((record) => record.rowIndex);
+    const linkedRows = new Set<number>();
+    const legacyRecords = new Set<string>();
+    for (const linkedRecord of user.sheetRecords) {
+      if (linkedRecord.rowIndex !== undefined) {
+        const row = roster.find((record) => record.rowIndex === linkedRecord.rowIndex);
+        if (row && getSheetRecordKey(row) === getSheetRecordKey(linkedRecord)) {
+          linkedRows.add(row.rowIndex);
+          continue;
+        }
+      }
+      legacyRecords.add(getSheetRecordKey(linkedRecord));
+    }
+
+    for (const record of roster) {
+      if (legacyRecords.has(getSheetRecordKey(record))) linkedRows.add(record.rowIndex);
+    }
+    return [...linkedRows];
   }
 
   const legacyOwner = normalize(user.sheetRecordName ?? '');

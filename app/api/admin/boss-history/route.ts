@@ -44,7 +44,16 @@ export async function GET() {
     ]);
     return NextResponse.json({
       success: true,
-      awards: awards.map(({ _id, ...award }) => ({ ...award, id: _id.toString() })),
+      awards: awards.map(({ _id, ...award }) => ({
+        ...award,
+        id: _id.toString(),
+        selectedRows: award.participants.flatMap((participant) => {
+          const matches = roster.filter((record) =>
+            getSheetRecordKey(record) === getSheetRecordKey(participant)
+          );
+          return matches.length === 1 ? [matches[0].rowIndex] : [];
+        }),
+      })),
       roster,
     });
   } catch (error: unknown) {
@@ -106,10 +115,10 @@ export async function PATCH(req: Request) {
       const adjustments = [
         ...nextByKey.entries()
           .filter(([key]) => !previousByKey.has(key))
-          .map(([, record]) => ({ rowIndex: record.rowIndex, points: award.points })),
+          .map(([, record]) => ({ ...record, points: award.points })),
         ...previousByKey.entries()
           .filter(([key]) => !nextByKey.has(key))
-          .map(([, record]) => ({ rowIndex: record.rowIndex, points: -award.points })),
+          .map(([, record]) => ({ ...record, points: -award.points })),
       ];
 
       if (adjustments.length > 0) {
@@ -125,7 +134,14 @@ export async function PATCH(req: Request) {
       award.updatedBy = user.nickname;
       award.status = 'applied';
       award.failureReason = undefined;
-      await award.save();
+      try {
+        await award.save();
+      } catch (error: unknown) {
+        console.error('Failed to save edited boss award after applying sheet changes', error);
+        return NextResponse.json({
+          error: 'Sheet points were changed, but the boss history could not be saved. Do not retry until the history is checked.',
+        }, { status: 500 });
+      }
 
       return NextResponse.json({
         success: true,
@@ -136,11 +152,9 @@ export async function PATCH(req: Request) {
         award.status = 'applied';
         await award.save();
       }
-      const message = error instanceof Error
-        ? error.message
-        : sheetChangesApplied
-          ? 'Sheet points changed, but boss history could not be saved. Do not retry until the history is checked.'
-          : 'Unable to update boss history';
+      const message = sheetChangesApplied
+        ? 'Sheet points were changed, but the boss history could not be saved. Do not retry until the history is checked.'
+        : error instanceof Error ? error.message : 'Unable to update boss history';
       return NextResponse.json({ error: message }, { status: 500 });
     }
   } catch (error: unknown) {
