@@ -492,20 +492,20 @@ export default function DashboardPage() {
             className="flex max-h-[95vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-slate-700 bg-[#0b1020] shadow-2xl shadow-black/60 sm:rounded-3xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="relative overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 p-5 sm:p-6">
+            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 p-5 sm:p-6">
               <div className="pointer-events-none absolute -right-8 -top-16 h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl" />
-              <div className="relative flex items-start justify-between gap-4">
-                <div>
+              <div className="relative flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Raid operations</p>
-                  <h2 id="award-picker-title" className="mt-1 text-xl font-black text-white sm:text-2xl">Choose boss &amp; participants</h2>
-                  <p className="mt-1 text-sm text-slate-400">Search every toon in the sheet and select everyone who attended.</p>
+                  <h2 id="award-picker-title" className="mt-1 break-words text-lg font-black leading-tight text-white sm:text-2xl">Choose boss &amp; participants</h2>
+                  <p className="mt-2 text-sm leading-snug text-slate-400">Search every toon in the sheet and select everyone who attended.</p>
                 </div>
                 <button
                   type="button"
                   aria-label="Close participant menu"
                   disabled={submitting}
                   onClick={() => setPickerOpen(false)}
-                  className="rounded-lg border border-slate-700 p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
+                  className="shrink-0 rounded-lg border border-slate-700 p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"
                 >
                   <X className="h-4 w-4" />
                 </button>
