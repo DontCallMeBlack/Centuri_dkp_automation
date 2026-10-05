@@ -483,13 +483,6 @@ export default function DashboardPage() {
                   {rankedActiveToons.map((toon) => (
                     <article key={toon.rowIndex} className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 p-4 transition hover:-translate-y-0.5 hover:border-indigo-500/30">
                       <div className="flex items-start gap-3">
-                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-sm font-black ${
-                          toon.rank <= 3 && toonSort === 'role-dkp'
-                            ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
-                            : 'border-slate-800 bg-slate-900 text-slate-400'
-                        }`}>
-                          {toon.rank}
-                        </span>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <h3 className="truncate font-bold text-white">{toon.account || toon.owner}</h3>
