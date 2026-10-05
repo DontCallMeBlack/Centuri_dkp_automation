@@ -4,7 +4,7 @@ import dbConnect from '@/lib/mongodb';
 import User from '@/lib/models/User';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster } from '@/lib/googleSheets';
-import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
+import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 
 const MEMBER_ROLES = ['clansman', 'guardian'] as const;
 
@@ -110,22 +110,18 @@ export async function POST(req: Request) {
       _id: { $ne: target._id },
       status: 'approved',
     }).select('sheetRecordName sheetRecords').lean();
-    const selectedKeys = new Set(validSelectedRecords.map(getSheetRecordKey));
-    const occupiedKeys = new Set(
-      linkedUsers.flatMap((user) => {
-        if (user.sheetRecords?.length) return user.sheetRecords.map(getSheetRecordKey);
-        const legacyOwner = user.sheetRecordName?.trim().toLowerCase();
-        if (!legacyOwner) return [];
-        return roster
-          .filter((record) => record.owner.trim().toLowerCase() === legacyOwner)
-          .map(getSheetRecordKey);
-      }),
+    const occupiedRows = new Set(
+      linkedUsers.flatMap((user) => getLinkedSheetRecordRows(user, roster)),
     );
-    if ([...selectedKeys].some((key) => occupiedKeys.has(key))) {
+    if (validSelectedRecords.some((record) => occupiedRows.has(record.rowIndex))) {
       return NextResponse.json({ error: 'One or more selected toon rows are already linked to another user' }, { status: 409 });
     }
 
-    target.sheetRecords = validSelectedRecords.map(({ owner, account }) => ({ owner, account }));
+    target.sheetRecords = validSelectedRecords.map(({ rowIndex, owner, account }) => ({
+      rowIndex,
+      owner,
+      account,
+    }));
     target.sheetRecordName = undefined;
     if (action === 'approve') target.status = 'approved';
     await target.save();
@@ -137,6 +133,11 @@ export async function POST(req: Request) {
         : `User linked to ${validSelectedRecords.length} toon(s)`,
     });
   } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 11000) {
+      return NextResponse.json({
+        error: 'One or more selected toon rows are already linked to another user',
+      }, { status: 409 });
+    }
     const message = error instanceof Error ? error.message : 'Unable to complete administration request';
     return NextResponse.json({ error: message }, { status: 500 });
   }

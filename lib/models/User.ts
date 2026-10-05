@@ -2,6 +2,7 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface ISheetRecord {
+  rowIndex?: number;
   owner: string;
   account: string;
 }
@@ -17,6 +18,7 @@ export interface IUser extends Document {
 }
 
 const SheetRecordSchema = new Schema<ISheetRecord>({
+  rowIndex: { type: Number },
   owner: { type: String, required: true, trim: true },
   account: { type: String, trim: true, default: '' },
 }, { _id: false });
@@ -30,6 +32,8 @@ const UserSchema: Schema<IUser> = new Schema({
   sheetRecords: { type: [SheetRecordSchema], default: undefined },
   createdAt: { type: Date, default: Date.now },
 });
+
+UserSchema.index({ 'sheetRecords.rowIndex': 1 }, { unique: true, sparse: true });
 
 const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
 

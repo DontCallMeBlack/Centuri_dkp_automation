@@ -82,7 +82,12 @@ export async function POST(req: Request) {
     });
 
     try {
-      await adjustPlayersDKP(validParticipants.map(({ rowIndex }) => ({ rowIndex, points })));
+      await adjustPlayersDKP(validParticipants.map(({ rowIndex, owner, account }) => ({
+        rowIndex,
+        points,
+        owner,
+        account,
+      })));
     } catch (error: unknown) {
       award.status = 'failed';
       award.failureReason = error instanceof Error ? error.message : 'Unable to apply award to Google Sheets';
@@ -91,7 +96,14 @@ export async function POST(req: Request) {
     }
 
     award.status = 'applied';
-    await award.save();
+    try {
+      await award.save();
+    } catch (error: unknown) {
+      console.error('Failed to mark applied boss award in history', error);
+      return NextResponse.json({
+        error: 'DKP points were applied, but the boss history could not be marked complete. Check boss history before retrying.',
+      }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
