@@ -26,14 +26,14 @@ export async function getSheetRoster() {
   // Owner (A), Account (B), Sub class (C), Earned (D), Spent (E), Earned (F), Spent (G), Available (H)
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!A2:H1000`,
+    range: `${SHEET_NAME}!A3:H1000`,
   });
 
   const rows = response.data.values;
   if (!rows) return [];
 
   return rows.map((row, index) => ({
-    rowIndex: index + 2, // 1-based index for updating later (+2 because of header row)
+    rowIndex: index + 3,
     owner: row[0] || '',
     account: row[1] || '',
     subClass: row[2] || '',
