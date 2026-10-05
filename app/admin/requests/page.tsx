@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ClipboardList, LoaderCircle, Shield, Trash2, UserCheck, Users, X, Zap } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardList, History, LoaderCircle, Shield, Trash2, UserCheck, Users, X, Zap } from 'lucide-react';
 
 interface ClanUser {
   _id: string;
@@ -305,7 +305,12 @@ export default function AdminRequestsPage() {
 
         {section === 'boss' && (
           <section className="mt-6">
-            <h2 className="text-lg font-bold text-white">Record a boss award</h2>
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <h2 className="text-lg font-bold text-white">Record a boss award</h2>
+              <button onClick={() => router.push('/admin/boss-history')} className="inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10">
+                <History className="h-4 w-4" /> Boss history
+              </button>
+            </div>
             <p className="mb-5 mt-1 text-sm text-slate-400">Select every participating roster record, including guardians.</p>
             <form onSubmit={recordBoss} className="space-y-5">
               <label className="block max-w-sm text-xs font-semibold uppercase text-slate-400">
