@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck, X } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp } from 'lucide-react';
 
 interface RosterMember {
   rowIndex: number;
@@ -23,6 +23,10 @@ interface ClanMember {
   toons: RosterMember[];
 }
 
+interface ActiveToon extends RosterMember {
+  memberNickname: string;
+}
+
 interface UserSession {
   nickname: string;
   role: string;
@@ -38,6 +42,30 @@ const BOSSES = [
   { name: 'Crom', points: 12, tier: 'Tier 6' },
 ];
 
+const ROLE_ORDER = [
+  'ranger',
+  'dps rogue',
+  'fire mage',
+  'ice mage',
+  'support druid',
+  'dps druid',
+  'support rogue',
+  'dps warrior',
+  'tank',
+];
+
+const ROLE_STYLES: Record<string, string> = {
+  ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',
+  'dps rogue': 'border-violet-400/30 bg-violet-400/10 text-violet-300',
+  'fire mage': 'border-orange-700/40 bg-orange-800/20 text-orange-400',
+  'ice mage': 'border-sky-300/30 bg-sky-300/10 text-sky-200',
+  'support druid': 'border-green-400/30 bg-green-400/10 text-green-300',
+  'dps druid': 'border-purple-800/50 bg-purple-900/30 text-purple-300',
+  'support rogue': 'border-rose-600/40 bg-rose-700/20 text-rose-300',
+  'dps warrior': 'border-red-400/30 bg-red-400/10 text-red-300',
+  tank: 'border-pink-400/30 bg-pink-400/10 text-pink-300',
+};
+
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<'dkp' | 'auction'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
@@ -49,6 +77,7 @@ export default function DashboardPage() {
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
+  const [toonSort, setToonSort] = useState<'owner' | 'role-dkp'>('owner');
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const router = useRouter();
@@ -122,11 +151,31 @@ export default function DashboardPage() {
     (member) => userSession?.sheetRecordRows.includes(member.rowIndex)
   );
 
-  const filteredClanMembers = clanMembers.filter((member) =>
-    `${member.nickname} ${member.role} ${member.toons.map((toon) => `${toon.owner} ${toon.account} ${toon.subClass}`).join(' ')}`
-      .toLowerCase()
-      .includes(memberQuery.toLowerCase())
+  const activeToons: ActiveToon[] = clanMembers.flatMap((member) =>
+    member.toons.map((toon) => ({ ...toon, memberNickname: member.nickname }))
   );
+  const sortedActiveToons = [...activeToons].sort((first, second) => {
+    if (toonSort === 'owner') {
+      return first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
+        (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
+    }
+
+    const firstRoleIndex = ROLE_ORDER.indexOf(first.subClass.trim().toLowerCase());
+    const secondRoleIndex = ROLE_ORDER.indexOf(second.subClass.trim().toLowerCase());
+    const roleDifference = (firstRoleIndex < 0 ? ROLE_ORDER.length : firstRoleIndex) -
+      (secondRoleIndex < 0 ? ROLE_ORDER.length : secondRoleIndex);
+    return roleDifference ||
+      second.available - first.available ||
+      first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
+      (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
+  });
+  const rankedActiveToons = sortedActiveToons
+    .map((toon, index) => ({ ...toon, rank: index + 1 }))
+    .filter((toon) =>
+      `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`
+        .toLowerCase()
+        .includes(memberQuery.toLowerCase())
+    );
 
   const filteredRoster = roster.filter((member) =>
     `${member.owner} ${member.account} ${member.subClass}`
@@ -342,55 +391,75 @@ export default function DashboardPage() {
               <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-300">The roster</p>
-                  <h2 className="mt-1 text-xl font-bold text-white">Active clan members</h2>
-                  <p className="mt-1 text-sm text-slate-400">Approved clan accounts and the toons linked to them.</p>
+                  <h2 className="mt-1 text-xl font-bold text-white">Active toon leaderboard</h2>
+                  <p className="mt-1 text-sm text-slate-400">Compare linked active toons by owner or by role and available DKP.</p>
                 </div>
-                <div className="relative w-full sm:max-w-xs">
-                  <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-                  <input
-                    type="search"
-                    placeholder="Find a member or toon..."
-                    value={memberQuery}
-                    onChange={(event) => setMemberQuery(event.target.value)}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
-                  />
+                <div className="flex w-full flex-col gap-2 sm:max-w-xl sm:flex-row">
+                  <label className="relative min-w-0 flex-1">
+                    <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+                    <input
+                      type="search"
+                      placeholder="Find a clan member, owner, or toon..."
+                      value={memberQuery}
+                      onChange={(event) => setMemberQuery(event.target.value)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                    />
+                  </label>
+                  <label className="relative shrink-0">
+                    <ArrowDownUp className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
+                    <span className="sr-only">Sort toons</span>
+                    <select
+                      value={toonSort}
+                      onChange={(event) => setToonSort(event.target.value as 'owner' | 'role-dkp')}
+                      className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-slate-200 outline-none focus:border-indigo-500 sm:w-52"
+                    >
+                      <option value="owner">Sort by toon owner</option>
+                      <option value="role-dkp">Role, then available DKP</option>
+                    </select>
+                  </label>
                 </div>
               </div>
 
               {loading ? (
                 <div className="animate-pulse py-12 text-center text-sm text-slate-500">Syncing active clan roster...</div>
-              ) : filteredClanMembers.length === 0 ? (
+              ) : rankedActiveToons.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-800 py-12 text-center text-sm text-slate-500">
-                  No active members or toons match that search.
+                  No active toons match that search.
                 </div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {filteredClanMembers.map((member) => (
-                    <article key={member.nickname} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-indigo-500/30">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 font-black text-indigo-300">
-                            {member.nickname.slice(0, 1).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <h3 className="truncate font-bold text-white">{member.nickname}</h3>
-                            <p className="text-xs capitalize text-slate-500">{member.role} · {member.toons.length} toon{member.toons.length === 1 ? '' : 's'}</p>
-                          </div>
-                        </div>
-                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-300">Active</span>
-                      </div>
-                      {member.toons.length > 0 ? (
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {member.toons.map((toon) => (
-                            <span key={toon.rowIndex} className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-2 text-xs">
-                              <span className="font-semibold text-slate-200">{toon.account || toon.owner}</span>
-                              <span className="text-slate-500">{toon.available.toLocaleString()} DKP</span>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {rankedActiveToons.map((toon) => (
+                    <article key={toon.rowIndex} className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 p-4 transition hover:-translate-y-0.5 hover:border-indigo-500/30">
+                      <div className="flex items-start gap-3">
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-sm font-black ${
+                          toon.rank <= 3 && toonSort === 'role-dkp'
+                            ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+                            : 'border-slate-800 bg-slate-900 text-slate-400'
+                        }`}>
+                          {toon.rank}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="truncate font-bold text-white">{toon.account || toon.owner}</h3>
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                              ROLE_STYLES[toon.subClass.trim().toLowerCase()] ?? 'border-slate-700 bg-slate-800 text-slate-300'
+                            }`}>
+                              {toon.subClass || 'Unassigned'}
                             </span>
-                          ))}
+                          </div>
+                          <p className="mt-1 truncate text-xs text-slate-500">
+                            Owner: {toon.owner} · Account: {toon.memberNickname}
+                          </p>
                         </div>
-                      ) : (
-                        <p className="mt-4 rounded-lg border border-dashed border-slate-800 px-3 py-2 text-xs text-slate-500">No toons linked yet</p>
-                      )}
+                        <div className="shrink-0 text-right">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Available</p>
+                          <p className="text-lg font-black text-emerald-300">{toon.available.toLocaleString()}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-800 pt-3 text-xs">
+                        <p className="text-slate-500">All-time earned <span className="float-right font-semibold text-slate-300">{toon.earned.toLocaleString()}</span></p>
+                        <p className="text-right text-slate-500">Spent <span className="font-semibold text-slate-300">{toon.spent.toLocaleString()}</span></p>
+                      </div>
                     </article>
                   ))}
                 </div>
