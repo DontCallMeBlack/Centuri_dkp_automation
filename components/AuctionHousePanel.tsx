@@ -272,6 +272,7 @@ export default function AuctionHousePanel() {
   const [auctionRoleFilter, setAuctionRoleFilter] = useState('');
   const [auctionBossFilter, setAuctionBossFilter] = useState('');
   const [auctionHolderFilter, setAuctionHolderFilter] = useState('');
+  const [auctionSearch, setAuctionSearch] = useState('');
   const [auctionFiltersOpen, setAuctionFiltersOpen] = useState(false);
   const [archiveAuctions, setArchiveAuctions] = useState<Auction[]>([]);
   const [archiveLoaded, setArchiveLoaded] = useState(false);
@@ -497,12 +498,23 @@ export default function AuctionHousePanel() {
     (!auctionBossFilter || auction.bossType === auctionBossFilter) &&
     (!auctionHolderFilter ||
       auction.winner?.nickname === auctionHolderFilter ||
-      (!auction.winner && auction.highBid?.nickname === auctionHolderFilter)),
+      (!auction.winner && auction.highBid?.nickname === auctionHolderFilter)) &&
+    (!auctionSearch.trim() || [
+      auction.itemName,
+      auction.createdBy,
+      auction.winner?.nickname,
+      auction.winner?.owner,
+      auction.winner?.account,
+      auction.highBid?.nickname,
+      auction.highBid?.owner,
+      auction.highBid?.account,
+    ].some((value) => value?.toLowerCase().includes(auctionSearch.trim().toLowerCase()))),
   );
   const activeAuctionFilterCount = [
     auctionRoleFilter,
     auctionBossFilter,
     auctionHolderFilter,
+    auctionSearch.trim(),
   ].filter(Boolean).length;
 
   return (
@@ -679,9 +691,9 @@ export default function AuctionHousePanel() {
                       className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
                     />
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
+                      <p className="break-words text-sm font-bold text-white">{auction.itemName}</p>
                       {auction.winner ? (
-                        <p className="text-xs text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner.nickname}</span> · {auction.winner.owner} · {auction.winner.amount.toLocaleString()} DKP</p>
+                        <p className="break-words text-xs leading-snug text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner.nickname}</span> · {auction.winner.account || auction.winner.owner} · {auction.winner.amount.toLocaleString()} DKP</p>
                       ) : (
                         <p className="text-xs text-slate-400">No bids · choose what happens to this item</p>
                       )}
@@ -745,7 +757,7 @@ export default function AuctionHousePanel() {
               {wonAuctions.map((auction) => (
                 <article key={auction.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
+                    <p className="break-words text-sm font-bold text-white">{auction.itemName}</p>
                     <p className="mt-1 text-[11px] text-slate-400">
                       {auction.deliveryStatus === 'done'
                         ? `Mailed · ${auction.bossType}`
@@ -763,17 +775,28 @@ export default function AuctionHousePanel() {
       )}
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div className="min-w-0">
             <h3 className="text-lg font-bold text-white">Auctions</h3>
             <p className="text-xs text-slate-400">
               Showing {filteredAuctions.length} of {allAuctions.length} loaded auctions · bid limits use each toon’s available DKP minus active holds.
             </p>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              onClick={() => setAuctionFiltersOpen((open) => !open)}
+        <div className="flex min-w-0 gap-2">
+          <label className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <input
+              type="search"
+              value={auctionSearch}
+              onChange={(event) => setAuctionSearch(event.target.value)}
+              placeholder="Search item, poster, or bidder..."
+              aria-label="Search auctions by item, poster, or bidder"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-indigo-400/60"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => setAuctionFiltersOpen((open) => !open)}
               aria-expanded={auctionFiltersOpen}
               aria-controls="auction-filters"
               className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
@@ -823,6 +846,7 @@ export default function AuctionHousePanel() {
                 setAuctionRoleFilter('');
                 setAuctionBossFilter('');
                 setAuctionHolderFilter('');
+                setAuctionSearch('');
               }}
               className="text-left text-xs font-semibold text-indigo-300 hover:text-indigo-200 sm:col-span-3"
             >
@@ -851,7 +875,7 @@ export default function AuctionHousePanel() {
             <p className="mt-3 text-sm text-slate-400">No auctions match these filters.</p>
           </div>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="mx-auto grid w-full max-w-2xl gap-5">
             {filteredAuctions.map((auction) => {
               const isActive = auction.status === 'active' && new Date(auction.endsAt).getTime() > now;
               const eligibleToons = data.toons.filter((toon) =>
@@ -869,34 +893,60 @@ export default function AuctionHousePanel() {
               const roleStyle = roleStyles[normalizeAuctionRole(auction.requiredRole)] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
-                <article key={auction.id} className={`overflow-hidden rounded-2xl border bg-slate-900/60 shadow-lg ${isActive ? 'border-slate-700/80' : 'border-slate-800'}`}>
-                  <div className="flex gap-4 p-4 sm:p-5">
-                    <AuctionItemImage
-                      itemId={auction.itemId}
-                      imageCount={auction.imageCount}
-                      alt={auction.itemName}
-                      className="h-40 w-40 shrink-0 rounded-xl border border-slate-800 bg-slate-950 object-contain p-1 sm:h-52 sm:w-52"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h4 className="truncate text-base font-bold text-white">{auction.itemName}</h4>
-                          <p className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auction.requiredRole} only</p>
-                          <p className="mt-1 text-[10px] font-semibold text-slate-400">{auction.bossType}</p>
-                        </div>
-                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/10 text-emerald-300' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>
-                          {isActive ? 'Live' : auction.status === 'settling' ? 'Settling' : auction.status === 'settlement-failed' ? 'Needs review' : 'Ended'}
-                        </span>
+                <article key={auction.id} className={`overflow-hidden rounded-3xl border bg-slate-900/70 shadow-xl shadow-black/20 ${isActive ? 'border-slate-700/80' : 'border-slate-800'}`}>
+                  <header className="flex items-center justify-between gap-3 p-4 sm:p-5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-400/30 bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-black uppercase text-indigo-200">
+                        {auction.createdBy.trim().charAt(0) || 'C'}
                       </div>
-                      <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
-                        {isActive ? <Clock3 className="h-3.5 w-3.5 text-emerald-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}
-                        {isActive ? <span>Ends in <strong className="font-mono text-slate-200">{formatRemaining(auction.endsAt, now)}</strong></span> : <span>{auction.status === 'settlement-failed' ? 'Settlement could not be completed' : 'Auction closed'}</span>}
+                      <div className="min-w-0">
+                        <p className="break-words text-sm font-bold text-white">{auction.createdBy}</p>
+                        <p className="text-[11px] text-slate-500">
+                          Posted {new Date(auction.createdAt).toLocaleString()}
+                        </p>
                       </div>
-                      <p className="mt-2 text-[11px] text-slate-500">Posted by {auction.createdBy}</p>
                     </div>
-                  </div>
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/10 text-emerald-300' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>
+                      {isActive ? 'Live' : auction.status === 'settling' ? 'Settling' : auction.status === 'settlement-failed' ? 'Needs review' : 'Ended'}
+                    </span>
+                  </header>
 
-                  <div className="space-y-3 border-t border-slate-800/80 bg-slate-950/30 p-4 sm:p-5">
+                  <AuctionItemImage
+                    itemId={auction.itemId}
+                    imageCount={auction.imageCount}
+                    alt={auction.itemName}
+                    className="aspect-square w-full border-y border-slate-800 bg-slate-950 p-3 sm:p-5"
+                  />
+
+                  <div className="space-y-4 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auction.requiredRole} only</span>
+                      <span className="rounded-full border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-[10px] font-semibold text-slate-300">{auction.bossType}</span>
+                      <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-slate-400">
+                        {isActive ? <Clock3 className="h-3.5 w-3.5 text-emerald-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}
+                        {isActive
+                          ? <>Ends in <strong className="font-mono text-slate-200">{formatRemaining(auction.endsAt, now)}</strong></>
+                          : auction.status === 'settlement-failed' ? 'Settlement needs review' : 'Auction closed'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="break-words text-xl font-black leading-snug text-white">{auction.itemName}</h4>
+                      {auction.highBid ? (
+                        <div className="mt-3 flex items-start justify-between gap-3 rounded-2xl border border-amber-400/15 bg-amber-400/5 p-3">
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning bid' : 'Leading bid'}</p>
+                            <p className="mt-1 break-words text-sm font-semibold leading-snug text-slate-200">{auction.highBid.nickname}</p>
+                            <p className="mt-0.5 break-words text-xs text-slate-400">Toon: {auction.highBid.account || auction.highBid.owner}</p>
+                          </div>
+                          <p className="shrink-0 text-lg font-black tabular-nums text-amber-200">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold text-amber-400/70">DKP</span></p>
+                        </div>
+                      ) : (
+                        <p className="mt-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-400">No bids yet · starting bid 1 DKP</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-3 border-t border-slate-800/80 pt-4">
                     {isActive && auction.canRemove && (
                       <button
                         type="button"
@@ -913,15 +963,6 @@ export default function AuctionHousePanel() {
                     {auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'reposted' && (
                       <p className="text-xs text-indigo-200">Reposted by {auction.deliveredBy}</p>
                     )}
-                    {auction.highBid ? (
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning bid' : 'Leading bid'}</p>
-                          <p className="truncate text-xs text-slate-300">{auction.highBid.nickname} · {auction.highBid.owner}</p>
-                        </div>
-                        <p className="shrink-0 text-lg font-black text-amber-200">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold text-amber-400/70">DKP</span></p>
-                      </div>
-                    ) : <p className="text-xs text-slate-400">No bids yet · starting bid 1 DKP</p>}
 
                     {isActive && (
                       <div className="space-y-3">
@@ -956,11 +997,13 @@ export default function AuctionHousePanel() {
                       <p role="alert" className="flex gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-300"><ShieldAlert className="h-4 w-4 shrink-0" />{auction.settlementError}</p>
                     )}
                     {!isActive && auction.status === 'completed' && auction.winner && (
-                      <p className="flex items-center gap-2 text-xs text-emerald-300">
-                        <Check className="h-3.5 w-3.5" /> Winner: {auction.winner.nickname} · {auction.winner.owner}
+                      <p className="flex items-start gap-2 break-words text-xs leading-snug text-emerald-300">
+                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>Winner: {auction.winner.nickname} · {auction.winner.account || auction.winner.owner}
                         {auction.deliveryStatus === 'done' && <span className="text-slate-500">· mailed by {auction.deliveredBy}</span>}
+                        </span>
                       </p>
                     )}
+                    </div>
                   </div>
                 </article>
               );
