@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ClipboardList, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardList, LoaderCircle, Save, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
   _id: string;
@@ -18,6 +18,8 @@ interface RosterMember {
   available?: number;
 }
 
+type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
+
 type AdminSection = 'requests' | 'members';
 
 export default function AdminRequestsPage() {
@@ -27,8 +29,11 @@ export default function AdminRequestsPage() {
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, ClanRole>>({});
   const [loading, setLoading] = useState(true);
   const [accessRole, setAccessRole] = useState('');
+  const [managerRole, setManagerRole] = useState<ClanRole | ''>('');
+  const [managerId, setManagerId] = useState('');
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -47,9 +52,14 @@ export default function AdminRequestsPage() {
         return;
       }
       if (!res.ok) throw new Error(data.error || 'Failed to load clan administration data');
+      setManagerRole(data.managerRole ?? '');
+      setManagerId(data.managerId ?? '');
       setPendingUsers(data.pendingUsers);
       setMembers(data.members);
       setRoster(data.roster);
+      setSelectedRoles(Object.fromEntries(
+        data.members.map((member: ClanUser) => [member._id, member.role]),
+      ));
       setSelectedMappings(Object.fromEntries(
         [...data.pendingUsers, ...data.members].map((member: ClanUser) => [
           member._id,
@@ -67,7 +77,12 @@ export default function AdminRequestsPage() {
     void loadData();
   }, []);
 
-  const sendAdminAction = async (userId: string, action: string, sheetRecordRows?: number[]) => {
+  const sendAdminAction = async (
+    userId: string,
+    action: string,
+    sheetRecordRows?: number[],
+    role?: ClanRole,
+  ) => {
     setBusyId(userId);
     setError('');
     setNotice('');
@@ -75,7 +90,7 @@ export default function AdminRequestsPage() {
       const res = await fetch('/api/admin/requests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, action, sheetRecordRows }),
+        body: JSON.stringify({ userId, action, sheetRecordRows, role }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'The request could not be completed');
@@ -200,6 +215,13 @@ export default function AdminRequestsPage() {
     }
   };
 
+  const updateRole = (member: ClanUser) => {
+    const role = selectedRoles[member._id];
+    if (!role || role === member.role) return;
+    if (!window.confirm(`Change ${member.nickname}'s role from ${member.role} to ${role}?`)) return;
+    void sendAdminAction(member._id, 'set-role', undefined, role);
+  };
+
   if (loading) {
     return <div className="min-h-screen bg-[#07090e] p-8 text-sm text-slate-400">Loading clan administration...</div>;
   }
@@ -300,7 +322,7 @@ export default function AdminRequestsPage() {
                   <article key={member._id} className="grid gap-3 py-4 md:grid-cols-[minmax(10rem,1fr)_minmax(14rem,20rem)_auto] md:items-center">
                     <div>
                       <h3 className="font-semibold text-white">{member.nickname}</h3>
-                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(selectedMappings[member._id] ?? []).length} toon(s) selected</p>
+                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(member.sheetRecordRows ?? []).length} toon(s) linked</p>
                     </div>
                     <div>
                       {renderMappingSelector(member._id, `Available toon rows for ${member.nickname}`)}
@@ -329,6 +351,38 @@ export default function AdminRequestsPage() {
                       )}
                     </div>
                     <div className="flex gap-2">
+                      {member._id !== managerId &&
+                        (managerRole === 'chief' || (managerRole === 'general' && member.role !== 'chief' && member.role !== 'general')) && (
+                        <div className="flex min-w-0 flex-1 gap-2">
+                          <label className="sr-only" htmlFor={`role-${member._id}`}>Role for {member.nickname}</label>
+                          <select
+                            id={`role-${member._id}`}
+                            value={selectedRoles[member._id] ?? member.role}
+                            onChange={(event) => setSelectedRoles((current) => ({
+                              ...current,
+                              [member._id]: event.target.value as ClanRole,
+                            }))}
+                            disabled={busyId === member._id}
+                            className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs capitalize text-slate-200 outline-none focus:border-indigo-500 disabled:opacity-50"
+                          >
+                            {(managerRole === 'chief'
+                              ? ['chief', 'general', 'guardian', 'clansman']
+                              : ['guardian', 'clansman']
+                            ).map((role) => (
+                              <option key={role} value={role}>{role}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={busyId === member._id || !selectedRoles[member._id] || selectedRoles[member._id] === member.role}
+                            onClick={() => updateRole(member)}
+                            title={`Save role for ${member.nickname}`}
+                            className="inline-flex items-center justify-center rounded-lg border border-indigo-500/40 px-2.5 text-indigo-200 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {busyId === member._id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      )}
                       <button disabled={busyId === member._id} onClick={() => linkMember(member._id)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50">
                         <UserCheck className="h-4 w-4" /> Link
                       </button>

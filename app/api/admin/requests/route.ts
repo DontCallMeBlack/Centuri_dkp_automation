@@ -7,6 +7,13 @@ import { getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 
 const MEMBER_ROLES = ['clansman', 'guardian'] as const;
+const ASSIGNABLE_ROLES = ['chief', 'general', 'guardian', 'clansman'] as const;
+type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
+
+function isAssignableRole(value: unknown): value is AssignableRole {
+  return typeof value === 'string' &&
+    (ASSIGNABLE_ROLES as readonly string[]).includes(value);
+}
 
 function isValidRowIndexArray(value: unknown): value is number[] {
   return Array.isArray(value) &&
@@ -42,6 +49,8 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      managerRole: manager.role,
+      managerId: manager._id.toString(),
       pendingUsers: pendingUsers.map(includeLinkedRows),
       members: members.map(includeLinkedRows),
       roster,
@@ -63,12 +72,49 @@ export async function POST(req: Request) {
     const { action } = body;
     const userId = typeof body.userId === 'string' ? body.userId : '';
 
-    if (!['approve', 'deny', 'link', 'unlink', 'remove'].includes(action) || !mongoose.isValidObjectId(userId)) {
+    if (!['approve', 'deny', 'link', 'unlink', 'remove', 'set-role'].includes(action) || !mongoose.isValidObjectId(userId)) {
       return NextResponse.json({ error: 'Invalid administration request' }, { status: 400 });
     }
 
     const target = await User.findById(userId);
     if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+    if (action === 'set-role') {
+      if (target.status !== 'approved') {
+        return NextResponse.json({ error: 'Only approved accounts can have their role changed' }, { status: 400 });
+      }
+
+      const requestedRole: unknown = body.role;
+      if (!isAssignableRole(requestedRole)) {
+        return NextResponse.json({ error: 'Select a valid member role' }, { status: 400 });
+      }
+      if (target._id.equals(manager._id)) {
+        return NextResponse.json({ error: 'You cannot change your own role' }, { status: 400 });
+      }
+      if (manager.role === 'general' &&
+        (!(MEMBER_ROLES as readonly string[]).includes(requestedRole) ||
+          target.role === 'chief' || target.role === 'general')) {
+        return NextResponse.json({
+          error: 'Generals can only promote or demote Guardian and Clansman accounts',
+        }, { status: 403 });
+      }
+      if (target.role === requestedRole) {
+        return NextResponse.json({ error: 'This account already has that role' }, { status: 400 });
+      }
+      if (target.role === 'chief' && requestedRole !== 'chief') {
+        const chiefCount = await User.countDocuments({ status: 'approved', role: 'chief' });
+        if (chiefCount <= 1) {
+          return NextResponse.json({ error: 'The last Chief account cannot be demoted' }, { status: 409 });
+        }
+      }
+
+      target.role = requestedRole;
+      await target.save();
+      return NextResponse.json({
+        success: true,
+        message: `Updated ${target.nickname}'s role to ${requestedRole}.`,
+      });
+    }
 
     if (action === 'unlink') {
       if (target.status !== 'approved') {
