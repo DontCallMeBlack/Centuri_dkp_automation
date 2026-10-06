@@ -38,6 +38,7 @@ interface Auction {
   itemName: string;
   requiredRole: string;
   createdBy: string;
+  canRemove: boolean;
   createdAt: string;
   endsAt: string;
   status: 'active' | 'settling' | 'completed' | 'settlement-failed';
@@ -310,7 +311,7 @@ export default function AuctionHousePanel() {
       const response = await fetch('/api/auction', { method: 'POST', body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to post auction');
-      setNotice('Auction posted. It will close in 24 hours; bids in the last five minutes extend the timer.');
+      setNotice('Auction posted. It will close in 2 minutes; bids in the final 2 minutes extend the timer.');
       setNewItemMode(false);
       setItemName('');
       setImageFiles([]);
@@ -372,6 +373,31 @@ export default function AuctionHousePanel() {
     }
   };
 
+  const removeAuction = async (auction: Auction) => {
+    if (!window.confirm(
+      `Remove the auction for ${auction.itemName}? Any leading bid will be released. Ended auctions remain in the history.`,
+    )) return;
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch('/api/auction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove-auction', auctionId: auction.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to remove auction');
+      setNotice(result.message);
+      await refresh();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : 'Unable to remove auction');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading auction house...</div>;
   }
@@ -421,8 +447,8 @@ export default function AuctionHousePanel() {
           )}
         </div>
         <div className="relative mt-4 flex flex-wrap gap-2 text-[11px] text-slate-300">
-          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">24-hour auctions</span>
-          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">5-minute anti-snipe extension</span>
+          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">2-minute auctions</span>
+          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">2-minute anti-snipe extension</span>
           <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">Held DKP is released when outbid</span>
         </div>
       </section>
@@ -436,7 +462,7 @@ export default function AuctionHousePanel() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></div>
             <div>
               <h3 className="font-bold text-white">Post an auction</h3>
-              <p className="text-xs text-slate-400">Chief, General, and Guardian access · closes 24 hours after posting</p>
+              <p className="text-xs text-slate-400">Chief, General, and Guardian access · closes 2 minutes after posting</p>
             </div>
           </div>
           <form onSubmit={submitAuction} className="grid gap-4 sm:grid-cols-2">
@@ -494,7 +520,7 @@ export default function AuctionHousePanel() {
               <p className="text-xs text-slate-500">Roles come directly from the Google Sheets roster. Only a linked toon with the selected role can bid.</p>
             </div>
             <button type="submit" disabled={saving || !requiredRole || (!newItemMode && !selectedItemId)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
-              {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />} Post 24-hour auction
+              {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />} Post 2-minute auction
             </button>
           </form>
         </section>
@@ -595,6 +621,16 @@ export default function AuctionHousePanel() {
                   </div>
 
                   <div className="space-y-3 border-t border-slate-800/80 bg-slate-950/30 p-4 sm:p-5">
+                    {isActive && auction.canRemove && (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => void removeAuction(auction)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        <X className="h-3.5 w-3.5" /> Remove auction
+                      </button>
+                    )}
                     {auction.highBid ? (
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
