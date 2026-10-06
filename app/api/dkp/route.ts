@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster, adjustPlayersDKP } from '@/lib/googleSheets';
-import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
+import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
 import User from '@/lib/models/User';
-import { getDkpCycleRange } from '@/lib/dkpCycle';
+import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 
 const BOSS_POINTS: Record<string, number> = {
   Base: 1,
@@ -29,36 +29,14 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { start, end } = getDkpCycleRange();
-    const [roster, activeUsers, weeklyAwards] = await Promise.all([
+    const [roster, activeUsers] = await Promise.all([
       getSheetRoster(),
       User.find({ status: 'approved' })
         .select('nickname role sheetRecordName sheetRecords')
         .sort({ nickname: 1 })
         .lean(),
-      BossAward.find({
-        status: 'applied',
-        createdAt: { $gte: start, $lt: end },
-      }).select('points participants').lean(),
     ]);
-    const weeklyEarnedByRow = new Map<number, number>();
-    for (const award of weeklyAwards) {
-      for (const participant of award.participants) {
-        const matches = roster.filter((record) =>
-          getSheetRecordKey(record) === getSheetRecordKey(participant)
-        );
-        const record = matches.find((match) => match.rowIndex === participant.rowIndex)
-          ?? (matches.length === 1 ? matches[0] : undefined);
-        if (!record) continue;
-
-        const rowIndex = record.rowIndex;
-        weeklyEarnedByRow.set(rowIndex, (weeklyEarnedByRow.get(rowIndex) ?? 0) + award.points);
-      }
-    }
-    const rosterWithCycleEarnings = roster.map((record) => ({
-      ...record,
-      weeklyEarned: weeklyEarnedByRow.get(record.rowIndex) ?? 0,
-    }));
+    const rosterWithCycleEarnings = await getRosterWithWeeklyEarned(roster);
     const recordsByRow = new Map(rosterWithCycleEarnings.map((record) => [record.rowIndex, record]));
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
     const clanMembers = activeUsers.map((member) => ({

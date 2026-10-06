@@ -1,5 +1,6 @@
 // lib/googleSheets.ts
 import { google } from 'googleapis';
+import AuctionHold from '@/lib/models/AuctionHold';
 
 const SHEET_NAME = "'DKP Sheet'";
 
@@ -58,6 +59,7 @@ export async function adjustPlayersDKP(
     owner?: string;
     account?: string;
   }>,
+  options: { reservedPointsToConsume?: Map<number, number> } = {},
 ) {
   if (adjustments.length === 0) return;
 
@@ -68,6 +70,10 @@ export async function adjustPlayersDKP(
     range: `${SHEET_NAME}!A3:H1000`,
   });
   const rows = response.data.values ?? [];
+  const holds = await AuctionHold.find({
+    rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
+  }).select('rowIndex heldPoints').lean();
+  const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
   const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
     if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
       throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
@@ -89,13 +95,25 @@ export async function adjustPlayersDKP(
 
     const readValue = (columnIndex: number, columnName: string) => {
       const value = row[columnIndex];
-      if (value === undefined || value === '') return 0;
-      const parsed = Number(value);
+      if (value === undefined || value === '' || value === '-') return 0;
+      const parsed = Number(String(value).replace(/,/g, '').trim());
       if (!Number.isFinite(parsed)) {
         throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
       }
       return parsed;
     };
+
+    if (points < 0) {
+      const heldPoints = holdsByRow.get(rowIndex) ?? 0;
+      const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
+      if (
+        reservedPointsToConsume < 0 ||
+        reservedPointsToConsume > heldPoints ||
+        readValue(7, 'H') + points < heldPoints - reservedPointsToConsume
+      ) {
+        throw new Error(`Cannot reduce DKP for row ${rowIndex} below its ${heldPoints} held auction points.`);
+      }
+    }
 
     return [
       { range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] },
