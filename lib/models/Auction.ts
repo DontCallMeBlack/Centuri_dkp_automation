@@ -21,7 +21,7 @@ export interface IAuction extends Document {
   highBid?: IAuctionBid;
   winner?: IAuctionBid;
   bidVersion: number;
-  deliveryStatus: 'pending' | 'done' | 'not-required';
+  deliveryStatus: 'pending' | 'done' | 'not-required' | 'banked' | 'reposted';
   deliveredBy?: string;
   deliveredAt?: Date;
   settlementError?: string;
@@ -56,7 +56,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   bidVersion: { type: Number, default: 0 },
   deliveryStatus: {
     type: String,
-    enum: ['pending', 'done', 'not-required'],
+    enum: ['pending', 'done', 'not-required', 'banked', 'reposted'],
     default: 'not-required',
     required: true,
   },

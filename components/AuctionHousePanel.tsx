@@ -44,10 +44,11 @@ interface Auction {
   status: 'active' | 'settling' | 'completed' | 'settlement-failed';
   highBid: AuctionBid | null;
   winner: AuctionBid | null;
-  deliveryStatus: 'pending' | 'done' | 'not-required';
+  deliveryStatus: 'pending' | 'done' | 'not-required' | 'banked' | 'reposted';
   deliveredBy: string | null;
   deliveredAt: string | null;
   settlementError: string | null;
+  canResolveNoBid: boolean;
 }
 
 interface AuctionData {
@@ -398,6 +399,36 @@ export default function AuctionHousePanel() {
     }
   };
 
+  const resolveNoBidAuction = async (auction: Auction, resolution: 'banked' | 'repost') => {
+    const description = resolution === 'banked'
+      ? `Mark ${auction.itemName} as mailed to the bank?`
+      : `Repost ${auction.itemName} for another two minutes?`;
+    if (!window.confirm(description)) return;
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch('/api/auction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'resolve-no-bid',
+          auctionId: auction.id,
+          resolution,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to resolve auction');
+      setNotice(result.message);
+      await refresh();
+    } catch (resolveError) {
+      setError(resolveError instanceof Error ? resolveError.message : 'Unable to resolve auction');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading auction house...</div>;
   }
@@ -683,6 +714,32 @@ export default function AuctionHousePanel() {
                       >
                         <X className="h-3.5 w-3.5" /> Remove auction
                       </button>
+                    )}
+                    {auction.canResolveNoBid && (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void resolveNoBidAuction(auction, 'banked')}
+                          className="inline-flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50"
+                        >
+                          <PackageCheck className="h-3.5 w-3.5" /> Mail to bank
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void resolveNoBidAuction(auction, 'repost')}
+                          className="inline-flex items-center gap-2 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-400/20 disabled:opacity-50"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> Repost for 2 minutes
+                        </button>
+                      </div>
+                    )}
+                    {auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'banked' && (
+                      <p className="text-xs text-amber-200">Mailed to bank by {auction.deliveredBy}</p>
+                    )}
+                    {auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'reposted' && (
+                      <p className="text-xs text-indigo-200">Reposted by {auction.deliveredBy}</p>
                     )}
                     {auction.highBid ? (
                       <div className="flex items-center justify-between gap-3">
