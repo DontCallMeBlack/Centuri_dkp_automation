@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronLeft, ChevronRight, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -234,6 +234,7 @@ export default function AuctionHousePanel() {
   const [newItemMode, setNewItemMode] = useState(false);
   const [postFormOpen, setPostFormOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
+  const [itemSearch, setItemSearch] = useState('');
   const [itemName, setItemName] = useState('');
   const [requiredRole, setRequiredRole] = useState('');
   const [imageFiles, setImageFiles] = useState<File[]>([]);
@@ -260,7 +261,6 @@ export default function AuctionHousePanel() {
               ?? result.roles[0]
               ?? '',
           );
-          setSelectedItemId((current) => current || result.items[0]?.id || '');
         }
       } catch (loadError) {
         if (mounted) setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
@@ -410,6 +410,10 @@ export default function AuctionHousePanel() {
   }
 
   const activeAuctions = data.auctions.filter((auction) => auction.status === 'active');
+  const filteredItems = data.items.filter((item) =>
+    item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()),
+  );
+  const selectedCatalogItem = data.items.find((item) => item.id === selectedItemId);
   const deliveryTasks = data.auctions.filter((auction) =>
     auction.status === 'completed' && auction.deliveryStatus === 'pending' && auction.winner,
   );
@@ -418,7 +422,8 @@ export default function AuctionHousePanel() {
     <div className="space-y-6">
       <section className="relative overflow-hidden rounded-3xl border border-amber-400/20 bg-gradient-to-br from-amber-950/70 via-slate-900 to-slate-950 p-5 shadow-xl shadow-amber-950/20 sm:p-7">
         <div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full bg-amber-400/10 blur-3xl" />
-        <div className="relative flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div className="relative space-y-3">
+          <div className="flex items-start justify-between gap-2 sm:items-center">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-400/30 bg-amber-400/10 text-amber-300">
               <Gavel className="h-5 w-5" />
@@ -429,22 +434,24 @@ export default function AuctionHousePanel() {
               <p className="mt-1 text-sm text-slate-300">Winning bids reserve DKP on the bidding toon until the auction ends.</p>
             </div>
           </div>
-          <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm">
-            <p className="text-xs text-slate-400">Weekly DKP · all your linked toons</p>
-            <p className="mt-1 font-bold text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="font-medium text-slate-400">/ {data.weeklyMinimum.toLocaleString()} required</span></p>
-          </div>
           {data.manager && (
             <button
               type="button"
               onClick={() => setPostFormOpen((open) => !open)}
               aria-expanded={postFormOpen}
               aria-controls="auction-post-form"
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400"
+              aria-label={postFormOpen ? 'Close auction post form' : 'Post an auction'}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400 sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-3"
             >
               {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-              {postFormOpen ? 'Close form' : 'Post an auction'}
+              <span className="hidden sm:inline">{postFormOpen ? 'Close form' : 'Post an auction'}</span>
             </button>
           )}
+          </div>
+          <div className="w-fit rounded-xl border border-slate-700/80 bg-slate-950/40 px-3 py-2 text-sm sm:px-4 sm:py-3">
+            <p className="text-xs text-slate-400">Weekly DKP · all your linked toons</p>
+            <p className="mt-1 font-bold text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="font-medium text-slate-400">/ {data.weeklyMinimum.toLocaleString()} required</span></p>
+          </div>
         </div>
         <div className="relative mt-4 flex flex-wrap gap-2 text-[11px] text-slate-300">
           <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">2-minute auctions</span>
@@ -490,19 +497,65 @@ export default function AuctionHousePanel() {
                   )}
                 </>
               ) : (
-                <select id="auction-item" required value={selectedItemId} onChange={(event) => setSelectedItemId(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-emerald-400/60">
-                  <option value="">Choose a saved item</option>
-                  {data.items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
+                <div className="space-y-2">
+                  <label className="relative block">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <input
+                      id="auction-item"
+                      type="search"
+                      autoComplete="off"
+                      value={itemSearch}
+                      onChange={(event) => setItemSearch(event.target.value)}
+                      placeholder="Search saved items..."
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-9 pr-3.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/60"
+                    />
+                  </label>
+                  {selectedCatalogItem && (
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/25 bg-emerald-400/5 px-3 py-2">
+                      <span className="truncate text-xs font-semibold text-emerald-200">Selected: {selectedCatalogItem.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedItemId('')}
+                        className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                        aria-label="Clear selected item"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70">
+                    {filteredItems.length === 0 ? (
+                      <p className="px-3 py-4 text-center text-xs text-slate-500">
+                        {data.items.length === 0 ? 'No saved items yet. Add a new item below.' : 'No items match your search.'}
+                      </p>
+                    ) : filteredItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setSelectedItemId(item.id)}
+                        className={`flex w-full items-center gap-3 border-b border-slate-800/70 px-3 py-2 text-left last:border-b-0 hover:bg-slate-800/70 ${selectedItemId === item.id ? 'bg-emerald-400/10' : ''}`}
+                      >
+                        <AuctionItemImage
+                          itemId={item.id}
+                          imageCount={item.imageCount}
+                          alt={item.name}
+                          className="h-10 w-10 shrink-0 rounded-lg bg-slate-900"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-200">{item.name}</span>
+                        <span className="shrink-0 text-[10px] text-slate-500">{item.imageCount} img</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
               <button type="button" onClick={() => setNewItemMode((mode) => !mode)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300 hover:text-emerald-200">
                 {newItemMode ? 'Choose an existing item' : <><Plus className="h-3 w-3" /> Add a new item and image</>}
               </button>
-              {!newItemMode && selectedItemId && (
+              {!newItemMode && selectedCatalogItem && (
                 <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-2.5">
                   <AuctionItemImage
                     itemId={selectedItemId}
-                    imageCount={data.items.find((item) => item.id === selectedItemId)?.imageCount ?? 1}
+                    imageCount={selectedCatalogItem.imageCount}
                     alt="Saved item"
                     className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
                   />
