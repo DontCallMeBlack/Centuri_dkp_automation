@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, History, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
   _id: string;
@@ -18,14 +18,26 @@ interface RosterMember {
   available?: number;
 }
 
+interface ClanAuditEntry {
+  id: string;
+  eventType: 'promotion' | 'demotion' | 'member-removal';
+  actorNickname: string;
+  actorRole: string;
+  targetNickname: string;
+  previousRole: string;
+  newRole?: string;
+  createdAt: string;
+}
+
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
 
-type AdminSection = 'requests' | 'members';
+type AdminSection = 'requests' | 'members' | 'activity';
 
 export default function AdminRequestsPage() {
   const [section, setSection] = useState<AdminSection>('requests');
   const [pendingUsers, setPendingUsers] = useState<ClanUser[]>([]);
   const [members, setMembers] = useState<ClanUser[]>([]);
+  const [auditEvents, setAuditEvents] = useState<ClanAuditEntry[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
@@ -56,6 +68,7 @@ export default function AdminRequestsPage() {
       setManagerId(data.managerId ?? '');
       setPendingUsers(data.pendingUsers);
       setMembers(data.members);
+      setAuditEvents(data.auditEvents);
       setRoster(data.roster);
       setSelectedMappings(Object.fromEntries(
         [...data.pendingUsers, ...data.members].map((member: ClanUser) => [
@@ -265,6 +278,7 @@ export default function AdminRequestsPage() {
           {([
             ['requests', 'Sign-up requests', UserCheck, pendingUsers.length],
             ['members', 'Members', Users, members.length],
+            ['activity', 'Activity log', History, auditEvents.length],
           ] as const).map(([key, label, Icon, count]) => (
             <button
               key={key}
@@ -426,6 +440,60 @@ export default function AdminRequestsPage() {
                   </article>
                   );
                 })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {section === 'activity' && (
+          <section className="mt-6">
+            <div className="mb-5">
+              <h2 className="text-lg font-bold text-white">Role and removal history</h2>
+              <p className="mt-1 text-sm text-slate-400">Recent promotions, demotions, and clan removals, including who performed each action.</p>
+            </div>
+            {auditEvents.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-800 py-12 text-center">
+                <History className="mx-auto h-6 w-6 text-slate-600" />
+                <p className="mt-3 text-sm text-slate-400">No role changes or member removals have been logged yet.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-slate-800">
+                <div className="divide-y divide-slate-800">
+                  {auditEvents.map((event) => (
+                    <article key={event.id} className="flex flex-col gap-2 bg-slate-950/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                          event.eventType === 'promotion'
+                            ? 'bg-emerald-500/10 text-emerald-300'
+                            : event.eventType === 'demotion'
+                              ? 'bg-amber-500/10 text-amber-300'
+                              : 'bg-red-500/10 text-red-300'
+                        }`}>
+                          {event.eventType === 'promotion'
+                            ? <ArrowUp className="h-4 w-4" />
+                            : event.eventType === 'demotion'
+                              ? <ArrowDown className="h-4 w-4" />
+                              : <Trash2 className="h-4 w-4" />}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-semibold text-slate-100">
+                            {event.eventType === 'member-removal'
+                              ? <><span className="text-white">{event.targetNickname}</span> was removed from the clan</>
+                              : <><span className="text-white">{event.targetNickname}</span> {event.eventType === 'promotion' ? 'promoted' : 'demoted'} from <span className="capitalize text-slate-300">{event.previousRole}</span> to <span className="capitalize text-slate-300">{event.newRole}</span></>}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            By <span className="text-slate-300">{event.actorNickname}</span>
+                            <span className="capitalize"> · {event.actorRole}</span>
+                            {event.eventType === 'member-removal' && <span className="capitalize"> · Was {event.previousRole}</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <time className="shrink-0 pl-11 text-xs text-slate-500 sm:pl-0" dateTime={event.createdAt}>
+                        {new Date(event.createdAt).toLocaleString()}
+                      </time>
+                    </article>
+                  ))}
+                </div>
               </div>
             )}
           </section>
