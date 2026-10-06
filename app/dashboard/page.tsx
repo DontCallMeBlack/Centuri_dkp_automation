@@ -447,18 +447,18 @@ export default function DashboardPage() {
                   No active toons match that search.
                 </div>
               ) : toonSort === 'role-dkp' ? (
-                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/50 shadow-xl shadow-black/10">
-                  <table className="w-full min-w-[800px] table-fixed border-collapse text-left">
+                <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/50 shadow-xl shadow-black/10">
+                  <table className="w-full table-fixed border-collapse text-left">
                     <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] uppercase tracking-[0.16em] text-slate-500">
                       <tr>
-                        <th scope="col" className="w-14 px-3 py-3 text-center">Rank</th>
-                        <th scope="col" className="w-40 px-3 py-3">Toon</th>
-                        <th scope="col" className="w-36 px-3 py-3">Role</th>
-                        <th scope="col" className="w-32 px-3 py-3">Owner</th>
-                        <th scope="col" className="w-32 px-3 py-3">Account</th>
-                        <th scope="col" className="w-20 px-3 py-3 text-right">Earned</th>
-                        <th scope="col" className="w-20 px-3 py-3 text-right">Spent</th>
-                        <th scope="col" className="w-24 px-3 py-3 text-right">Available</th>
+                        <th scope="col" className="hidden w-14 px-3 py-3 text-center md:table-cell">Rank</th>
+                        <th scope="col" className="w-[48%] px-2 py-3 sm:w-[40%] sm:px-3 lg:w-40">Toon</th>
+                        <th scope="col" className="w-[25%] px-2 py-3 sm:w-[22%] sm:px-3 lg:w-36">Role</th>
+                        <th scope="col" className="hidden w-32 px-3 py-3 lg:table-cell">Owner</th>
+                        <th scope="col" className="hidden w-32 px-3 py-3 lg:table-cell">Account</th>
+                        <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Earned</th>
+                        <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Spent</th>
+                        <th scope="col" className="w-[27%] px-2 py-3 text-right sm:w-24 sm:px-3">Available</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80">
@@ -467,7 +467,7 @@ export default function DashboardPage() {
                           ?? 'border-slate-700 bg-slate-800 text-slate-300';
                         return (
                           <tr key={toon.rowIndex} className="transition hover:bg-slate-800/50">
-                            <td className="px-3 py-2.5 text-center">
+                            <td className="hidden px-3 py-2.5 text-center md:table-cell">
                               <span className={`inline-flex h-7 min-w-7 items-center justify-center rounded-lg border px-1.5 text-xs font-black ${
                                 toon.roleRank === 1
                                   ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
@@ -476,25 +476,25 @@ export default function DashboardPage() {
                                 {toon.roleRank}
                               </span>
                             </td>
-                            <td className="max-w-44 px-3 py-2.5">
+                            <td className="max-w-0 overflow-hidden px-2 py-2.5 sm:px-3">
                               <span className="block truncate text-sm font-semibold text-white" title={toon.account || toon.owner}>
                                 {toon.account || toon.owner}
                               </span>
                             </td>
-                            <td className="px-3 py-2.5">
-                              <span className={`inline-flex max-w-36 truncate rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${roleStyle}`}>
+                            <td className="overflow-hidden px-2 py-2.5 sm:px-3">
+                              <span className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-1 text-[9px] font-bold uppercase tracking-wide sm:px-2 sm:text-[10px] ${roleStyle}`}>
                                 {toon.subClass || 'Unassigned'}
                               </span>
                             </td>
-                            <td className="max-w-36 px-3 py-2.5 text-sm text-slate-300">
+                            <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-300 lg:table-cell">
                               <span className="block truncate" title={toon.owner}>{toon.owner}</span>
                             </td>
-                            <td className="max-w-36 px-3 py-2.5 text-sm text-slate-400">
+                            <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-400 lg:table-cell">
                               <span className="block truncate" title={toon.memberNickname}>{toon.memberNickname}</span>
                             </td>
-                            <td className="px-3 py-2.5 text-right text-sm tabular-nums text-slate-300">{toon.earned.toLocaleString()}</td>
-                            <td className="px-3 py-2.5 text-right text-sm tabular-nums text-slate-300">{toon.spent.toLocaleString()}</td>
-                            <td className="px-3 py-2.5 text-right text-sm font-black tabular-nums text-emerald-300">{toon.available.toLocaleString()}</td>
+                            <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.earned.toLocaleString()}</td>
+                            <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.spent.toLocaleString()}</td>
+                            <td className="overflow-hidden px-2 py-2.5 text-right text-xs font-black tabular-nums text-emerald-300 sm:px-3 sm:text-sm">{toon.available.toLocaleString()}</td>
                           </tr>
                         );
                       })}
