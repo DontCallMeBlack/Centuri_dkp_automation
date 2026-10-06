@@ -118,43 +118,63 @@ export default function AdminRequestsPage() {
     });
   };
 
-  const renderMappingSelector = (userId: string, label: string) => (
-    <fieldset className="max-h-64 w-full overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70 p-2">
-      <legend className="sr-only">{label}</legend>
-      {roster.map((record) => {
-        const isSelected = (selectedMappings[userId] ?? []).includes(record.rowIndex);
-        return (
-          <label
-            key={record.rowIndex}
-            className={`mb-1 flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-2.5 text-sm transition last:mb-0 ${
-              isSelected
-                ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
-                : 'border-transparent text-slate-300 hover:border-slate-800 hover:bg-slate-900'
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={() => toggleMapping(userId, record.rowIndex)}
-              className="peer sr-only"
-            />
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
-              <Check className={`h-3.5 w-3.5 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
-              <span className="mt-0.5 block truncate text-xs text-slate-500">{record.owner}</span>
-            </span>
-          </label>
-        );
-      })}
-      {roster.length === 0 && <p className="px-2 py-3 text-sm text-slate-500">No roster records found.</p>}
-    </fieldset>
-  );
+  const renderMappingSelector = (userId: string, label: string) => {
+    const currentMember = members.find((member) => member._id === userId);
+    const occupiedRows = new Set(members.flatMap((member) => member.sheetRecordRows ?? []));
+    const availableRoster = roster.filter((record) =>
+      !occupiedRows.has(record.rowIndex) ||
+      (currentMember?.sheetRecordRows ?? []).includes(record.rowIndex),
+    );
+
+    return (
+      <fieldset className="max-h-64 w-full overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70 p-2">
+        <legend className="sr-only">{label}</legend>
+        {availableRoster.map((record) => {
+          const isSelected = (selectedMappings[userId] ?? []).includes(record.rowIndex);
+          return (
+            <label
+              key={record.rowIndex}
+              className={`mb-1 flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-2.5 text-sm transition last:mb-0 ${
+                isSelected
+                  ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
+                  : 'border-transparent text-slate-300 hover:border-slate-800 hover:bg-slate-900'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => toggleMapping(userId, record.rowIndex)}
+                className="peer sr-only"
+              />
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
+                <Check className={`h-3.5 w-3.5 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
+                <span className="mt-0.5 block truncate text-xs text-slate-500">{record.owner}</span>
+              </span>
+            </label>
+          );
+        })}
+        {availableRoster.length === 0 && (
+          <p className="px-2 py-3 text-sm text-slate-500">
+            {roster.length === 0 ? 'No roster records found.' : 'No unlinked toon rows available.'}
+          </p>
+        )}
+      </fieldset>
+    );
+  };
 
   const removeMember = (member: ClanUser) => {
     if (window.confirm(`Remove ${member.nickname}'s account from the app? This cannot be undone.`)) {
       void sendAdminAction(member._id, 'remove');
+    }
+  };
+
+  const unlinkToon = (member: ClanUser, record: RosterMember) => {
+    const toonName = record.account || record.owner;
+    if (window.confirm(`Unlink ${toonName} from ${member.nickname}? It will become available to link to another account.`)) {
+      void sendAdminAction(member._id, 'unlink', [record.rowIndex]);
     }
   };
 
@@ -219,7 +239,7 @@ export default function AdminRequestsPage() {
             <div className="mb-5 flex items-end justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-white">Pending sign-ups</h2>
-                <p className="mt-1 text-sm text-slate-400">Select one or more toon rows to link when approving a request.</p>
+                <p className="mt-1 text-sm text-slate-400">Choose one or more unlinked sheet rows to connect to each new account.</p>
               </div>
               <ClipboardList className="mb-1 h-5 w-5 text-slate-500" />
             </div>
@@ -251,16 +271,41 @@ export default function AdminRequestsPage() {
         {section === 'members' && (
           <section className="mt-6">
             <h2 className="text-lg font-bold text-white">Approved accounts</h2>
-            <p className="mb-4 mt-1 text-sm text-slate-400">Select all toon rows belonging to each account. Saving replaces its linked rows.</p>
+            <p className="mb-4 mt-1 text-sm text-slate-400">Toons linked to another account are hidden. Unlink a toon to make it available for reassignment.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
               <div className="divide-y divide-slate-800 border-y border-slate-800">
                 {members.map((member) => (
                   <article key={member._id} className="grid gap-3 py-4 md:grid-cols-[minmax(10rem,1fr)_minmax(14rem,20rem)_auto] md:items-center">
                     <div>
                       <h3 className="font-semibold text-white">{member.nickname}</h3>
-                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(selectedMappings[member._id] ?? []).length} toon(s) linked</p>
+                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(selectedMappings[member._id] ?? []).length} toon(s) selected</p>
                     </div>
-                    {renderMappingSelector(member._id, `Toon rows for ${member.nickname}`)}
+                    <div>
+                      {renderMappingSelector(member._id, `Available toon rows for ${member.nickname}`)}
+                      {(member.sheetRecordRows ?? []).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(member.sheetRecordRows ?? []).flatMap((rowIndex) => {
+                            const record = roster.find((entry) => entry.rowIndex === rowIndex);
+                            if (!record) return [];
+                            return (
+                              <span key={rowIndex} className="inline-flex max-w-full items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300">
+                                <span className="max-w-36 truncate">{record.account || record.owner}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => unlinkToon(member, record)}
+                                  disabled={busyId === member._id}
+                                  aria-label={`Unlink ${record.account || record.owner} from ${member.nickname}`}
+                                  title="Unlink toon"
+                                  className="rounded p-0.5 text-slate-500 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                     <div className="flex gap-2">
                       <button disabled={busyId === member._id} onClick={() => linkMember(member._id)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50">
                         <UserCheck className="h-4 w-4" /> Link

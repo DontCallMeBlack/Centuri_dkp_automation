@@ -63,12 +63,46 @@ export async function POST(req: Request) {
     const { action } = body;
     const userId = typeof body.userId === 'string' ? body.userId : '';
 
-    if (!['approve', 'deny', 'link', 'remove'].includes(action) || !mongoose.isValidObjectId(userId)) {
+    if (!['approve', 'deny', 'link', 'unlink', 'remove'].includes(action) || !mongoose.isValidObjectId(userId)) {
       return NextResponse.json({ error: 'Invalid administration request' }, { status: 400 });
     }
 
     const target = await User.findById(userId);
     if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+    if (action === 'unlink') {
+      if (target.status !== 'approved') {
+        return NextResponse.json({ error: 'Only approved accounts can have toons unlinked' }, { status: 400 });
+      }
+
+      const requestedRows: unknown = body.sheetRecordRows;
+      if (!isValidRowIndexArray(requestedRows) || requestedRows.length !== 1) {
+        return NextResponse.json({ error: 'Select one valid linked toon to unlink' }, { status: 400 });
+      }
+
+      const roster = await getSheetRoster();
+      const linkedRows = getLinkedSheetRecordRows(target, roster);
+      const rowToUnlink = requestedRows[0];
+      if (!linkedRows.includes(rowToUnlink)) {
+        return NextResponse.json({ error: 'That toon is not linked to this account' }, { status: 400 });
+      }
+
+      const rosterByRow = new Map(roster.map((record) => [record.rowIndex, record]));
+      target.sheetRecords = linkedRows
+        .filter((rowIndex) => rowIndex !== rowToUnlink)
+        .flatMap((rowIndex) => {
+          const record = rosterByRow.get(rowIndex);
+          return record ? [{ rowIndex, owner: record.owner, account: record.account }] : [];
+        });
+      target.sheetRecordName = undefined;
+      await target.save();
+
+      const unlinkedRecord = rosterByRow.get(rowToUnlink);
+      return NextResponse.json({
+        success: true,
+        message: `${unlinkedRecord?.account || unlinkedRecord?.owner || 'Toon'} unlinked from ${target.nickname} and is now available.`,
+      });
+    }
 
     if (action === 'deny') {
       if (target.status !== 'pending') {
