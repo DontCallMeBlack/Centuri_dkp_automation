@@ -162,3 +162,77 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export async function DELETE(req: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (user.role !== 'chief' && user.role !== 'general') {
+    return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+  }
+
+  try {
+    const body: unknown = await req.json();
+    if (typeof body !== 'object' || body === null) {
+      return NextResponse.json({ error: 'Invalid boss history deletion' }, { status: 400 });
+    }
+    const { awardId } = body as { awardId?: unknown };
+    if (typeof awardId !== 'string' || !mongoose.isValidObjectId(awardId)) {
+      return NextResponse.json({ error: 'Invalid boss award ID' }, { status: 400 });
+    }
+
+    const award = await BossAward.findOneAndUpdate(
+      { _id: awardId, status: 'applied' },
+      { $set: { status: 'updating' } },
+      { new: true },
+    );
+    if (!award) {
+      const existingAward = await BossAward.findById(awardId).select('status').lean();
+      return NextResponse.json(
+        { error: existingAward ? 'This award is not available for deletion right now' : 'Boss award not found' },
+        { status: existingAward ? 409 : 404 },
+      );
+    }
+
+    let sheetChangesApplied = false;
+    try {
+      const roster = await getSheetRoster();
+      const adjustments = award.participants.map((participant) => ({
+        ...resolveParticipant(participant, roster),
+        points: -award.points,
+      }));
+
+      if (adjustments.length > 0) {
+        await adjustPlayersDKP(adjustments);
+        sheetChangesApplied = true;
+      }
+
+      await award.deleteOne();
+      return NextResponse.json({
+        success: true,
+        message: `Deleted ${award.bossName} kill and reversed ${award.points} DKP for ${adjustments.length} toon(s).`,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unable to delete boss kill';
+      if (sheetChangesApplied) {
+        console.error('Failed to delete boss award after reversing its sheet points', error);
+        return NextResponse.json({
+          error: 'DKP was reversed in Google Sheets, but the boss history could not be deleted. Do not retry until the history is checked.',
+        }, { status: 500 });
+      }
+
+      award.status = 'applied';
+      try {
+        await award.save();
+      } catch (restoreError: unknown) {
+        console.error('Failed to restore boss award after an unsuccessful deletion', restoreError);
+        return NextResponse.json({
+          error: 'Boss kill deletion failed and its history status could not be restored. Check boss history before retrying.',
+        }, { status: 500 });
+      }
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unable to delete boss kill';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

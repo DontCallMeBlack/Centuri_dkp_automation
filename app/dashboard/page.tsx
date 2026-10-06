@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, History } from 'lucide-react';
+import BossHistoryPanel from '@/components/BossHistoryPanel';
 
 interface RosterMember {
   rowIndex: number;
@@ -67,7 +68,7 @@ const ROLE_STYLES: Record<string, string> = {
 };
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<'dkp' | 'auction'>('dkp');
+  const [activeTab, setActiveTab] = useState<'dkp' | 'auction' | 'boss-history'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
@@ -302,6 +303,19 @@ export default function DashboardPage() {
         >
           <span>Auction House</span>
         </button>
+        {(userSession?.role === 'chief' || userSession?.role === 'general') && (
+          <button
+            onClick={() => setActiveTab('boss-history')}
+            className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${
+              activeTab === 'boss-history'
+                ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <History className="h-4 w-4" />
+            <span>Boss Kill History</span>
+          </button>
+        )}
       </div>
 
       {/* Main Content Area */}
@@ -554,7 +568,7 @@ export default function DashboardPage() {
               )}
             </section>
           </div>
-        ) : (
+        ) : activeTab === 'auction' ? (
           /* Auction House Placeholder Tab */
           <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-16 rounded-2xl text-center space-y-4 shadow-xl">
             <div className="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center mx-auto text-indigo-400">
@@ -565,6 +579,8 @@ export default function DashboardPage() {
               Clan members will soon be able to bid and spend their accumulated DKP points directly on rare boss drops and gear auctions.
             </p>
           </div>
+        ) : (
+          <BossHistoryPanel embedded />
         )}
       </main>
 

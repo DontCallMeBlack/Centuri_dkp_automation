@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ClipboardList, History, LoaderCircle, Shield, Trash2, UserCheck, Users, X, Zap } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardList, LoaderCircle, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
   _id: string;
@@ -18,16 +18,7 @@ interface RosterMember {
   available?: number;
 }
 
-type AdminSection = 'requests' | 'members' | 'boss';
-
-const BOSSES = [
-  { name: 'Base', points: 1 },
-  { name: 'Prime', points: 2 },
-  { name: 'Bt', points: 5 },
-  { name: 'Gele', points: 6 },
-  { name: 'Dino', points: 7 },
-  { name: 'Crom', points: 12 },
-];
+type AdminSection = 'requests' | 'members';
 
 export default function AdminRequestsPage() {
   const [section, setSection] = useState<AdminSection>('requests');
@@ -35,8 +26,6 @@ export default function AdminRequestsPage() {
   const [members, setMembers] = useState<ClanUser[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
-  const [selectedRows, setSelectedRows] = useState<number[]>([]);
-  const [selectedBoss, setSelectedBoss] = useState('Base');
   const [loading, setLoading] = useState(true);
   const [accessRole, setAccessRole] = useState('');
   const [busyId, setBusyId] = useState('');
@@ -153,35 +142,6 @@ export default function AdminRequestsPage() {
     }
   };
 
-  const toggleRow = (rowIndex: number) => {
-    setSelectedRows((current) => current.includes(rowIndex)
-      ? current.filter((selected) => selected !== rowIndex)
-      : [...current, rowIndex]);
-  };
-
-  const recordBoss = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setBusyId('boss');
-    setError('');
-    setNotice('');
-    try {
-      const res = await fetch('/api/dkp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bossName: selectedBoss, selectedRows }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not record boss award');
-      setNotice(data.message);
-      setSelectedRows([]);
-      await loadData();
-    } catch (recordError) {
-      setError(recordError instanceof Error ? recordError.message : 'Could not record boss award');
-    } finally {
-      setBusyId('');
-    }
-  };
-
   if (loading) {
     return <div className="min-h-screen bg-[#07090e] p-8 text-sm text-slate-400">Loading clan administration...</div>;
   }
@@ -209,7 +169,7 @@ export default function AdminRequestsPage() {
             </div>
             <div>
               <h1 className="text-base font-bold text-white">Clan administration</h1>
-              <p className="text-xs text-slate-400">Requests, member access, and boss awards</p>
+              <p className="text-xs text-slate-400">Sign-up requests and member access</p>
             </div>
           </div>
           <button onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800">
@@ -223,7 +183,6 @@ export default function AdminRequestsPage() {
           {([
             ['requests', 'Sign-up requests', UserCheck, pendingUsers.length],
             ['members', 'Members', Users, members.length],
-            ['boss', 'Boss award', Zap, undefined],
           ] as const).map(([key, label, Icon, count]) => (
             <button
               key={key}
@@ -303,43 +262,6 @@ export default function AdminRequestsPage() {
           </section>
         )}
 
-        {section === 'boss' && (
-          <section className="mt-6">
-            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <h2 className="text-lg font-bold text-white">Record a boss award</h2>
-              <button onClick={() => router.push('/admin/boss-history')} className="inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10">
-                <History className="h-4 w-4" /> Boss history
-              </button>
-            </div>
-            <p className="mb-5 mt-1 text-sm text-slate-400">Select every participating roster record, including guardians.</p>
-            <form onSubmit={recordBoss} className="space-y-5">
-              <label className="block max-w-sm text-xs font-semibold uppercase text-slate-400">
-                Boss
-                <select value={selectedBoss} onChange={(event) => setSelectedBoss(event.target.value)} className="mt-2 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm normal-case text-slate-100">
-                  {BOSSES.map((boss) => <option key={boss.name} value={boss.name}>{boss.name} · {boss.points} DKP</option>)}
-                </select>
-              </label>
-              <div className="overflow-hidden border-y border-slate-800">
-                <div className="flex items-center justify-between py-3 text-xs font-semibold uppercase text-slate-500">
-                  <span>Roster participants</span><span>{selectedRows.length} selected</span>
-                </div>
-                <div className="grid max-h-[28rem] grid-cols-1 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
-                  {roster.map((record) => (
-                    <label key={record.rowIndex} className="flex cursor-pointer items-center gap-3 border-t border-slate-800/70 px-3 py-3 text-sm hover:bg-slate-900/60">
-                      <input type="checkbox" checked={selectedRows.includes(record.rowIndex)} onChange={() => toggleRow(record.rowIndex)} className="h-4 w-4 accent-indigo-500" />
-                      <span className="min-w-0"><span className="block truncate font-medium text-slate-200">{record.owner}</span><span className="block truncate text-xs text-slate-500">{record.account}</span></span>
-                    </label>
-                  ))}
-                </div>
-                {roster.length === 0 && <p className="border-t border-slate-800 py-8 text-center text-sm text-slate-500">No roster records found.</p>}
-              </div>
-              <button type="submit" disabled={busyId === 'boss' || selectedRows.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
-                {busyId === 'boss' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                Record {selectedBoss} award
-              </button>
-            </form>
-          </section>
-        )}
       </div>
     </main>
   );
