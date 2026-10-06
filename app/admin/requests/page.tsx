@@ -119,19 +119,35 @@ export default function AdminRequestsPage() {
   };
 
   const renderMappingSelector = (userId: string, label: string) => (
-    <fieldset className="max-h-48 w-full overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 p-2">
+    <fieldset className="max-h-64 w-full overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70 p-2">
       <legend className="sr-only">{label}</legend>
-      {roster.map((record) => (
-        <label key={record.rowIndex} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800">
-          <input
-            type="checkbox"
-            checked={(selectedMappings[userId] ?? []).includes(record.rowIndex)}
-            onChange={() => toggleMapping(userId, record.rowIndex)}
-            className="h-4 w-4 accent-indigo-500"
-          />
-          <span className="min-w-0 truncate">{record.owner} · {record.account || 'Unnamed toon'}</span>
-        </label>
-      ))}
+      {roster.map((record) => {
+        const isSelected = (selectedMappings[userId] ?? []).includes(record.rowIndex);
+        return (
+          <label
+            key={record.rowIndex}
+            className={`mb-1 flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-2.5 text-sm transition last:mb-0 ${
+              isSelected
+                ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
+                : 'border-transparent text-slate-300 hover:border-slate-800 hover:bg-slate-900'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleMapping(userId, record.rowIndex)}
+              className="peer sr-only"
+            />
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
+              <Check className={`h-3.5 w-3.5 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
+              <span className="mt-0.5 block truncate text-xs text-slate-500">{record.owner}</span>
+            </span>
+          </label>
+        );
+      })}
       {roster.length === 0 && <p className="px-2 py-3 text-sm text-slate-500">No roster records found.</p>}
     </fieldset>
   );

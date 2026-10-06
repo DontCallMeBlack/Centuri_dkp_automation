@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
 
 interface RosterMember {
   rowIndex: number;
@@ -241,17 +241,33 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
                     <span>{selectedCount} selected</span>
                   </div>
                   <div className="grid max-h-72 grid-cols-1 gap-x-3 overflow-y-auto rounded-lg border border-slate-800 p-2 sm:grid-cols-2">
-                    {roster.map((record) => (
-                      <label key={record.rowIndex} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800">
-                        <input
-                          type="checkbox"
-                          checked={(selectedRows[award.id] ?? []).includes(record.rowIndex)}
-                          onChange={() => toggleRow(award.id, record.rowIndex)}
-                          className="h-4 w-4 accent-indigo-500"
-                        />
-                        <span className="min-w-0 truncate">{record.owner} · {record.account || 'Unnamed toon'}</span>
-                      </label>
-                    ))}
+                    {roster.map((record) => {
+                      const isSelected = (selectedRows[award.id] ?? []).includes(record.rowIndex);
+                      return (
+                        <label
+                          key={record.rowIndex}
+                          className={`flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm transition ${
+                            isSelected
+                              ? 'border-indigo-400/40 bg-indigo-500/10 text-white shadow-sm shadow-indigo-950/30'
+                              : 'border-slate-800/80 bg-slate-950/40 text-slate-300 hover:border-slate-700 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRow(award.id, record.rowIndex)}
+                            className="peer sr-only"
+                          />
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
+                            <Check className={`h-3.5 w-3.5 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
+                            <span className="mt-0.5 block truncate text-xs text-slate-500">{record.owner}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
                     {roster.length === 0 && <p className="px-2 py-3 text-sm text-slate-500">No roster records found.</p>}
                   </div>
                   <div className="mt-3 flex justify-end gap-2">
