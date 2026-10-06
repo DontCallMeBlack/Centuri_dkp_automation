@@ -65,8 +65,7 @@ async function settleExpiredAuctions() {
   }).sort({ endsAt: 1 }).limit(25);
 
   for (const expired of expiredAuctions) {
-    const highBid = expired.highBid;
-    if (!highBid) {
+    if (!expired.highBid) {
       await Auction.updateOne(
         { _id: expired._id, status: 'active', endsAt: { $lte: now } },
         { $set: { status: 'completed', deliveryStatus: 'not-required' } },
@@ -82,29 +81,30 @@ async function settleExpiredAuctions() {
     if (!claimed?.highBid) continue;
 
     try {
+      const winningBid = claimed.highBid;
       await adjustPlayersDKP(
         [{
-          rowIndex: highBid.rowIndex,
-          points: -highBid.amount,
-          owner: highBid.owner,
-          account: highBid.account,
+          rowIndex: winningBid.rowIndex,
+          points: -winningBid.amount,
+          owner: winningBid.owner,
+          account: winningBid.account,
         }],
-        { reservedPointsToConsume: new Map([[highBid.rowIndex, highBid.amount]]) },
+        { reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]) },
       );
 
       const session = await mongoose.startSession();
       try {
         await session.withTransaction(async () => {
           const auction = await Auction.findOne({ _id: claimed._id, status: 'settling' }).session(session);
-          const hold = await AuctionHold.findOne({ rowIndex: highBid.rowIndex }).session(session);
-          if (!auction || !hold || hold.heldPoints < highBid.amount) {
+          const hold = await AuctionHold.findOne({ rowIndex: winningBid.rowIndex }).session(session);
+          if (!auction || !hold || hold.heldPoints < winningBid.amount) {
             throw new Error('Auction settlement records are inconsistent; manual review is required.');
           }
 
-          hold.heldPoints -= highBid.amount;
+          hold.heldPoints -= winningBid.amount;
           await hold.save({ session });
           auction.status = 'completed';
-          auction.winner = highBid;
+          auction.winner = winningBid;
           auction.deliveryStatus = 'pending';
           auction.settlementError = undefined;
           await auction.save({ session });
@@ -129,7 +129,7 @@ export async function GET() {
 
   try {
     await settleExpiredAuctions();
-    const [roster, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions] = await Promise.all([
+    const [roster, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions] = await Promise.all([
       getSheetRoster(),
       Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
       AuctionItem.find().select('name imageCount').sort({ name: 1 }).lean(),
@@ -144,11 +144,16 @@ export async function GET() {
         status: 'completed',
         'winner.userId': user._id,
       }).sort({ createdAt: -1 }).limit(100).lean(),
+      Auction.find({
+        status: 'completed',
+        winner: { $exists: true },
+      }).sort({ createdAt: -1 }).limit(100).lean(),
     ]);
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
     for (const auction of pendingNoBidTasks) auctionsById.set(auction._id.toString(), auction);
     for (const auction of personalWinningAuctions) auctionsById.set(auction._id.toString(), auction);
+    for (const auction of allWinnerAuctions) auctionsById.set(auction._id.toString(), auction);
     const auctions = [...auctionsById.values()].sort((first, second) =>
       second.createdAt.getTime() - first.createdAt.getTime(),
     );
@@ -673,7 +678,10 @@ export async function POST(req: Request) {
       if (!auction) {
         return NextResponse.json({ error: 'This winner is already marked done or is not awaiting delivery' }, { status: 409 });
       }
-      return NextResponse.json({ success: true });
+      return NextResponse.json({
+        success: true,
+        message: 'Item marked mailed. DKP was deducted when the auction was won.',
+      });
     }
 
     return NextResponse.json({ error: 'Unknown auction action' }, { status: 400 });
