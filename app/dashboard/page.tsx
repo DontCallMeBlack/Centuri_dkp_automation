@@ -397,7 +397,7 @@ export default function DashboardPage() {
                         ))}
                       </div>
                       <p className="px-4 pb-4 text-xs text-slate-500">
-                        This week: <span className="text-slate-300">{toon.weeklyEarned.toLocaleString()} earned</span>
+                        Since Saturday: <span className="text-slate-300">{toon.weeklyEarned.toLocaleString()} earned</span>
                         {' · '}
                         <span className="text-slate-300">{toon.weeklySpent.toLocaleString()} spent</span>
                       </p>
@@ -455,7 +455,6 @@ export default function DashboardPage() {
                         <th scope="col" className="w-[48%] px-2 py-3 sm:w-[40%] sm:px-3 lg:w-40">Toon</th>
                         <th scope="col" className="w-[25%] px-2 py-3 sm:w-[22%] sm:px-3 lg:w-36">Role</th>
                         <th scope="col" className="hidden w-32 px-3 py-3 lg:table-cell">Owner</th>
-                        <th scope="col" className="hidden w-32 px-3 py-3 lg:table-cell">Account</th>
                         <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Earned</th>
                         <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Spent</th>
                         <th scope="col" className="w-[27%] px-2 py-3 text-right sm:w-24 sm:px-3">Available</th>
@@ -489,9 +488,6 @@ export default function DashboardPage() {
                             <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-300 lg:table-cell">
                               <span className="block truncate" title={toon.owner}>{toon.owner}</span>
                             </td>
-                            <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-400 lg:table-cell">
-                              <span className="block truncate" title={toon.memberNickname}>{toon.memberNickname}</span>
-                            </td>
                             <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.earned.toLocaleString()}</td>
                             <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.spent.toLocaleString()}</td>
                             <td className="overflow-hidden px-2 py-2.5 text-right text-xs font-black tabular-nums text-emerald-300 sm:px-3 sm:text-sm">{toon.available.toLocaleString()}</td>
@@ -516,7 +512,7 @@ export default function DashboardPage() {
                             </span>
                           </div>
                           <p className="mt-1 truncate text-xs text-slate-500">
-                            Owner: <span title={toon.owner}>{toon.owner}</span> · Account: <span title={toon.memberNickname}>{toon.memberNickname}</span>
+                            Owner: <span title={toon.owner}>{toon.owner}</span>
                           </p>
                         </div>
                         <div className="shrink-0 pl-2 text-right">
