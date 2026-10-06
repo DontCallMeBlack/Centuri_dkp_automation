@@ -4,10 +4,6 @@ import Auction, { type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
-import {
-  MAX_AUCTION_ITEM_IMAGE_BYTES,
-  optimizeAuctionImage,
-} from '@/lib/auctionImage';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
@@ -19,32 +15,12 @@ import {
   normalizeAuctionRole,
 } from '@/lib/auctionRules';
 
-const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
-const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
-type AuctionImageType = 'image/png' | 'image/jpeg' | 'image/webp';
 const MANAGER_ROLES = new Set(['chief', 'general', 'guardian']);
 
 export const dynamic = 'force-dynamic';
 
 function isManager(role: string) {
   return MANAGER_ROLES.has(role);
-}
-
-function verifyImageType(bytes: Uint8Array): AuctionImageType | null {
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
-    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
-  ) return 'image/png';
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return 'image/jpeg';
-  }
-  if (
-    bytes.length >= 12 &&
-    String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
-    String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
-  ) return 'image/webp';
-  return null;
 }
 
 function serializeBid(bid: IAuctionBid | undefined, currentUserId: mongoose.Types.ObjectId) {
@@ -123,16 +99,19 @@ async function settleExpiredAuctions() {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
+    const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
     await settleExpiredAuctions();
     const [roster, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions] = await Promise.all([
       getSheetRoster(),
-      Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
-      AuctionItem.find().select('name imageCount').sort({ name: 1 }).lean(),
+      includeArchive
+        ? Auction.find().sort({ createdAt: -1 }).lean()
+        : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
+      AuctionItem.find().select('name requiredRole bossType imageCount').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints').lean(),
       Auction.find({ status: 'completed', deliveryStatus: 'pending' }).sort({ createdAt: 1 }).lean(),
       Auction.find({
@@ -181,6 +160,9 @@ export async function GET() {
     const catalogImageCounts = new Map(
       items.map((item) => [item._id.toString(), item.imageCount ?? 1]),
     );
+    const catalogBossTypes = new Map(
+      items.map((item) => [item._id.toString(), item.bossType ?? 'Unassigned']),
+    );
     const linkedRows = getLinkedSheetRecordRows(user, rosterWithWeekly);
     const linkedRowSet = new Set(linkedRows);
     const linkedToons = rosterWithWeekly
@@ -199,9 +181,11 @@ export async function GET() {
       canBidWeekly: weeklyEarnedTotal >= AUCTION_WEEKLY_MINIMUM,
       roles,
       toons: linkedToons,
-      items: items.map(({ _id, name }) => ({
+      items: items.map(({ _id, name, requiredRole }) => ({
         id: _id.toString(),
         name,
+        requiredRole: requiredRole ?? '',
+        bossType: catalogBossTypes.get(_id.toString()) ?? 'Unassigned',
         imageCount: catalogImageCounts.get(_id.toString()) ?? 1,
       })),
       auctions: auctions.map((auction) => ({
@@ -209,6 +193,7 @@ export async function GET() {
         itemId: auction.itemId.toString(),
         imageCount: catalogImageCounts.get(auction.itemId.toString()) ?? 1,
         itemName: auction.itemName,
+        bossType: auction.bossType ?? catalogBossTypes.get(auction.itemId.toString()) ?? 'Unassigned',
         requiredRole: auction.requiredRole,
         createdBy: auction.createdBy,
         isPoster: auction.createdByUserId?.equals(user._id) === true ||
@@ -256,100 +241,43 @@ export async function POST(req: Request) {
   try {
     const contentType = req.headers.get('content-type') ?? '';
     if (contentType.includes('multipart/form-data')) {
+      return NextResponse.json({
+        error: 'Catalog changes are managed from the Items tab. Select an existing saved item to post an auction.',
+      }, { status: 400 });
+
+    }
+
+    const body: unknown = await req.json();
+    if (typeof body !== 'object' || body === null) {
+      return NextResponse.json({ error: 'Invalid auction request' }, { status: 400 });
+    }
+    const payload = body as Record<string, unknown>;
+
+    if (payload.action === 'create-auction') {
       if (!isManager(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-      const form = await req.formData();
-      const action = form.get('action');
-      const role = form.get('requiredRole');
-      const itemId = form.get('itemId');
-      const itemName = form.get('itemName');
-      const images = form.getAll('images');
-
-      if (action !== 'create-auction' || typeof role !== 'string' || !role.trim()) {
-        return NextResponse.json({ error: 'Select a valid auction role' }, { status: 400 });
+      const { itemId } = payload;
+      if (typeof itemId !== 'string' || !mongoose.isValidObjectId(itemId)) {
+        return NextResponse.json({ error: 'Select a valid saved item' }, { status: 400 });
       }
-      const roster = await getSheetRoster();
-      const requiredRole = roster.find((record) =>
-        normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role),
+      const [item, roster] = await Promise.all([
+        AuctionItem.findById(itemId),
+        getSheetRoster(),
+      ]);
+      if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
+      if (!item.requiredRole?.trim()) {
+        return NextResponse.json({ error: 'Set this item’s auction role in the Items tab before posting it' }, { status: 400 });
+      }
+      const selectedRole = roster.find((record) =>
+        normalizeAuctionRole(record.subClass) === normalizeAuctionRole(item.requiredRole),
       )?.subClass.trim();
-      if (!requiredRole) {
-        return NextResponse.json({ error: 'Select a role currently listed in the Google Sheets roster' }, { status: 400 });
+      if (!selectedRole) {
+        return NextResponse.json({ error: 'This item’s saved role is no longer in the roster. Update it in the Items tab before posting.' }, { status: 400 });
       }
-
-      let item;
-      if (typeof itemId === 'string' && mongoose.isValidObjectId(itemId)) {
-        if (images.some((image) => image instanceof File && image.size > 0) ||
-          (typeof itemName === 'string' && itemName.trim())) {
-          return NextResponse.json({ error: 'Choose an existing item or add a new item, not both' }, { status: 400 });
-        }
-        item = await AuctionItem.findById(itemId);
-        if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
-      } else {
-        if (
-          typeof itemName !== 'string' ||
-          !itemName.trim() ||
-          itemName.trim().length > 120 ||
-          images.length === 0 ||
-          images.some((image) => !(image instanceof File))
-        ) {
-          return NextResponse.json({ error: 'A new item needs its full name and at least one image' }, { status: 400 });
-        }
-        if (images.length > 8) {
-          return NextResponse.json({ error: 'Upload no more than 8 images per item' }, { status: 400 });
-        }
-        const totalUploadBytes = images.reduce(
-          (total, image) => total + (image instanceof File ? image.size : 0),
-          0,
-        );
-        if (totalUploadBytes > MAX_TOTAL_UPLOAD_BYTES) {
-          return NextResponse.json({ error: 'The optimized images must total no more than 2 MB per item' }, { status: 413 });
-        }
-        const storedImages: Array<{ data: Buffer; contentType: AuctionImageType }> = [];
-        let totalStoredBytes = 0;
-        for (const image of images) {
-          if (!(image instanceof File) || image.size <= 0 || image.size > MAX_UPLOAD_IMAGE_BYTES) {
-            return NextResponse.json({ error: 'Each optimized upload must be no larger than 1 MB' }, { status: 400 });
-          }
-          const imageBytes = new Uint8Array(await image.arrayBuffer());
-          const imageType = verifyImageType(imageBytes);
-          if (imageType !== image.type) {
-            return NextResponse.json({ error: 'An uploaded image is invalid or does not match its file type' }, { status: 400 });
-          }
-          let optimizedImage: Buffer;
-          try {
-            optimizedImage = await optimizeAuctionImage(imageBytes);
-          } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : 'Unable to optimize image';
-            return NextResponse.json({ error: message }, { status: 400 });
-          }
-          totalStoredBytes += optimizedImage.byteLength;
-          if (totalStoredBytes > MAX_AUCTION_ITEM_IMAGE_BYTES) {
-            return NextResponse.json({
-              error: 'The optimized images exceed 150 KB total for this item. Remove an image and try again.',
-            }, { status: 413 });
-          }
-          storedImages.push({ data: optimizedImage, contentType: 'image/webp' });
-        }
-
-        try {
-          item = await AuctionItem.create({
-            name: itemName.trim(),
-            images: storedImages,
-            imageCount: storedImages.length,
-            createdBy: user.nickname,
-          });
-        } catch (error: unknown) {
-          if (error instanceof mongoose.Error.ValidationError ||
-            (typeof error === 'object' && error !== null && 'code' in error && error.code === 11000)) {
-            return NextResponse.json({ error: 'An item with that name already exists; select it from the catalog' }, { status: 409 });
-          }
-          throw error;
-        }
-      }
-
       const auction = await Auction.create({
         itemId: item._id,
         itemName: item.name,
-        requiredRole,
+        bossType: item.bossType,
+        requiredRole: selectedRole,
         createdBy: user.nickname,
         endsAt: new Date(Date.now() + AUCTION_DURATION_MS),
         createdByUserId: user._id,
@@ -358,12 +286,6 @@ export async function POST(req: Request) {
       });
       return NextResponse.json({ success: true, auctionId: auction._id.toString() });
     }
-
-    const body: unknown = await req.json();
-    if (typeof body !== 'object' || body === null) {
-      return NextResponse.json({ error: 'Invalid auction request' }, { status: 400 });
-    }
-    const payload = body as Record<string, unknown>;
 
     if (payload.action === 'resolve-no-bid') {
       const auctionId = payload.auctionId;
@@ -424,6 +346,7 @@ export async function POST(req: Request) {
             const [newAuction] = await Auction.create([{
               itemId: resolvedAuction.itemId,
               itemName: resolvedAuction.itemName,
+              bossType: resolvedAuction.bossType,
               requiredRole: resolvedAuction.requiredRole,
               createdBy: user.nickname,
               createdByUserId: user._id,
