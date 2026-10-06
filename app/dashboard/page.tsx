@@ -3,8 +3,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, Coins, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, History } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, History } from 'lucide-react';
 import BossHistoryPanel from '@/components/BossHistoryPanel';
+import AuctionHousePanel from '@/components/AuctionHousePanel';
 
 interface RosterMember {
   rowIndex: number;
@@ -544,16 +545,7 @@ export default function DashboardPage() {
             </section>
           </div>
         ) : activeTab === 'auction' ? (
-          /* Auction House Placeholder Tab */
-          <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 p-16 rounded-2xl text-center space-y-4 shadow-xl">
-            <div className="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center mx-auto text-indigo-400">
-              <Coins className="w-8 h-8" />
-            </div>
-            <h2 className="text-xl font-bold text-white">Auction House Coming Soon</h2>
-            <p className="text-slate-400 text-sm max-w-md mx-auto">
-              Clan members will soon be able to bid and spend their accumulated DKP points directly on rare boss drops and gear auctions.
-            </p>
-          </div>
+          <AuctionHousePanel />
         ) : (
           <BossHistoryPanel embedded />
         )}
