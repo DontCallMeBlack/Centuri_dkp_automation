@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronLeft, ChevronRight, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -237,6 +237,7 @@ export default function AuctionHousePanel() {
   const [now, setNow] = useState(Date.now());
   const [newItemMode, setNewItemMode] = useState(false);
   const [postFormOpen, setPostFormOpen] = useState(false);
+  const [todoListOpen, setTodoListOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [itemName, setItemName] = useState('');
@@ -617,12 +618,24 @@ export default function AuctionHousePanel() {
       )}
 
       {(data.manager || todoTasks.length > 0) && (
-        <section className="rounded-2xl border border-amber-400/20 bg-slate-900/60 p-5 sm:p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <PackageCheck className="h-4 w-4 text-amber-300" />
-            <h3 className="font-bold text-white">Auction TODO list</h3>
-            <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold text-amber-200">{todoTasks.length}</span>
-          </div>
+        <section className="rounded-2xl border border-amber-400/20 bg-slate-900/60 p-3 sm:p-4">
+          <button
+            type="button"
+            onClick={() => setTodoListOpen((open) => !open)}
+            aria-expanded={todoListOpen}
+            aria-controls="auction-todo-list"
+            className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-slate-800/60"
+          >
+            <span className="flex min-w-0 items-center gap-2.5">
+              <PackageCheck className="h-4 w-4 shrink-0 text-amber-300" />
+              <span className="font-bold text-white">Auction TODO list</span>
+              <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-amber-200">{todoTasks.length}</span>
+            </span>
+            {todoListOpen
+              ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />
+              : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
+          </button>
+          {todoListOpen && <div id="auction-todo-list" className="mt-3 border-t border-slate-800 pt-4">
           {todoTasks.length === 0 ? (
             <p className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-sm text-slate-400">No auction follow-up tasks right now.</p>
           ) : (
@@ -676,6 +689,7 @@ export default function AuctionHousePanel() {
               ))}
             </div>
           )}
+          </div>}
         </section>
       )}
 
