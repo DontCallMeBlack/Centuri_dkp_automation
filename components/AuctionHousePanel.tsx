@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -18,6 +18,8 @@ interface AuctionToon {
 interface CatalogItem {
   id: string;
   name: string;
+  requiredRole: string;
+  bossType: string;
   imageCount: number;
 }
 
@@ -36,6 +38,7 @@ interface Auction {
   itemId: string;
   imageCount: number;
   itemName: string;
+  bossType: string;
   requiredRole: string;
   createdBy: string;
   isPoster: boolean;
@@ -83,45 +86,6 @@ function formatRemaining(endsAt: string, now: number) {
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainingSeconds = seconds % 60;
   return `${hours}h ${minutes}m ${remainingSeconds}s`;
-}
-
-async function optimizeImageForUpload(file: File): Promise<File> {
-  const bitmap = await createImageBitmap(file);
-  try {
-    if (bitmap.width * bitmap.height > 40_000_000) {
-      throw new Error(`${file.name} is too large to process in the browser.`);
-    }
-
-    const variants = [
-      { width: 1200, quality: 0.78 },
-      { width: 1000, quality: 0.74 },
-      { width: 900, quality: 0.68 },
-      { width: 800, quality: 0.62 },
-      { width: 700, quality: 0.55 },
-    ] as const;
-
-    for (const { width, quality } of variants) {
-      const scale = Math.min(1, width / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('Your browser could not prepare the selected image.');
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/webp', quality),
-      );
-      if (blob?.type === 'image/webp' && blob.size <= 256 * 1024) {
-        const filename = file.name.replace(/\.[^.]+$/, '') || 'auction-item';
-        return new File([blob], `${filename}.webp`, { type: 'image/webp' });
-      }
-    }
-
-    throw new Error(`${file.name} could not be compressed enough. Choose a smaller or simpler image.`);
-  } finally {
-    bitmap.close();
-  }
 }
 
 function AuctionItemImage({
@@ -299,16 +263,19 @@ export default function AuctionHousePanel() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
-  const [newItemMode, setNewItemMode] = useState(false);
   const [postFormOpen, setPostFormOpen] = useState(false);
   const [todoListOpen, setTodoListOpen] = useState(false);
   const [wonItemsOpen, setWonItemsOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [itemResultLimit, setItemResultLimit] = useState(40);
-  const [itemName, setItemName] = useState('');
-  const [requiredRole, setRequiredRole] = useState('');
-  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [auctionRoleFilter, setAuctionRoleFilter] = useState('');
+  const [auctionBossFilter, setAuctionBossFilter] = useState('');
+  const [auctionHolderFilter, setAuctionHolderFilter] = useState('');
+  const [auctionFiltersOpen, setAuctionFiltersOpen] = useState(false);
+  const [archiveAuctions, setArchiveAuctions] = useState<Auction[]>([]);
+  const [archiveLoaded, setArchiveLoaded] = useState(false);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const [selectedToons, setSelectedToons] = useState<Record<string, number>>({});
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const router = useRouter();
@@ -327,11 +294,6 @@ export default function AuctionHousePanel() {
         if (mounted) {
           setError('');
           setData(result);
-          setRequiredRole((current) =>
-            result.roles.find((role: string) => normalizeAuctionRole(role) === normalizeAuctionRole(current))
-              ?? result.roles[0]
-              ?? '',
-          );
         }
       } catch (loadError) {
         if (mounted) setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
@@ -355,12 +317,23 @@ export default function AuctionHousePanel() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Unable to refresh auctions');
     setError('');
-    setRequiredRole((current: string) =>
-      result.roles.find((role: string) => normalizeAuctionRole(role) === normalizeAuctionRole(current))
-        ?? result.roles[0]
-        ?? '',
-    );
     setData(result);
+  };
+
+  const loadFullAuctionHistory = async () => {
+    setArchiveLoading(true);
+    setError('');
+    try {
+      const response = await fetch('/api/auction?includeArchive=1', { cache: 'no-store' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to load full auction history');
+      setArchiveAuctions(result.auctions);
+      setArchiveLoaded(true);
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : 'Unable to load full auction history');
+    } finally {
+      setArchiveLoading(false);
+    }
   };
 
   const submitAuction = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -369,28 +342,14 @@ export default function AuctionHousePanel() {
     setError('');
     setNotice('');
     try {
-      const form = new FormData();
-      form.set('action', 'create-auction');
-      form.set('requiredRole', requiredRole);
-      if (newItemMode) {
-        if (imageFiles.length === 0) throw new Error('Upload at least one image for the new item.');
-        form.set('itemName', itemName);
-        const optimizedFiles = await Promise.all(imageFiles.map(optimizeImageForUpload));
-        const totalUploadBytes = optimizedFiles.reduce((total, file) => total + file.size, 0);
-        if (totalUploadBytes > 2 * 1024 * 1024) {
-          throw new Error('The optimized images exceed 2 MB total. Remove an image and try again.');
-        }
-        for (const file of optimizedFiles) form.append('images', file);
-      } else {
-        form.set('itemId', selectedItemId);
-      }
-      const response = await fetch('/api/auction', { method: 'POST', body: form });
+      const response = await fetch('/api/auction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'create-auction', itemId: selectedItemId }),
+      });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to post auction');
       setNotice('Auction posted. It will close in 2 minutes; bids in the final 2 minutes extend the timer.');
-      setNewItemMode(false);
-      setItemName('');
-      setImageFiles([]);
       setPostFormOpen(false);
       await refresh();
     } catch (submitError) {
@@ -515,7 +474,6 @@ export default function AuctionHousePanel() {
     </section>;
   }
 
-  const activeAuctions = data.auctions.filter((auction) => auction.status === 'active');
   const filteredItems = data.items.filter((item) =>
     item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()),
   );
@@ -524,9 +482,28 @@ export default function AuctionHousePanel() {
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
   );
-  const wonAuctions = data.auctions.filter((auction) =>
-    auction.status === 'completed' && auction.winner,
+  const allAuctions = [...new Map(
+    [...archiveAuctions, ...data.auctions].map((auction) => [auction.id, auction]),
+  ).values()];
+  const wonAuctions = allAuctions.filter((auction) =>
+    auction.status === 'completed' && auction.isWinner && auction.winner,
   );
+  const auctionHolders = [...new Set(allAuctions.flatMap((auction) => {
+    const bid = auction.winner ?? auction.highBid;
+    return bid ? [bid.nickname] : [];
+  }))].sort((first, second) => first.localeCompare(second));
+  const filteredAuctions = allAuctions.filter((auction) =>
+    (!auctionRoleFilter || normalizeAuctionRole(auction.requiredRole) === normalizeAuctionRole(auctionRoleFilter)) &&
+    (!auctionBossFilter || auction.bossType === auctionBossFilter) &&
+    (!auctionHolderFilter ||
+      auction.winner?.nickname === auctionHolderFilter ||
+      (!auction.winner && auction.highBid?.nickname === auctionHolderFilter)),
+  );
+  const activeAuctionFilterCount = [
+    auctionRoleFilter,
+    auctionBossFilter,
+    auctionHolderFilter,
+  ].filter(Boolean).length;
 
   return (
     <div className="space-y-6">
@@ -541,7 +518,7 @@ export default function AuctionHousePanel() {
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-300">Centuri marketplace</p>
               <h2 className="mt-1 text-xl font-black text-white sm:text-2xl">Auction House</h2>
-              <p className="mt-1 text-sm text-slate-300">Winning bids reserve DKP on the bidding toon until the auction ends.</p>
+              <p className="mt-1 text-sm text-slate-300">DKP is held while bidding and deducted from the winner when the auction ends.</p>
             </div>
           </div>
           {data.manager && (
@@ -585,29 +562,7 @@ export default function AuctionHousePanel() {
           <form onSubmit={submitAuction} className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-300" htmlFor="auction-item">Item</label>
-              {newItemMode ? (
-                <>
-                  <input id="auction-item" required maxLength={120} value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Full item name" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-emerald-400/60" />
-                  <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/50 px-3.5 py-3 text-sm text-slate-300 hover:border-emerald-400/40">
-                    <ImagePlus className="h-4 w-4 shrink-0 text-emerald-300" />
-                    <span className="min-w-0 truncate">{imageFiles.length > 0 ? `${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} selected` : 'Upload up to 8 images · auto-optimized to WebP'}</span>
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      multiple
-                      onChange={(event) => setImageFiles(Array.from(event.target.files ?? []))}
-                      className="sr-only"
-                      required
-                    />
-                  </label>
-                  {imageFiles.length > 0 && (
-                    <ul className="space-y-1 text-[11px] text-slate-400">
-                      {imageFiles.map((file) =>                       <li key={`${file.name}-${file.lastModified}`}>{file.name} · {(file.size / 1024).toFixed(0)} KB original</li>)}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                <div className="space-y-2">
+              <div className="space-y-2">
                   <label className="relative block">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                     <input
@@ -639,7 +594,7 @@ export default function AuctionHousePanel() {
                   <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70">
                     {filteredItems.length === 0 ? (
                       <p className="px-3 py-4 text-center text-xs text-slate-500">
-                        {data.items.length === 0 ? 'No saved items yet. Add a new item below.' : 'No items match your search.'}
+                        {data.items.length === 0 ? 'No saved items yet. Ask a Chief, General, or Guardian to add one from the Items tab.' : 'No items match your search.'}
                       </p>
                     ) : visibleItems.map((item) => (
                       <button
@@ -655,7 +610,7 @@ export default function AuctionHousePanel() {
                           className="h-10 w-10 shrink-0 rounded-lg bg-slate-900"
                         />
                         <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-200">{item.name}</span>
-                        <span className="shrink-0 text-[10px] text-slate-500">{item.imageCount} img</span>
+                        <span className="shrink-0 text-[10px] text-slate-500">{item.requiredRole || 'Role not set'} · {item.bossType}</span>
                       </button>
                     ))}
                   </div>
@@ -668,12 +623,8 @@ export default function AuctionHousePanel() {
                       Show more ({filteredItems.length - visibleItems.length} remaining)
                     </button>
                   )}
-                </div>
-              )}
-              <button type="button" onClick={() => setNewItemMode((mode) => !mode)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300 hover:text-emerald-200">
-                {newItemMode ? 'Choose an existing item' : <><Plus className="h-3 w-3" /> Add a new item and image</>}
-              </button>
-              {!newItemMode && selectedCatalogItem && (
+              </div>
+              {selectedCatalogItem && (
                 <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-2.5">
                   <AuctionItemImage
                     itemId={selectedItemId}
@@ -681,20 +632,14 @@ export default function AuctionHousePanel() {
                     alt="Saved item"
                     className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
                   />
-                  <span className="text-xs text-slate-400">Saved item image</span>
+                  <span className="text-xs text-slate-400">
+                    {selectedCatalogItem.requiredRole || 'Role not set'} · {selectedCatalogItem.bossType}
+                  </span>
                 </div>
               )}
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-300" htmlFor="auction-role">Required toon role</label>
-              <select id="auction-role" value={requiredRole} onChange={(event) => setRequiredRole(event.target.value)} disabled={data.roles.length === 0} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm capitalize text-white outline-none focus:border-emerald-400/60 disabled:opacity-50">
-                {data.roles.length === 0
-                  ? <option value="">No roles found in the sheet</option>
-                  : data.roles.map((role) => <option key={role} value={role}>{role}</option>)}
-              </select>
-              <p className="text-xs text-slate-500">Roles come directly from the Google Sheets roster. Only a linked toon with the selected role can bid. Saved WebP images are limited to 150 KB total per item.</p>
-            </div>
-            <button type="submit" disabled={saving || !requiredRole || (!newItemMode && !selectedItemId)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
+            <p className="self-center text-xs text-slate-500">The saved item’s role and boss type are used automatically for the auction.</p>
+            <button type="submit" disabled={saving || !selectedCatalogItem?.requiredRole} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
               {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />} Post 2-minute auction
             </button>
           </form>
@@ -788,7 +733,7 @@ export default function AuctionHousePanel() {
           >
             <span className="flex min-w-0 items-center gap-2.5">
               <Trophy className="h-4 w-4 shrink-0 text-emerald-300" />
-              <span className="font-bold text-white">Items won</span>
+              <span className="font-bold text-white">Items you won</span>
               <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-emerald-200">{wonAuctions.length}</span>
             </span>
             {wonItemsOpen
@@ -798,26 +743,18 @@ export default function AuctionHousePanel() {
           {wonItemsOpen && (
             <div id="auction-won-items" className="mt-3 space-y-3 border-t border-slate-800 pt-4">
               {wonAuctions.map((auction) => (
-                <article key={auction.id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-                  <AuctionItemImage
-                    itemId={auction.itemId}
-                    imageCount={auction.imageCount}
-                    alt={auction.itemName}
-                    className="h-14 w-14 shrink-0 rounded-lg bg-slate-900"
-                  />
-                  <div className="min-w-0 flex-1">
+                <article key={auction.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                  <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
-                    <p className="text-xs text-slate-300">
-                      Won by <span className="font-semibold text-emerald-200">{auction.winner?.nickname}</span>
-                      {' · '}{auction.winner?.amount.toLocaleString()} DKP
-                    </p>
                     <p className="mt-1 text-[11px] text-slate-400">
                       {auction.deliveryStatus === 'done'
-                        ? `Mailed by ${auction.deliveredBy ?? 'clan management'} · DKP deducted on win`
-                        : 'Awaiting mail · DKP already deducted on win'}
+                        ? `Mailed · ${auction.bossType}`
+                        : `Awaiting mail · ${auction.bossType}`}
                     </p>
                   </div>
-                  <span className="shrink-0 text-[10px] text-slate-500">Posted by {auction.createdBy}</span>
+                  <span className="shrink-0 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-amber-200">
+                    −{auction.winner?.amount.toLocaleString()} DKP
+                  </span>
                 </article>
               ))}
             </div>
@@ -829,19 +766,93 @@ export default function AuctionHousePanel() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold text-white">Auctions</h3>
-            <p className="text-xs text-slate-400">Your bid limit is each toon’s available DKP minus its other active holds.</p>
+            <p className="text-xs text-slate-400">
+              Showing {filteredAuctions.length} of {allAuctions.length} loaded auctions · bid limits use each toon’s available DKP minus active holds.
+            </p>
           </div>
-          <button onClick={() => void refresh().catch((refreshError: unknown) => setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh auctions'))} aria-label="Refresh auctions" className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800"><RefreshCw className="h-4 w-4" /></button>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setAuctionFiltersOpen((open) => !open)}
+              aria-expanded={auctionFiltersOpen}
+              aria-controls="auction-filters"
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                activeAuctionFilterCount
+                  ? 'border-indigo-400/30 bg-indigo-400/10 text-indigo-200'
+                  : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <Filter className="h-4 w-4" /> Filter
+              {activeAuctionFilterCount > 0 && <span className="rounded-full bg-indigo-400/20 px-1.5 py-0.5">{activeAuctionFilterCount}</span>}
+            </button>
+            <button onClick={() => void refresh().catch((refreshError: unknown) => setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh auctions'))} aria-label="Refresh auctions" className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800"><RefreshCw className="h-4 w-4" /></button>
+          </div>
         </div>
 
-        {data.auctions.length === 0 ? (
+        {auctionFiltersOpen && <div id="auction-filters" className="grid gap-2 rounded-2xl border border-slate-800 bg-slate-900/50 p-3 sm:grid-cols-3">
+          <label className="space-y-1 text-[11px] font-semibold text-slate-400">
+            <span>Filter by role</span>
+            <select value={auctionRoleFilter} onChange={(event) => setAuctionRoleFilter(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200">
+              <option value="">All roles</option>
+              {data.roles.map((role) => <option key={role} value={role}>{role}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1 text-[11px] font-semibold text-slate-400">
+            <span>Filter by boss</span>
+            <select value={auctionBossFilter} onChange={(event) => setAuctionBossFilter(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200">
+              <option value="">All bosses</option>
+              <option value="Prot">Prot (Base / Prime)</option>
+              <option value="Bt">Bt</option>
+              <option value="Gele">Gele</option>
+              <option value="Dino">Dino</option>
+              <option value="Crom">Crom</option>
+              <option value="Unassigned">Unassigned</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-[11px] font-semibold text-slate-400">
+            <span>Filter by item holder / winner</span>
+            <select value={auctionHolderFilter} onChange={(event) => setAuctionHolderFilter(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200">
+              <option value="">All holders</option>
+              {auctionHolders.map((holder) => <option key={holder} value={holder}>{holder}</option>)}
+            </select>
+          </label>
+          {activeAuctionFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setAuctionRoleFilter('');
+                setAuctionBossFilter('');
+                setAuctionHolderFilter('');
+              }}
+              className="text-left text-xs font-semibold text-indigo-300 hover:text-indigo-200 sm:col-span-3"
+            >
+              Clear filters
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={archiveLoaded || archiveLoading}
+            onClick={() => void loadFullAuctionHistory()}
+            className="inline-flex items-center gap-2 text-left text-xs font-semibold text-indigo-300 hover:text-indigo-200 disabled:cursor-default disabled:text-slate-500 sm:col-span-3"
+          >
+            {archiveLoading && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+            {archiveLoaded ? 'Full auction history loaded' : 'Load full auction history for filtering'}
+          </button>
+        </div>}
+
+        {allAuctions.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
             <Gavel className="mx-auto h-7 w-7 text-slate-600" />
             <p className="mt-3 text-sm text-slate-400">There are no auctions yet.</p>
           </div>
+        ) : filteredAuctions.length === 0 ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
+            <Search className="mx-auto h-7 w-7 text-slate-600" />
+            <p className="mt-3 text-sm text-slate-400">No auctions match these filters.</p>
+          </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
-            {data.auctions.map((auction) => {
+            {filteredAuctions.map((auction) => {
               const isActive = auction.status === 'active' && new Date(auction.endsAt).getTime() > now;
               const eligibleToons = data.toons.filter((toon) =>
                 normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(auction.requiredRole),
@@ -871,6 +882,7 @@ export default function AuctionHousePanel() {
                         <div className="min-w-0">
                           <h4 className="truncate text-base font-bold text-white">{auction.itemName}</h4>
                           <p className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auction.requiredRole} only</p>
+                          <p className="mt-1 text-[10px] font-semibold text-slate-400">{auction.bossType}</p>
                         </div>
                         <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/10 text-emerald-300' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>
                           {isActive ? 'Live' : auction.status === 'settling' ? 'Settling' : auction.status === 'settlement-failed' ? 'Needs review' : 'Ended'}

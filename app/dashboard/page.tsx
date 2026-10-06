@@ -3,9 +3,10 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, History } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, History, Package } from 'lucide-react';
 import BossHistoryPanel from '@/components/BossHistoryPanel';
 import AuctionHousePanel from '@/components/AuctionHousePanel';
+import AuctionItemsPanel from '@/components/AuctionItemsPanel';
 
 interface RosterMember {
   rowIndex: number;
@@ -73,7 +74,7 @@ const ROLE_STYLES: Record<string, string> = {
 };
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<'dkp' | 'auction' | 'boss-history'>('dkp');
+  const [activeTab, setActiveTab] = useState<'dkp' | 'auction' | 'boss-history' | 'items'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
@@ -222,7 +223,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="flex items-center justify-end space-x-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={() => router.push('/admin/requests')}
             className="flex items-center space-x-2 text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 px-3.5 py-2 rounded-xl border border-indigo-500/40 transition-all"
@@ -230,6 +231,20 @@ export default function DashboardPage() {
             <UserCheck className="w-3.5 h-3.5" />
             <span>Member Requests</span>
           </button>
+
+          {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
+            <button
+              onClick={() => setActiveTab('items')}
+              className={`flex items-center space-x-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-all ${
+                activeTab === 'items'
+                  ? 'border-emerald-500/40 bg-emerald-600/20 text-emerald-300'
+                  : 'border-emerald-500/30 bg-emerald-600/10 text-emerald-300 hover:bg-emerald-600/20'
+              }`}
+            >
+              <Package className="h-3.5 w-3.5" />
+              <span>Items</span>
+            </button>
+          )}
 
           <button
             onClick={() => {
@@ -317,6 +332,19 @@ export default function DashboardPage() {
         >
           <span>Auction House</span>
         </button>
+        {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
+          <button
+            onClick={() => setActiveTab('items')}
+            className={`flex items-center space-x-2 border-b-2 px-6 py-3 text-sm font-semibold transition-all ${
+              activeTab === 'items'
+                ? 'border-indigo-500 bg-indigo-500/5 text-indigo-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Package className="h-4 w-4" />
+            <span>Items</span>
+          </button>
+        )}
         {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
           <button
             onClick={() => setActiveTab('boss-history')}
@@ -546,6 +574,8 @@ export default function DashboardPage() {
           </div>
         ) : activeTab === 'auction' ? (
           <AuctionHousePanel />
+        ) : activeTab === 'items' ? (
+          <AuctionItemsPanel />
         ) : (
           <BossHistoryPanel embedded />
         )}
