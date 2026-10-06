@@ -316,7 +316,7 @@ export default function DashboardPage() {
         >
           <span>Auction House</span>
         </button>
-        {(userSession?.role === 'chief' || userSession?.role === 'general') && (
+        {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
           <button
             onClick={() => setActiveTab('boss-history')}
             className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${

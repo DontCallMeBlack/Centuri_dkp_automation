@@ -149,7 +149,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       <section className="flex min-h-screen items-center justify-center bg-[#07090e] px-5 text-slate-100">
         <section className="w-full max-w-md border-y border-slate-800 py-8 text-center">
           <Shield className="mx-auto h-8 w-8 text-amber-300" />
-          <h1 className="mt-4 text-lg font-bold text-white">Chief or General access required</h1>
+          <h1 className="mt-4 text-lg font-bold text-white">Manager or Guardian access required</h1>
           <button onClick={() => router.push('/dashboard')} className="mt-5 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800">
             Back to dashboard
           </button>

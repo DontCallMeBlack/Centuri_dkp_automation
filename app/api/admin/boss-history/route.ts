@@ -13,6 +13,10 @@ function isRosterRowArray(value: unknown): value is number[] {
     new Set(value).size === value.length;
 }
 
+function canManageBossHistory(role: string) {
+  return role === 'chief' || role === 'general' || role === 'guardian';
+}
+
 function resolveParticipant(
   participant: IBossAwardParticipant,
   roster: Awaited<ReturnType<typeof getSheetRoster>>,
@@ -33,7 +37,7 @@ function resolveParticipant(
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'chief' && user.role !== 'general') {
+  if (!canManageBossHistory(user.role)) {
     return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
   }
 
@@ -65,7 +69,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'chief' && user.role !== 'general') {
+  if (!canManageBossHistory(user.role)) {
     return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
   }
 
@@ -166,7 +170,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'chief' && user.role !== 'general') {
+  if (!canManageBossHistory(user.role)) {
     return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
   }
 
