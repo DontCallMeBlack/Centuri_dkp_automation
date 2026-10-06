@@ -221,7 +221,7 @@ export default function AdminRequestsPage() {
     const hierarchy: ClanRole[] = ['chief', 'general', 'guardian', 'clansman'];
     const currentIndex = hierarchy.indexOf(role as ClanRole);
     if (currentIndex < 0) return undefined;
-    return hierarchy[currentIndex + (direction === 'promote' ? 1 : -1)];
+    return hierarchy[currentIndex + (direction === 'promote' ? -1 : 1)];
   };
 
   if (loading) {
@@ -327,9 +327,9 @@ export default function AdminRequestsPage() {
                     (managerRole === 'chief' ||
                       (managerRole === 'general' && member.role !== 'chief' && member.role !== 'general'));
                   const canPromote = promotedRole !== undefined &&
-                    (managerRole === 'chief' || promotedRole === 'guardian');
+                    (managerRole === 'chief' || (member.role === 'clansman' && promotedRole === 'guardian'));
                   const canDemote = demotedRole !== undefined &&
-                    (managerRole === 'chief' || demotedRole === 'clansman') &&
+                    (managerRole === 'chief' || (member.role === 'guardian' && demotedRole === 'clansman')) &&
                     !(member.role === 'chief' && members.filter((entry) => entry.role === 'chief').length <= 1);
 
                   return (
