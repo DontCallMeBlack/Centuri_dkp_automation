@@ -197,6 +197,11 @@ export async function GET() {
             creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian' ||
             creatorByNickname.get(auction.createdBy)?.role === 'guardian'
           )),
+        canResolveNoBid: auction.status === 'completed' &&
+          !auction.highBid &&
+          auction.deliveryStatus === 'not-required' &&
+          (auction.createdByUserId?.equals(user._id) === true ||
+            (!auction.createdByUserId && auction.createdBy === user.nickname)),
         createdAt: auction.createdAt.toISOString(),
         endsAt: auction.endsAt.toISOString(),
         status: auction.status,
@@ -308,6 +313,93 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid auction request' }, { status: 400 });
     }
     const payload = body as Record<string, unknown>;
+
+    if (payload.action === 'resolve-no-bid') {
+      const auctionId = payload.auctionId;
+      const resolution = payload.resolution;
+      if (
+        typeof auctionId !== 'string' ||
+        !mongoose.isValidObjectId(auctionId) ||
+        (resolution !== 'banked' && resolution !== 'repost')
+      ) {
+        return NextResponse.json({ error: 'Invalid no-bid auction action' }, { status: 400 });
+      }
+
+      const auction = await Auction.findById(auctionId);
+      if (!auction) return NextResponse.json({ error: 'Auction not found' }, { status: 404 });
+      const isPoster = auction.createdByUserId
+        ? auction.createdByUserId.equals(user._id)
+        : auction.createdBy === user.nickname;
+      if (!isPoster) {
+        return NextResponse.json({ error: 'Only the auction poster can resolve an auction with no bids' }, { status: 403 });
+      }
+      if (
+        auction.status !== 'completed' ||
+        auction.highBid ||
+        auction.deliveryStatus !== 'not-required'
+      ) {
+        return NextResponse.json({ error: 'Only an ended auction with no bids can be resolved' }, { status: 409 });
+      }
+
+      const session = await mongoose.startSession();
+      try {
+        let repostedAuctionId = '';
+        await session.withTransaction(async () => {
+          const ownershipFilter = auction.createdByUserId
+            ? { createdByUserId: user._id }
+            : { createdByUserId: { $exists: false }, createdBy: user.nickname };
+          const resolvedAuction = await Auction.findOneAndUpdate(
+            {
+              _id: auction._id,
+              status: 'completed',
+              highBid: null,
+              deliveryStatus: 'not-required',
+              ...ownershipFilter,
+            },
+            {
+              $set: {
+                deliveryStatus: resolution === 'banked' ? 'banked' : 'reposted',
+                deliveredBy: user.nickname,
+                deliveredAt: new Date(),
+              },
+            },
+            { new: true, session },
+          );
+          if (!resolvedAuction) {
+            throw new Error('This no-bid auction has already been resolved.');
+          }
+
+          if (resolution === 'repost') {
+            const [newAuction] = await Auction.create([{
+              itemId: resolvedAuction.itemId,
+              itemName: resolvedAuction.itemName,
+              requiredRole: resolvedAuction.requiredRole,
+              createdBy: user.nickname,
+              createdByUserId: user._id,
+              endsAt: new Date(Date.now() + AUCTION_DURATION_MS),
+              status: 'active',
+              deliveryStatus: 'not-required',
+            }], { session });
+            repostedAuctionId = newAuction._id.toString();
+          }
+        });
+
+        return NextResponse.json({
+          success: true,
+          message: resolution === 'banked'
+            ? 'Item marked as mailed to the bank.'
+            : 'Auction reposted for another two minutes.',
+          auctionId: repostedAuctionId || auctionId,
+        });
+      } catch (error: unknown) {
+        if (error instanceof Error && error.message === 'This no-bid auction has already been resolved.') {
+          return NextResponse.json({ error: error.message }, { status: 409 });
+        }
+        throw error;
+      } finally {
+        await session.endSession();
+      }
+    }
 
     if (payload.action === 'remove-auction') {
       const auctionId = payload.auctionId;
