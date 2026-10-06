@@ -302,6 +302,7 @@ export default function AuctionHousePanel() {
   const [newItemMode, setNewItemMode] = useState(false);
   const [postFormOpen, setPostFormOpen] = useState(false);
   const [todoListOpen, setTodoListOpen] = useState(false);
+  const [wonItemsOpen, setWonItemsOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [itemResultLimit, setItemResultLimit] = useState(40);
@@ -439,7 +440,7 @@ export default function AuctionHousePanel() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to update delivery task');
-      setNotice('Winner delivery marked done.');
+      setNotice(result.message || 'Item marked mailed.');
       await refresh();
     } catch (deliveryError) {
       setError(deliveryError instanceof Error ? deliveryError.message : 'Unable to update delivery task');
@@ -523,8 +524,8 @@ export default function AuctionHousePanel() {
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
   );
-  const winnerAnnouncements = data.auctions.filter((auction) =>
-    auction.status === 'completed' && auction.isWinner && auction.winner,
+  const wonAuctions = data.auctions.filter((auction) =>
+    auction.status === 'completed' && auction.winner,
   );
 
   return (
@@ -744,7 +745,7 @@ export default function AuctionHousePanel() {
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {auction.canMarkDelivered && (
                       <button disabled={saving} onClick={() => void markDelivered(auction.id)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/30 hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">
-                        <Check className="h-4 w-4" /> Mailed to winner · Done
+                        <Check className="h-4 w-4" /> Confirm mailed
                       </button>
                     )}
                     {auction.canResolveNoBid && (
@@ -776,29 +777,51 @@ export default function AuctionHousePanel() {
         </section>
       )}
 
-      {winnerAnnouncements.length > 0 && (
-        <section className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-5 sm:p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <Trophy className="h-4 w-4 text-emerald-300" />
-            <h3 className="font-bold text-white">You won an auction</h3>
-          </div>
-          <div className="space-y-3">
-            {winnerAnnouncements.map((auction) => (
-              <article key={auction.id} className="flex items-center gap-3 rounded-xl border border-emerald-400/15 bg-slate-950/50 p-3">
-                <AuctionItemImage
-                  itemId={auction.itemId}
-                  imageCount={auction.imageCount}
-                  alt={auction.itemName}
-                  className="h-14 w-14 shrink-0 rounded-lg bg-slate-900"
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-emerald-200">{auction.itemName}</p>
-                  <p className="text-xs text-slate-300">Your bid of {auction.winner?.amount.toLocaleString()} DKP won. {auction.deliveryStatus === 'done' ? 'The poster marked it mailed.' : 'The poster has been asked to mail it to you.'}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">Auction posted by {auction.createdBy}</p>
-                </div>
-              </article>
-            ))}
-          </div>
+      {wonAuctions.length > 0 && (
+        <section className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-3 sm:p-4">
+          <button
+            type="button"
+            onClick={() => setWonItemsOpen((open) => !open)}
+            aria-expanded={wonItemsOpen}
+            aria-controls="auction-won-items"
+            className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-slate-800/60"
+          >
+            <span className="flex min-w-0 items-center gap-2.5">
+              <Trophy className="h-4 w-4 shrink-0 text-emerald-300" />
+              <span className="font-bold text-white">Items won</span>
+              <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-emerald-200">{wonAuctions.length}</span>
+            </span>
+            {wonItemsOpen
+              ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />
+              : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
+          </button>
+          {wonItemsOpen && (
+            <div id="auction-won-items" className="mt-3 space-y-3 border-t border-slate-800 pt-4">
+              {wonAuctions.map((auction) => (
+                <article key={auction.id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                  <AuctionItemImage
+                    itemId={auction.itemId}
+                    imageCount={auction.imageCount}
+                    alt={auction.itemName}
+                    className="h-14 w-14 shrink-0 rounded-lg bg-slate-900"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
+                    <p className="text-xs text-slate-300">
+                      Won by <span className="font-semibold text-emerald-200">{auction.winner?.nickname}</span>
+                      {' · '}{auction.winner?.amount.toLocaleString()} DKP
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      {auction.deliveryStatus === 'done'
+                        ? `Mailed by ${auction.deliveredBy ?? 'clan management'} · DKP deducted on win`
+                        : 'Awaiting mail · DKP already deducted on win'}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-[10px] text-slate-500">Posted by {auction.createdBy}</span>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
