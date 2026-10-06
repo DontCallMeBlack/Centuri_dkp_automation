@@ -979,7 +979,13 @@ export default function AuctionHousePanel() {
                           <p className="text-2xl font-black tabular-nums text-amber-200 sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold text-amber-400/70">DKP</span></p>
                         </div>
                       ) : (
-                        <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 p-3 text-center text-sm text-slate-400">No bids yet · starting bid 1 DKP</p>
+                        <p className={`mt-4 rounded-2xl border p-3 text-center text-sm ${
+                          isActive
+                            ? 'border-slate-800 bg-slate-950/50 text-slate-400'
+                            : 'border-slate-700 bg-slate-950/70 font-semibold text-slate-300'
+                        }`}>
+                          {isActive ? 'No bids yet · starting bid 1 DKP' : 'Auction ended with no bids'}
+                        </p>
                       )}
                     </div>
 
