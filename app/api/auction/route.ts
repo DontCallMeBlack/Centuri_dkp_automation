@@ -124,15 +124,26 @@ export async function GET() {
 
   try {
     await settleExpiredAuctions();
-    const [roster, recentAuctions, items, holds, pendingDeliveryTasks] = await Promise.all([
+    const [roster, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions] = await Promise.all([
       getSheetRoster(),
       Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
       AuctionItem.find().select('name imageCount').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints').lean(),
       Auction.find({ status: 'completed', deliveryStatus: 'pending' }).sort({ createdAt: 1 }).lean(),
+      Auction.find({
+        status: 'completed',
+        highBid: { $exists: false },
+        deliveryStatus: 'not-required',
+      }).sort({ createdAt: 1 }).lean(),
+      Auction.find({
+        status: 'completed',
+        'winner.userId': user._id,
+      }).sort({ createdAt: -1 }).limit(100).lean(),
     ]);
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
+    for (const auction of pendingNoBidTasks) auctionsById.set(auction._id.toString(), auction);
+    for (const auction of personalWinningAuctions) auctionsById.set(auction._id.toString(), auction);
     const auctions = [...auctionsById.values()].sort((first, second) =>
       second.createdAt.getTime() - first.createdAt.getTime(),
     );
@@ -190,6 +201,15 @@ export async function GET() {
         itemName: auction.itemName,
         requiredRole: auction.requiredRole,
         createdBy: auction.createdBy,
+        isPoster: auction.createdByUserId?.equals(user._id) === true ||
+          (!auction.createdByUserId && auction.createdBy === user.nickname),
+        isWinner: auction.winner?.userId.equals(user._id) === true,
+        canMarkDelivered: auction.status === 'completed' &&
+          auction.deliveryStatus === 'pending' &&
+          Boolean(auction.winner) &&
+          (isManager(user.role) ||
+            auction.createdByUserId?.equals(user._id) === true ||
+            (!auction.createdByUserId && auction.createdBy === user.nickname)),
         canRemove: user.role === 'chief' ||
           auction.createdByUserId?.equals(user._id) === true ||
           auction.createdBy === user.nickname ||
@@ -591,8 +611,30 @@ export async function POST(req: Request) {
       if (typeof auctionId !== 'string' || !mongoose.isValidObjectId(auctionId)) {
         return NextResponse.json({ error: 'Invalid auction ID' }, { status: 400 });
       }
+      const candidate = await Auction.findById(auctionId).select('createdBy createdByUserId status deliveryStatus winner');
+      if (!candidate) {
+        return NextResponse.json({ error: 'Auction not found' }, { status: 404 });
+      }
+      const isPoster = candidate.createdByUserId
+        ? candidate.createdByUserId.equals(user._id)
+        : candidate.createdBy === user.nickname;
+      if (!isManager(user.role) && !isPoster) {
+        return NextResponse.json({ error: 'Only the poster or an auction manager can complete this mail task' }, { status: 403 });
+      }
+
+      const ownershipFilter = isManager(user.role)
+        ? {}
+        : candidate.createdByUserId
+          ? { createdByUserId: user._id }
+          : { createdByUserId: { $exists: false }, createdBy: user.nickname };
       const auction = await Auction.findOneAndUpdate(
-        { _id: auctionId, status: 'completed', deliveryStatus: 'pending', winner: { $exists: true } },
+        {
+          _id: auctionId,
+          status: 'completed',
+          deliveryStatus: 'pending',
+          winner: { $exists: true },
+          ...ownershipFilter,
+        },
         {
           $set: {
             deliveryStatus: 'done',

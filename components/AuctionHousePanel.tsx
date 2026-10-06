@@ -38,6 +38,9 @@ interface Auction {
   itemName: string;
   requiredRole: string;
   createdBy: string;
+  isPoster: boolean;
+  isWinner: boolean;
+  canMarkDelivered: boolean;
   canRemove: boolean;
   createdAt: string;
   endsAt: string;
@@ -445,8 +448,11 @@ export default function AuctionHousePanel() {
     item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()),
   );
   const selectedCatalogItem = data.items.find((item) => item.id === selectedItemId);
-  const deliveryTasks = data.auctions.filter((auction) =>
-    auction.status === 'completed' && auction.deliveryStatus === 'pending' && auction.winner,
+  const todoTasks = data.auctions.filter((auction) =>
+    auction.canResolveNoBid || auction.canMarkDelivered,
+  );
+  const winnerAnnouncements = data.auctions.filter((auction) =>
+    auction.status === 'completed' && auction.isWinner && auction.winner,
   );
 
   return (
@@ -610,18 +616,18 @@ export default function AuctionHousePanel() {
         </section>
       )}
 
-      {data.manager && (
+      {(data.manager || todoTasks.length > 0) && (
         <section className="rounded-2xl border border-amber-400/20 bg-slate-900/60 p-5 sm:p-6">
           <div className="mb-4 flex items-center gap-2">
             <PackageCheck className="h-4 w-4 text-amber-300" />
-            <h3 className="font-bold text-white">Winner delivery tasks</h3>
-            <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold text-amber-200">{deliveryTasks.length}</span>
+            <h3 className="font-bold text-white">Auction TODO list</h3>
+            <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold text-amber-200">{todoTasks.length}</span>
           </div>
-          {deliveryTasks.length === 0 ? (
-            <p className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-sm text-slate-400">No winners are waiting for an item to be mailed.</p>
+          {todoTasks.length === 0 ? (
+            <p className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-sm text-slate-400">No auction follow-up tasks right now.</p>
           ) : (
             <div className="space-y-3">
-              {deliveryTasks.map((auction) => (
+              {todoTasks.map((auction) => (
                 <article key={auction.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4 sm:flex-row sm:items-center">
                   <div className="flex min-w-0 items-center gap-3">
                     <AuctionItemImage
@@ -632,16 +638,70 @@ export default function AuctionHousePanel() {
                     />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
-                      <p className="text-xs text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner?.nickname}</span> · {auction.winner?.owner} · {auction.winner?.amount.toLocaleString()} DKP</p>
+                      {auction.winner ? (
+                        <p className="text-xs text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner.nickname}</span> · {auction.winner.owner} · {auction.winner.amount.toLocaleString()} DKP</p>
+                      ) : (
+                        <p className="text-xs text-slate-400">No bids · choose what happens to this item</p>
+                      )}
                     </div>
                   </div>
-                  <button disabled={saving} onClick={() => void markDelivered(auction.id)} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/30 hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">
-                    <Check className="h-4 w-4" /> Mark mailed · Done
-                  </button>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {auction.canMarkDelivered && (
+                      <button disabled={saving} onClick={() => void markDelivered(auction.id)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/30 hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">
+                        <Check className="h-4 w-4" /> Mailed to winner · Done
+                      </button>
+                    )}
+                    {auction.canResolveNoBid && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void resolveNoBidAuction(auction, 'banked')}
+                          className="inline-flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50"
+                        >
+                          <PackageCheck className="h-3.5 w-3.5" /> Mail to bank
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void resolveNoBidAuction(auction, 'repost')}
+                          className="inline-flex items-center gap-2 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-400/20 disabled:opacity-50"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> Repost
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {winnerAnnouncements.length > 0 && (
+        <section className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-5 sm:p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <Trophy className="h-4 w-4 text-emerald-300" />
+            <h3 className="font-bold text-white">You won an auction</h3>
+          </div>
+          <div className="space-y-3">
+            {winnerAnnouncements.map((auction) => (
+              <article key={auction.id} className="flex items-center gap-3 rounded-xl border border-emerald-400/15 bg-slate-950/50 p-3">
+                <AuctionItemImage
+                  itemId={auction.itemId}
+                  imageCount={auction.imageCount}
+                  alt={auction.itemName}
+                  className="h-14 w-14 shrink-0 rounded-lg bg-slate-900"
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-emerald-200">{auction.itemName}</p>
+                  <p className="text-xs text-slate-300">Your bid of {auction.winner?.amount.toLocaleString()} DKP won. {auction.deliveryStatus === 'done' ? 'The poster marked it mailed.' : 'The poster has been asked to mail it to you.'}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">Auction posted by {auction.createdBy}</p>
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
       )}
 
@@ -714,26 +774,6 @@ export default function AuctionHousePanel() {
                       >
                         <X className="h-3.5 w-3.5" /> Remove auction
                       </button>
-                    )}
-                    {auction.canResolveNoBid && (
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => void resolveNoBidAuction(auction, 'banked')}
-                          className="inline-flex items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50"
-                        >
-                          <PackageCheck className="h-3.5 w-3.5" /> Mail to bank
-                        </button>
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => void resolveNoBidAuction(auction, 'repost')}
-                          className="inline-flex items-center gap-2 rounded-lg border border-indigo-400/30 bg-indigo-400/10 px-3 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-400/20 disabled:opacity-50"
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" /> Repost for 2 minutes
-                        </button>
-                      </div>
                     )}
                     {auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'banked' && (
                       <p className="text-xs text-amber-200">Mailed to bank by {auction.deliveredBy}</p>
