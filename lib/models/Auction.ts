@@ -15,8 +15,9 @@ export interface IAuction extends Document {
   itemName: string;
   requiredRole: string;
   createdBy: string;
+  createdByUserId?: Types.ObjectId;
   endsAt: Date;
-  status: 'active' | 'settling' | 'completed' | 'settlement-failed';
+  status: 'active' | 'removing' | 'settling' | 'completed' | 'settlement-failed';
   highBid?: IAuctionBid;
   winner?: IAuctionBid;
   bidVersion: number;
@@ -42,10 +43,11 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   itemName: { type: String, required: true },
   requiredRole: { type: String, required: true },
   createdBy: { type: String, required: true },
+  createdByUserId: { type: Schema.Types.ObjectId },
   endsAt: { type: Date, required: true },
   status: {
     type: String,
-    enum: ['active', 'settling', 'completed', 'settlement-failed'],
+    enum: ['active', 'removing', 'settling', 'completed', 'settlement-failed'],
     default: 'active',
     required: true,
   },

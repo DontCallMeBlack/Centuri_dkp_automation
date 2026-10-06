@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Auction, { type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
+import User from '@/lib/models/User';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
@@ -135,6 +136,18 @@ export async function GET() {
     const auctions = [...auctionsById.values()].sort((first, second) =>
       second.createdAt.getTime() - first.createdAt.getTime(),
     );
+    const creatorNicknames = [...new Set(auctions.map((auction) => auction.createdBy))];
+    const creatorUserIds = [...new Set(
+      auctions.flatMap((auction) => auction.createdByUserId ? [auction.createdByUserId] : []),
+    )];
+    const creators = await User.find({
+      $or: [
+        { nickname: { $in: creatorNicknames } },
+        ...(creatorUserIds.length > 0 ? [{ _id: { $in: creatorUserIds } }] : []),
+      ],
+    }).select('_id nickname role').lean();
+    const creatorByNickname = new Map(creators.map((creator) => [creator.nickname, creator]));
+    const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
     const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
     const roles = [...new Map(
       roster
@@ -177,6 +190,13 @@ export async function GET() {
         itemName: auction.itemName,
         requiredRole: auction.requiredRole,
         createdBy: auction.createdBy,
+        canRemove: user.role === 'chief' ||
+          auction.createdByUserId?.equals(user._id) === true ||
+          auction.createdBy === user.nickname ||
+          (user.role === 'general' && (
+            creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian' ||
+            creatorByNickname.get(auction.createdBy)?.role === 'guardian'
+          )),
         createdAt: auction.createdAt.toISOString(),
         endsAt: auction.endsAt.toISOString(),
         status: auction.status,
@@ -276,6 +296,7 @@ export async function POST(req: Request) {
         requiredRole,
         createdBy: user.nickname,
         endsAt: new Date(Date.now() + AUCTION_DURATION_MS),
+        createdByUserId: user._id,
         status: 'active',
         deliveryStatus: 'not-required',
       });
@@ -287,6 +308,74 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid auction request' }, { status: 400 });
     }
     const payload = body as Record<string, unknown>;
+
+    if (payload.action === 'remove-auction') {
+      const auctionId = payload.auctionId;
+      if (typeof auctionId !== 'string' || !mongoose.isValidObjectId(auctionId)) {
+        return NextResponse.json({ error: 'Invalid auction ID' }, { status: 400 });
+      }
+
+      const auction = await Auction.findById(auctionId);
+      if (!auction) return NextResponse.json({ error: 'Auction not found' }, { status: 404 });
+      const createdByUser = auction.createdByUserId
+        ? await User.findById(auction.createdByUserId).select('_id nickname role').lean()
+        : await User.findOne({ nickname: auction.createdBy }).select('_id nickname role').lean();
+      const ownsAuction = auction.createdByUserId
+        ? auction.createdByUserId.equals(user._id)
+        : auction.createdBy === user.nickname;
+      const mayRemove = user.role === 'chief' ||
+        ownsAuction ||
+        (user.role === 'general' && createdByUser?.role === 'guardian');
+      if (!mayRemove) {
+        return NextResponse.json({ error: 'You cannot remove this auction' }, { status: 403 });
+      }
+      if (auction.status !== 'active' || auction.endsAt.getTime() <= Date.now()) {
+        return NextResponse.json({ error: 'Only open auctions can be removed; ended auctions remain in the history' }, { status: 409 });
+      }
+
+      const claimed = await Auction.findOneAndUpdate(
+        { _id: auctionId, status: 'active', endsAt: { $gt: new Date() } },
+        { $set: { status: 'removing' } },
+        { new: true },
+      );
+      if (!claimed) {
+        return NextResponse.json({ error: 'This auction ended or changed while you were removing it' }, { status: 409 });
+      }
+
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          if (claimed.highBid) {
+            const holdUpdate = await AuctionHold.updateOne(
+              {
+                rowIndex: claimed.highBid.rowIndex,
+                heldPoints: { $gte: claimed.highBid.amount },
+              },
+              { $inc: { heldPoints: -claimed.highBid.amount } },
+              { session },
+            );
+            if (holdUpdate.modifiedCount !== 1) {
+              throw new Error('Auction hold could not be released; manual review is required.');
+            }
+          }
+
+          const deletion = await Auction.deleteOne({ _id: claimed._id, status: 'removing' }).session(session);
+          if (deletion.deletedCount !== 1) {
+            throw new Error('Auction could not be removed; manual review is required.');
+          }
+        });
+      } catch (error: unknown) {
+        await Auction.updateOne(
+          { _id: claimed._id, status: 'removing' },
+          { $set: { status: 'active' } },
+        );
+        throw error;
+      } finally {
+        await session.endSession();
+      }
+
+      return NextResponse.json({ success: true, message: 'Auction removed and its reserved DKP released.' });
+    }
 
     if (payload.action === 'bid') {
       const { auctionId, rowIndex, amount } = payload;
