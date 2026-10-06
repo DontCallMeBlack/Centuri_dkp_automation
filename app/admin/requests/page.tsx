@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ClipboardList, LoaderCircle, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardList, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
   _id: string;
@@ -26,6 +26,7 @@ export default function AdminRequestsPage() {
   const [members, setMembers] = useState<ClanUser[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
+  const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [accessRole, setAccessRole] = useState('');
   const [busyId, setBusyId] = useState('');
@@ -126,42 +127,63 @@ export default function AdminRequestsPage() {
       (currentMember?.sheetRecordRows ?? []).includes(record.rowIndex),
     );
 
+    const query = (mappingQueries[userId] ?? '').trim().toLowerCase();
+    const filteredRoster = availableRoster.filter((record) =>
+      `${record.account} ${record.owner}`.toLowerCase().includes(query),
+    );
+
     return (
-      <fieldset className="max-h-64 w-full overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70 p-2">
-        <legend className="sr-only">{label}</legend>
-        {availableRoster.map((record) => {
-          const isSelected = (selectedMappings[userId] ?? []).includes(record.rowIndex);
-          return (
-            <label
-              key={record.rowIndex}
-              className={`mb-1 flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-2.5 text-sm transition last:mb-0 ${
-                isSelected
-                  ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
-                  : 'border-transparent text-slate-300 hover:border-slate-800 hover:bg-slate-900'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={() => toggleMapping(userId, record.rowIndex)}
-                className="peer sr-only"
-              />
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
-                <Check className={`h-3.5 w-3.5 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
-                <span className="mt-0.5 block truncate text-xs text-slate-500">{record.owner}</span>
-              </span>
-            </label>
-          );
-        })}
-        {availableRoster.length === 0 && (
-          <p className="px-2 py-3 text-sm text-slate-500">
-            {roster.length === 0 ? 'No roster records found.' : 'No unlinked toon rows available.'}
+      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70">
+        <label className="relative block border-b border-slate-800">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+          <span className="sr-only">Search {label}</span>
+          <input
+            type="search"
+            value={mappingQueries[userId] ?? ''}
+            onChange={(event) => setMappingQueries((current) => ({
+              ...current,
+              [userId]: event.target.value,
+            }))}
+            placeholder="Search toons..."
+            className="w-full bg-transparent py-2.5 pl-9 pr-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:bg-slate-900/70"
+          />
+        </label>
+        <fieldset className="max-h-40 overflow-y-auto p-1.5">
+          <legend className="sr-only">{label}</legend>
+          {filteredRoster.map((record) => {
+            const isSelected = (selectedMappings[userId] ?? []).includes(record.rowIndex);
+            return (
+              <label
+                key={record.rowIndex}
+                className={`mb-0.5 flex min-w-0 cursor-pointer items-center gap-2.5 rounded-lg border px-2 py-1.5 text-sm transition last:mb-0 ${
+                  isSelected
+                    ? 'border-indigo-400/40 bg-indigo-500/10 text-white'
+                    : 'border-transparent text-slate-300 hover:bg-slate-900'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleMapping(userId, record.rowIndex)}
+                  className="h-4 w-4 shrink-0 cursor-pointer accent-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium leading-5">
+                    {record.account || 'Unnamed toon'} <span className="font-normal text-slate-500">· {record.owner}</span>
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        {filteredRoster.length === 0 && (
+          <p className="px-2 py-3 text-center text-xs text-slate-500">
+            {availableRoster.length === 0
+              ? roster.length === 0 ? 'No roster records found.' : 'No unlinked toon rows available.'
+              : 'No toons match this search.'}
           </p>
         )}
-      </fieldset>
+        </fieldset>
+      </div>
     );
   };
 
