@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, ShieldAlert, Sparkles, Trophy } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -18,6 +18,7 @@ interface AuctionToon {
 interface CatalogItem {
   id: string;
   name: string;
+  imageCount: number;
 }
 
 interface AuctionBid {
@@ -33,6 +34,7 @@ interface AuctionBid {
 interface Auction {
   id: string;
   itemId: string;
+  imageCount: number;
   itemName: string;
   requiredRole: string;
   createdBy: string;
@@ -80,15 +82,19 @@ function formatRemaining(endsAt: string, now: number) {
 
 function AuctionItemImage({
   itemId,
+  imageCount,
   alt,
   className,
 }: {
   itemId: string;
+  imageCount: number;
   alt: string;
   className: string;
 }) {
+  const [imageIndex, setImageIndex] = useState(0);
   const [imageUrl, setImageUrl] = useState('');
   const [imageError, setImageError] = useState('');
+  const imageTotal = Math.max(1, imageCount);
 
   useEffect(() => {
     let active = true;
@@ -97,7 +103,7 @@ function AuctionItemImage({
     const loadImage = async () => {
       try {
         setImageError('');
-        const response = await fetch(`/api/auction/image?id=${encodeURIComponent(itemId)}`, {
+        const response = await fetch(`/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
@@ -136,26 +142,85 @@ function AuctionItemImage({
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [itemId]);
+  }, [itemId, imageIndex]);
 
   if (imageError) {
     return (
-      <div role="img" aria-label={`${alt}: ${imageError}`} title={imageError} className={`${className} flex flex-col items-center justify-center gap-1 p-2 text-center text-[9px] text-rose-300`}>
+      <div role="img" aria-label={`${alt}: ${imageError}`} title={imageError} className={`${className} relative flex flex-col items-center justify-center gap-1 overflow-hidden p-2 text-center text-[9px] text-rose-300`}>
         <ImageOff className="h-4 w-4 shrink-0" />
         <span>Image unavailable</span>
+        {imageTotal > 1 && (
+          <ImageNavigation
+            imageIndex={imageIndex}
+            imageTotal={imageTotal}
+            setImageIndex={setImageIndex}
+          />
+        )}
       </div>
     );
   }
 
   if (!imageUrl) {
     return (
-      <div aria-label={`Loading ${alt}`} className={`${className} flex items-center justify-center`}>
+      <div aria-label={`Loading ${alt}`} className={`${className} relative flex items-center justify-center overflow-hidden`}>
         <LoaderCircle className="h-4 w-4 animate-spin text-slate-500" />
+        {imageTotal > 1 && (
+          <ImageNavigation
+            imageIndex={imageIndex}
+            imageTotal={imageTotal}
+            setImageIndex={setImageIndex}
+          />
+        )}
       </div>
     );
   }
 
-  return <img src={imageUrl} alt={alt} className={className} />;
+  return (
+    <div className={`${className} relative overflow-hidden`}>
+      <img src={imageUrl} alt={`${alt} image ${imageIndex + 1}`} className="h-full w-full object-contain" />
+      {imageTotal > 1 && (
+        <ImageNavigation
+          imageIndex={imageIndex}
+          imageTotal={imageTotal}
+          setImageIndex={setImageIndex}
+        />
+      )}
+    </div>
+  );
+}
+
+function ImageNavigation({
+  imageIndex,
+  imageTotal,
+  setImageIndex,
+}: {
+  imageIndex: number;
+  imageTotal: number;
+  setImageIndex: (index: number) => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Previous item image"
+        onClick={() => setImageIndex((imageIndex + imageTotal - 1) % imageTotal)}
+        className="absolute left-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-slate-950/80 text-white shadow-lg backdrop-blur hover:bg-slate-800"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <span className="absolute bottom-1 right-1 rounded-full border border-white/10 bg-slate-950/80 px-2 py-0.5 text-[10px] font-semibold text-white shadow-lg">
+        {imageIndex + 1}/{imageTotal}
+      </span>
+      <button
+        type="button"
+        aria-label="Next item image"
+        onClick={() => setImageIndex((imageIndex + 1) % imageTotal)}
+        className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-slate-950/80 text-white shadow-lg backdrop-blur hover:bg-slate-800"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </>
+  );
 }
 
 export default function AuctionHousePanel() {
@@ -166,10 +231,11 @@ export default function AuctionHousePanel() {
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
   const [newItemMode, setNewItemMode] = useState(false);
+  const [postFormOpen, setPostFormOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemName, setItemName] = useState('');
   const [requiredRole, setRequiredRole] = useState('');
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [selectedToons, setSelectedToons] = useState<Record<string, number>>({});
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const router = useRouter();
@@ -235,9 +301,9 @@ export default function AuctionHousePanel() {
       form.set('action', 'create-auction');
       form.set('requiredRole', requiredRole);
       if (newItemMode) {
-        if (!imageFile) throw new Error('Upload an image for the new item.');
+        if (imageFiles.length === 0) throw new Error('Upload at least one image for the new item.');
         form.set('itemName', itemName);
-        form.set('image', imageFile);
+        for (const file of imageFiles) form.append('images', file);
       } else {
         form.set('itemId', selectedItemId);
       }
@@ -247,7 +313,8 @@ export default function AuctionHousePanel() {
       setNotice('Auction posted. It will close in 24 hours; bids in the last five minutes extend the timer.');
       setNewItemMode(false);
       setItemName('');
-      setImageFile(null);
+      setImageFiles([]);
+      setPostFormOpen(false);
       await refresh();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Unable to post auction');
@@ -340,6 +407,18 @@ export default function AuctionHousePanel() {
             <p className="text-xs text-slate-400">Weekly DKP · all your linked toons</p>
             <p className="mt-1 font-bold text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="font-medium text-slate-400">/ {data.weeklyMinimum.toLocaleString()} required</span></p>
           </div>
+          {data.manager && (
+            <button
+              type="button"
+              onClick={() => setPostFormOpen((open) => !open)}
+              aria-expanded={postFormOpen}
+              aria-controls="auction-post-form"
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400"
+            >
+              {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {postFormOpen ? 'Close form' : 'Post an auction'}
+            </button>
+          )}
         </div>
         <div className="relative mt-4 flex flex-wrap gap-2 text-[11px] text-slate-300">
           <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">24-hour auctions</span>
@@ -351,8 +430,8 @@ export default function AuctionHousePanel() {
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
 
-      {data.manager && (
-        <section className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-5 shadow-lg sm:p-6">
+      {data.manager && postFormOpen && (
+        <section id="auction-post-form" className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-5 shadow-lg sm:p-6">
           <div className="mb-5 flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></div>
             <div>
@@ -368,9 +447,21 @@ export default function AuctionHousePanel() {
                   <input id="auction-item" required maxLength={120} value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Full item name" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-emerald-400/60" />
                   <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/50 px-3.5 py-3 text-sm text-slate-300 hover:border-emerald-400/40">
                     <ImagePlus className="h-4 w-4 shrink-0 text-emerald-300" />
-                    <span className="min-w-0 truncate">{imageFile ? imageFile.name : 'Upload item image (PNG, JPEG, WebP · max 4 MB)'}</span>
-                    <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setImageFile(event.target.files?.[0] ?? null)} className="sr-only" required />
+                    <span className="min-w-0 truncate">{imageFiles.length > 0 ? `${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} selected` : 'Upload item images (PNG, JPEG, WebP · max 4 MB each)'}</span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      multiple
+                      onChange={(event) => setImageFiles(Array.from(event.target.files ?? []))}
+                      className="sr-only"
+                      required
+                    />
                   </label>
+                  {imageFiles.length > 0 && (
+                    <ul className="space-y-1 text-[11px] text-slate-400">
+                      {imageFiles.map((file) => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
+                    </ul>
+                  )}
                 </>
               ) : (
                 <select id="auction-item" required value={selectedItemId} onChange={(event) => setSelectedItemId(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-emerald-400/60">
@@ -383,7 +474,12 @@ export default function AuctionHousePanel() {
               </button>
               {!newItemMode && selectedItemId && (
                 <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-2.5">
-                  <AuctionItemImage itemId={selectedItemId} alt="Saved item" className="h-12 w-12 shrink-0 rounded-lg bg-slate-900 object-contain" />
+                  <AuctionItemImage
+                    itemId={selectedItemId}
+                    imageCount={data.items.find((item) => item.id === selectedItemId)?.imageCount ?? 1}
+                    alt="Saved item"
+                    className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
+                  />
                   <span className="text-xs text-slate-400">Saved item image</span>
                 </div>
               )}
@@ -418,7 +514,12 @@ export default function AuctionHousePanel() {
               {deliveryTasks.map((auction) => (
                 <article key={auction.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4 sm:flex-row sm:items-center">
                   <div className="flex min-w-0 items-center gap-3">
-                    <AuctionItemImage itemId={auction.itemId} alt={auction.itemName} className="h-12 w-12 shrink-0 rounded-lg bg-slate-900 object-contain" />
+                    <AuctionItemImage
+                      itemId={auction.itemId}
+                      imageCount={auction.imageCount}
+                      alt={auction.itemName}
+                      className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
+                    />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
                       <p className="text-xs text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner?.nickname}</span> · {auction.winner?.owner} · {auction.winner?.amount.toLocaleString()} DKP</p>
@@ -469,7 +570,12 @@ export default function AuctionHousePanel() {
               return (
                 <article key={auction.id} className={`overflow-hidden rounded-2xl border bg-slate-900/60 shadow-lg ${isActive ? 'border-slate-700/80' : 'border-slate-800'}`}>
                   <div className="flex gap-4 p-4 sm:p-5">
-                    <AuctionItemImage itemId={auction.itemId} alt={auction.itemName} className="h-24 w-24 shrink-0 rounded-xl border border-slate-800 bg-slate-950 object-contain p-1 sm:h-28 sm:w-28" />
+                    <AuctionItemImage
+                      itemId={auction.itemId}
+                      imageCount={auction.imageCount}
+                      alt={auction.itemName}
+                      className="h-40 w-40 shrink-0 rounded-xl border border-slate-800 bg-slate-950 object-contain p-1 sm:h-52 sm:w-52"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
