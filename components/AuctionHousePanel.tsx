@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, Clock3, Gavel, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, ShieldAlert, Sparkles, Trophy } from 'lucide-react';
+import { Check, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, ShieldAlert, Sparkles, Trophy } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -76,6 +76,86 @@ function formatRemaining(endsAt: string, now: number) {
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainingSeconds = seconds % 60;
   return `${hours}h ${minutes}m ${remainingSeconds}s`;
+}
+
+function AuctionItemImage({
+  itemId,
+  alt,
+  className,
+}: {
+  itemId: string;
+  alt: string;
+  className: string;
+}) {
+  const [imageUrl, setImageUrl] = useState('');
+  const [imageError, setImageError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = '';
+
+    const loadImage = async () => {
+      try {
+        setImageError('');
+        const response = await fetch(`/api/auction/image?id=${encodeURIComponent(itemId)}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          throw new Error(`Image request failed (${response.status})`);
+        }
+
+        const contentType = response.headers.get('content-type') ?? '';
+        if (!contentType.startsWith('image/')) {
+          throw new Error('Image endpoint returned a non-image response');
+        }
+
+        const imageBlob = await response.blob();
+        if (imageBlob.size === 0) throw new Error('Stored image is empty');
+
+        objectUrl = URL.createObjectURL(imageBlob);
+        const image = new Image();
+        image.onload = () => {
+          if (active) setImageUrl(objectUrl);
+        };
+        image.onerror = () => {
+          if (active) setImageError('Stored image could not be decoded');
+        };
+        image.src = objectUrl;
+      } catch (loadError) {
+        if (active) {
+          setImageError(loadError instanceof Error ? loadError.message : 'Unable to load item image');
+        }
+      }
+    };
+
+    setImageUrl('');
+    void loadImage();
+
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [itemId]);
+
+  if (imageError) {
+    return (
+      <div role="img" aria-label={`${alt}: ${imageError}`} title={imageError} className={`${className} flex flex-col items-center justify-center gap-1 p-2 text-center text-[9px] text-rose-300`}>
+        <ImageOff className="h-4 w-4 shrink-0" />
+        <span>Image unavailable</span>
+      </div>
+    );
+  }
+
+  if (!imageUrl) {
+    return (
+      <div aria-label={`Loading ${alt}`} className={`${className} flex items-center justify-center`}>
+        <LoaderCircle className="h-4 w-4 animate-spin text-slate-500" />
+      </div>
+    );
+  }
+
+  return <img src={imageUrl} alt={alt} className={className} />;
 }
 
 export default function AuctionHousePanel() {
@@ -303,7 +383,7 @@ export default function AuctionHousePanel() {
               </button>
               {!newItemMode && selectedItemId && (
                 <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-2.5">
-                  <img src={`/api/auction/image?id=${encodeURIComponent(selectedItemId)}`} alt="" className="h-12 w-12 rounded-lg bg-slate-900 object-contain" />
+                  <AuctionItemImage itemId={selectedItemId} alt="Saved item" className="h-12 w-12 shrink-0 rounded-lg bg-slate-900 object-contain" />
                   <span className="text-xs text-slate-400">Saved item image</span>
                 </div>
               )}
@@ -338,7 +418,7 @@ export default function AuctionHousePanel() {
               {deliveryTasks.map((auction) => (
                 <article key={auction.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4 sm:flex-row sm:items-center">
                   <div className="flex min-w-0 items-center gap-3">
-                    <img src={`/api/auction/image?id=${encodeURIComponent(auction.itemId)}`} alt="" className="h-12 w-12 shrink-0 rounded-lg bg-slate-900 object-contain" />
+                    <AuctionItemImage itemId={auction.itemId} alt={auction.itemName} className="h-12 w-12 shrink-0 rounded-lg bg-slate-900 object-contain" />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-white">{auction.itemName}</p>
                       <p className="text-xs text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner?.nickname}</span> · {auction.winner?.owner} · {auction.winner?.amount.toLocaleString()} DKP</p>
@@ -389,7 +469,7 @@ export default function AuctionHousePanel() {
               return (
                 <article key={auction.id} className={`overflow-hidden rounded-2xl border bg-slate-900/60 shadow-lg ${isActive ? 'border-slate-700/80' : 'border-slate-800'}`}>
                   <div className="flex gap-4 p-4 sm:p-5">
-                    <img src={`/api/auction/image?id=${encodeURIComponent(auction.itemId)}`} alt="" className="h-24 w-24 shrink-0 rounded-xl border border-slate-800 bg-slate-950 object-contain p-1 sm:h-28 sm:w-28" />
+                    <AuctionItemImage itemId={auction.itemId} alt={auction.itemName} className="h-24 w-24 shrink-0 rounded-xl border border-slate-800 bg-slate-950 object-contain p-1 sm:h-28 sm:w-28" />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
