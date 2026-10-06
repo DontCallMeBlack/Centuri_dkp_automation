@@ -13,14 +13,14 @@ export async function GET(request: Request) {
   }
 
   try {
-    const item = await AuctionItem.findById(itemId).select('image imageType').lean();
+    const item = await AuctionItem.findById(itemId).select('image imageType');
     if (!item) return NextResponse.json({ error: 'Auction item not found' }, { status: 404 });
-    const image = new Uint8Array(item.image.byteLength);
-    image.set(item.image);
-    return new Response(image.buffer, {
+    const image = Buffer.from(item.image);
+    return new Response(Uint8Array.from(image), {
       headers: {
         'Content-Type': item.imageType,
-        'Cache-Control': 'private, max-age=3600',
+        'Cache-Control': 'private, no-store',
+        'Content-Length': image.byteLength.toString(),
         'X-Content-Type-Options': 'nosniff',
       },
     });
