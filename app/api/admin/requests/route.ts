@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import dbConnect from '@/lib/mongodb';
 import User from '@/lib/models/User';
+import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
@@ -33,13 +34,17 @@ export async function GET() {
 
   try {
     await dbConnect();
-    const [pendingUsers, members, roster] = await Promise.all([
+    const [pendingUsers, members, roster, auditEvents] = await Promise.all([
       User.find({ status: 'pending' }).select('_id nickname role status sheetRecordName sheetRecords').sort({ createdAt: 1 }).lean(),
       User.find({ status: 'approved' })
         .select('_id nickname role status sheetRecordName sheetRecords')
         .sort({ nickname: 1 })
         .lean(),
       getSheetRoster(),
+      ClanAuditEvent.find()
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean(),
     ]);
 
     const includeLinkedRows = (user: (typeof members)[number]) => ({
@@ -54,6 +59,12 @@ export async function GET() {
       pendingUsers: pendingUsers.map(includeLinkedRows),
       members: members.map(includeLinkedRows),
       roster,
+      auditEvents: auditEvents.map(({ _id, ...event }) => ({
+        ...event,
+        id: _id.toString(),
+        targetUserId: event.targetUserId.toString(),
+        actorUserId: event.actorUserId.toString(),
+      })),
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unable to load clan administration data';
@@ -101,6 +112,7 @@ export async function POST(req: Request) {
       if (target.role === requestedRole) {
         return NextResponse.json({ error: 'This account already has that role' }, { status: 400 });
       }
+      const previousRole = target.role;
       if (target.role === 'chief' && requestedRole !== 'chief') {
         const chiefCount = await User.countDocuments({ status: 'approved', role: 'chief' });
         if (chiefCount <= 1) {
@@ -108,8 +120,29 @@ export async function POST(req: Request) {
         }
       }
 
-      target.role = requestedRole;
-      await target.save();
+      const roleOrder = ['chief', 'general', 'guardian', 'clansman'];
+      const eventType = roleOrder.indexOf(requestedRole) < roleOrder.indexOf(target.role)
+        ? 'promotion'
+        : 'demotion';
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          target.role = requestedRole;
+          await target.save({ session });
+          await ClanAuditEvent.create([{
+            eventType,
+            actorUserId: manager._id,
+            actorNickname: manager.nickname,
+            actorRole: manager.role,
+            targetUserId: target._id,
+            targetNickname: target.nickname,
+            previousRole,
+            newRole: requestedRole,
+          }], { session });
+        });
+      } finally {
+        await session.endSession();
+      }
       return NextResponse.json({
         success: true,
         message: `Updated ${target.nickname}'s role to ${requestedRole}.`,
@@ -162,7 +195,23 @@ export async function POST(req: Request) {
       if (target.status !== 'approved' || !(MEMBER_ROLES as readonly string[]).includes(target.role)) {
         return NextResponse.json({ error: 'Only approved clan member accounts can be removed' }, { status: 400 });
       }
-      await target.deleteOne();
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          await ClanAuditEvent.create([{
+            eventType: 'member-removal',
+            actorUserId: manager._id,
+            actorNickname: manager.nickname,
+            actorRole: manager.role,
+            targetUserId: target._id,
+            targetNickname: target.nickname,
+            previousRole: target.role,
+          }], { session });
+          await target.deleteOne({ session });
+        });
+      } finally {
+        await session.endSession();
+      }
       return NextResponse.json({ success: true, message: 'Clan member account removed' });
     }
 
