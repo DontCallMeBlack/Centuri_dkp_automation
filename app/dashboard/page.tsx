@@ -55,6 +55,10 @@ const ROLE_ORDER = [
   'tank',
 ];
 
+function normalizeRole(role: string) {
+  return role.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 const ROLE_STYLES: Record<string, string> = {
   ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',
   'dps rogue': 'border-violet-400/30 bg-violet-400/10 text-violet-300',
@@ -161,10 +165,19 @@ export default function DashboardPage() {
         (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
     }
 
-    const firstRoleIndex = ROLE_ORDER.indexOf(first.subClass.trim().toLowerCase());
-    const secondRoleIndex = ROLE_ORDER.indexOf(second.subClass.trim().toLowerCase());
-    const roleDifference = (firstRoleIndex < 0 ? ROLE_ORDER.length : firstRoleIndex) -
-      (secondRoleIndex < 0 ? ROLE_ORDER.length : secondRoleIndex);
+    const firstRole = normalizeRole(first.subClass);
+    const secondRole = normalizeRole(second.subClass);
+    const firstRoleIndex = ROLE_ORDER.indexOf(firstRole);
+    const secondRoleIndex = ROLE_ORDER.indexOf(secondRole);
+    const firstHasOrderedRole = firstRoleIndex >= 0;
+    const secondHasOrderedRole = secondRoleIndex >= 0;
+    const roleDifference = firstHasOrderedRole && secondHasOrderedRole
+      ? firstRoleIndex - secondRoleIndex
+      : firstHasOrderedRole
+        ? -1
+        : secondHasOrderedRole
+          ? 1
+          : firstRole.localeCompare(secondRole, undefined, { sensitivity: 'base' });
     return roleDifference ||
       second.available - first.available ||
       first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
@@ -173,7 +186,7 @@ export default function DashboardPage() {
   const roleRanks = new Map<string, number>();
   const rankedActiveToons = sortedActiveToons
     .map((toon, index) => {
-      const role = toon.subClass.trim().toLowerCase() || 'unassigned';
+      const role = normalizeRole(toon.subClass) || 'unassigned';
       const roleRank = (roleRanks.get(role) ?? 0) + 1;
       roleRanks.set(role, roleRank);
       return { ...toon, rank: index + 1, roleRank };
