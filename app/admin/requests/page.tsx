@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, ClipboardList, LoaderCircle, Save, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
   _id: string;
@@ -29,7 +29,7 @@ export default function AdminRequestsPage() {
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
-  const [selectedRoles, setSelectedRoles] = useState<Record<string, ClanRole>>({});
+  const [editingToonsFor, setEditingToonsFor] = useState('');
   const [loading, setLoading] = useState(true);
   const [accessRole, setAccessRole] = useState('');
   const [managerRole, setManagerRole] = useState<ClanRole | ''>('');
@@ -57,9 +57,6 @@ export default function AdminRequestsPage() {
       setPendingUsers(data.pendingUsers);
       setMembers(data.members);
       setRoster(data.roster);
-      setSelectedRoles(Object.fromEntries(
-        data.members.map((member: ClanUser) => [member._id, member.role]),
-      ));
       setSelectedMappings(Object.fromEntries(
         [...data.pendingUsers, ...data.members].map((member: ClanUser) => [
           member._id,
@@ -215,11 +212,16 @@ export default function AdminRequestsPage() {
     }
   };
 
-  const updateRole = (member: ClanUser) => {
-    const role = selectedRoles[member._id];
-    if (!role || role === member.role) return;
-    if (!window.confirm(`Change ${member.nickname}'s role from ${member.role} to ${role}?`)) return;
+  const updateRole = (member: ClanUser, role: ClanRole, direction: 'promote' | 'demote') => {
+    if (!window.confirm(`${direction === 'promote' ? 'Promote' : 'Demote'} ${member.nickname} from ${member.role} to ${role}?`)) return;
     void sendAdminAction(member._id, 'set-role', undefined, role);
+  };
+
+  const getAdjacentRole = (role: string, direction: 'promote' | 'demote'): ClanRole | undefined => {
+    const hierarchy: ClanRole[] = ['chief', 'general', 'guardian', 'clansman'];
+    const currentIndex = hierarchy.indexOf(role as ClanRole);
+    if (currentIndex < 0) return undefined;
+    return hierarchy[currentIndex + (direction === 'promote' ? 1 : -1)];
   };
 
   if (loading) {
@@ -318,14 +320,25 @@ export default function AdminRequestsPage() {
             <p className="mb-4 mt-1 text-sm text-slate-400">Toons linked to another account are hidden. Unlink a toon to make it available for reassignment.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
               <div className="divide-y divide-slate-800 border-y border-slate-800">
-                {members.map((member) => (
-                  <article key={member._id} className="grid gap-3 py-4 md:grid-cols-[minmax(10rem,1fr)_minmax(14rem,20rem)_auto] md:items-center">
+                {members.map((member) => {
+                  const promotedRole = getAdjacentRole(member.role, 'promote');
+                  const demotedRole = getAdjacentRole(member.role, 'demote');
+                  const canManageRole = member._id !== managerId &&
+                    (managerRole === 'chief' ||
+                      (managerRole === 'general' && member.role !== 'chief' && member.role !== 'general'));
+                  const canPromote = promotedRole !== undefined &&
+                    (managerRole === 'chief' || promotedRole === 'guardian');
+                  const canDemote = demotedRole !== undefined &&
+                    (managerRole === 'chief' || demotedRole === 'clansman') &&
+                    !(member.role === 'chief' && members.filter((entry) => entry.role === 'chief').length <= 1);
+
+                  return (
+                  <article key={member._id} className="grid min-w-0 gap-3 py-4 md:grid-cols-[minmax(10rem,0.8fr)_minmax(14rem,1.2fr)] md:items-start">
                     <div>
                       <h3 className="font-semibold text-white">{member.nickname}</h3>
                       <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(member.sheetRecordRows ?? []).length} toon(s) linked</p>
                     </div>
-                    <div>
-                      {renderMappingSelector(member._id, `Available toon rows for ${member.nickname}`)}
+                    <div className="min-w-0">
                       {(member.sheetRecordRows ?? []).length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(member.sheetRecordRows ?? []).flatMap((rowIndex) => {
@@ -349,43 +362,61 @@ export default function AdminRequestsPage() {
                           })}
                         </div>
                       )}
-                    </div>
-                    <div className="flex gap-2">
-                      {member._id !== managerId &&
-                        (managerRole === 'chief' || (managerRole === 'general' && member.role !== 'chief' && member.role !== 'general')) && (
-                        <div className="flex min-w-0 flex-1 gap-2">
-                          <label className="sr-only" htmlFor={`role-${member._id}`}>Role for {member.nickname}</label>
-                          <select
-                            id={`role-${member._id}`}
-                            value={selectedRoles[member._id] ?? member.role}
-                            onChange={(event) => setSelectedRoles((current) => ({
-                              ...current,
-                              [member._id]: event.target.value as ClanRole,
-                            }))}
-                            disabled={busyId === member._id}
-                            className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs capitalize text-slate-200 outline-none focus:border-indigo-500 disabled:opacity-50"
-                          >
-                            {(managerRole === 'chief'
-                              ? ['chief', 'general', 'guardian', 'clansman']
-                              : ['guardian', 'clansman']
-                            ).map((role) => (
-                              <option key={role} value={role}>{role}</option>
-                            ))}
-                          </select>
+                      <button
+                        type="button"
+                        aria-expanded={editingToonsFor === member._id}
+                        onClick={() => setEditingToonsFor((current) => current === member._id ? '' : member._id)}
+                        className="mt-2 inline-flex w-full items-center justify-between gap-2 rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-indigo-500/40 hover:bg-slate-800 sm:w-auto"
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <Users className="h-4 w-4 text-indigo-300" />
+                          Manage linked toons
+                        </span>
+                        {editingToonsFor === member._id
+                          ? <ChevronUp className="h-4 w-4 text-slate-400" />
+                          : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                      </button>
+                      {editingToonsFor === member._id && (
+                        <div className="mt-2 space-y-2">
+                          {renderMappingSelector(member._id, `Available toon rows for ${member.nickname}`)}
+                          <p className="text-xs text-slate-500">{(selectedMappings[member._id] ?? []).length} toon(s) selected</p>
                           <button
                             type="button"
-                            disabled={busyId === member._id || !selectedRoles[member._id] || selectedRoles[member._id] === member.role}
-                            onClick={() => updateRole(member)}
-                            title={`Save role for ${member.nickname}`}
-                            className="inline-flex items-center justify-center rounded-lg border border-indigo-500/40 px-2.5 text-indigo-200 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={busyId === member._id || (selectedMappings[member._id] ?? []).length === 0}
+                            onClick={() => linkMember(member._id)}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 transition hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            {busyId === member._id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                            {busyId === member._id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
+                            Save toon links
                           </button>
                         </div>
                       )}
-                      <button disabled={busyId === member._id} onClick={() => linkMember(member._id)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50">
-                        <UserCheck className="h-4 w-4" /> Link
-                      </button>
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-2 md:col-span-2 lg:flex-row lg:items-center">
+                      {canManageRole && (
+                        <div className="grid w-full grid-cols-2 gap-2 lg:max-w-md">
+                          <button
+                            type="button"
+                            disabled={busyId === member._id || !canPromote}
+                            onClick={() => promotedRole && updateRole(member, promotedRole, 'promote')}
+                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-gradient-to-br from-emerald-500/20 via-emerald-600/15 to-green-700/20 px-3 py-2 text-sm font-bold text-emerald-200 shadow-lg shadow-emerald-950/20 transition hover:border-emerald-300/60 hover:from-emerald-400/30 hover:to-green-500/25 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            {busyId === member._id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+                            <span>Promote</span>
+                            {promotedRole && <span className="hidden text-xs font-medium text-emerald-100/70 sm:inline">to {promotedRole}</span>}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyId === member._id || !canDemote}
+                            onClick={() => demotedRole && updateRole(member, demotedRole, 'demote')}
+                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-400/30 bg-gradient-to-br from-red-500/20 via-rose-600/15 to-red-800/20 px-3 py-2 text-sm font-bold text-red-200 shadow-lg shadow-red-950/20 transition hover:border-red-300/60 hover:from-red-400/30 hover:to-rose-500/25 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            <ArrowDown className="h-4 w-4" />
+                            <span>Demote</span>
+                            {demotedRole && <span className="hidden text-xs font-medium text-red-100/70 sm:inline">to {demotedRole}</span>}
+                          </button>
+                        </div>
+                      )}
                       {(member.role === 'clansman' || member.role === 'guardian') && (
                         <button disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} className="inline-flex items-center justify-center rounded-lg border border-red-500/40 px-3 py-2 text-red-300 hover:bg-red-500/10 disabled:opacity-50">
                           <Trash2 className="h-4 w-4" />
@@ -393,7 +424,8 @@ export default function AdminRequestsPage() {
                       )}
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
