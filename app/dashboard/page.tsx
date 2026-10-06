@@ -447,113 +447,79 @@ export default function DashboardPage() {
                   No active toons match that search.
                 </div>
               ) : toonSort === 'role-dkp' ? (
-                <>
-                  <div className="space-y-3 md:hidden">
-                    {rankedActiveToons.map((toon) => (
-                      <article key={toon.rowIndex} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 shadow-lg shadow-black/10">
-                        <div className="flex items-center gap-3">
-                          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-base font-black ${
-                            toon.roleRank === 1
-                              ? 'border-amber-400/40 bg-amber-400/15 text-amber-300'
-                              : 'border-slate-700 bg-slate-900 text-slate-300'
-                          }`}>
-                            #{toon.roleRank}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-base font-bold text-white">{toon.account || toon.owner}</h3>
-                            <p className="mt-0.5 truncate text-xs text-slate-400">Owner: {toon.owner}</p>
-                          </div>
-                          <div className="shrink-0 text-right">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Available</p>
-                            <p className="text-xl font-black tabular-nums text-emerald-300">{toon.available.toLocaleString()}</p>
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3">
-                          <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${
-                            ROLE_STYLES[toon.subClass.trim().toLowerCase()] ?? 'border-slate-700 bg-slate-800 text-slate-300'
-                          }`}>
-                            {toon.subClass || 'Unassigned'}
-                          </span>
-                          <span className="text-xs text-slate-400">Account: <span className="font-semibold text-slate-200">{toon.memberNickname}</span></span>
-                        </div>
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <div className="rounded-lg bg-slate-900 px-3 py-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">All-time earned</p>
-                            <p className="mt-1 font-bold tabular-nums text-slate-200">{toon.earned.toLocaleString()}</p>
-                          </div>
-                          <div className="rounded-lg bg-slate-900 px-3 py-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">All-time spent</p>
-                            <p className="mt-1 font-bold tabular-nums text-slate-200">{toon.spent.toLocaleString()}</p>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  <div className="hidden overflow-x-auto rounded-2xl border border-slate-800 md:block">
-                    <table className="w-full min-w-[760px] border-collapse text-left">
-                      <thead className="sticky top-0 border-b border-slate-800 bg-slate-950 text-[11px] uppercase tracking-wider text-slate-500">
-                        <tr>
-                          <th scope="col" className="px-4 py-3 text-center">Role rank</th>
-                          <th scope="col" className="px-4 py-3">Toon</th>
-                          <th scope="col" className="px-4 py-3">Owner</th>
-                          <th scope="col" className="px-4 py-3">Website account</th>
-                          <th scope="col" className="px-4 py-3 text-right">All-time earned</th>
-                          <th scope="col" className="px-4 py-3 text-right">All-time spent</th>
-                          <th scope="col" className="px-4 py-3 text-right">Available DKP</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/80">
-                        {rankedActiveToons.map((toon) => (
-                          <tr key={toon.rowIndex} className="bg-slate-950/40 transition hover:bg-indigo-950/30">
-                            <td className="px-4 py-3 text-center">
-                              <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-lg border px-2 text-sm font-black ${
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/50 shadow-xl shadow-black/10">
+                  <table className="w-full min-w-[800px] table-fixed border-collapse text-left">
+                    <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] uppercase tracking-[0.16em] text-slate-500">
+                      <tr>
+                        <th scope="col" className="w-14 px-3 py-3 text-center">Rank</th>
+                        <th scope="col" className="w-40 px-3 py-3">Toon</th>
+                        <th scope="col" className="w-36 px-3 py-3">Role</th>
+                        <th scope="col" className="w-32 px-3 py-3">Owner</th>
+                        <th scope="col" className="w-32 px-3 py-3">Account</th>
+                        <th scope="col" className="w-20 px-3 py-3 text-right">Earned</th>
+                        <th scope="col" className="w-20 px-3 py-3 text-right">Spent</th>
+                        <th scope="col" className="w-24 px-3 py-3 text-right">Available</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80">
+                      {rankedActiveToons.map((toon) => {
+                        const roleStyle = ROLE_STYLES[toon.subClass.trim().toLowerCase()]
+                          ?? 'border-slate-700 bg-slate-800 text-slate-300';
+                        return (
+                          <tr key={toon.rowIndex} className="transition hover:bg-slate-800/50">
+                            <td className="px-3 py-2.5 text-center">
+                              <span className={`inline-flex h-7 min-w-7 items-center justify-center rounded-lg border px-1.5 text-xs font-black ${
                                 toon.roleRank === 1
                                   ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
-                                  : 'border-slate-800 bg-slate-900 text-slate-400'
+                                  : 'border-slate-700 bg-slate-900 text-slate-400'
                               }`}>
                                 {toon.roleRank}
                               </span>
                             </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-white">{toon.account || toon.owner}</span>
-                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                                  ROLE_STYLES[toon.subClass.trim().toLowerCase()] ?? 'border-slate-700 bg-slate-800 text-slate-300'
-                                }`}>
-                                  {toon.subClass || 'Unassigned'}
-                                </span>
-                              </div>
+                            <td className="max-w-44 px-3 py-2.5">
+                              <span className="block truncate text-sm font-semibold text-white" title={toon.account || toon.owner}>
+                                {toon.account || toon.owner}
+                              </span>
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-300">{toon.owner}</td>
-                            <td className="px-4 py-3 text-sm text-slate-400">{toon.memberNickname}</td>
-                            <td className="px-4 py-3 text-right tabular-nums text-slate-300">{toon.earned.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-right tabular-nums text-slate-300">{toon.spent.toLocaleString()}</td>
-                            <td className="px-4 py-3 text-right text-base font-black tabular-nums text-emerald-300">{toon.available.toLocaleString()}</td>
+                            <td className="px-3 py-2.5">
+                              <span className={`inline-flex max-w-36 truncate rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${roleStyle}`}>
+                                {toon.subClass || 'Unassigned'}
+                              </span>
+                            </td>
+                            <td className="max-w-36 px-3 py-2.5 text-sm text-slate-300">
+                              <span className="block truncate" title={toon.owner}>{toon.owner}</span>
+                            </td>
+                            <td className="max-w-36 px-3 py-2.5 text-sm text-slate-400">
+                              <span className="block truncate" title={toon.memberNickname}>{toon.memberNickname}</span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-sm tabular-nums text-slate-300">{toon.earned.toLocaleString()}</td>
+                            <td className="px-3 py-2.5 text-right text-sm tabular-nums text-slate-300">{toon.spent.toLocaleString()}</td>
+                            <td className="px-3 py-2.5 text-right text-sm font-black tabular-nums text-emerald-300">{toon.available.toLocaleString()}</td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {rankedActiveToons.map((toon) => (
-                    <article key={toon.rowIndex} className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 p-4 transition hover:-translate-y-0.5 hover:border-indigo-500/30">
-                      <div className="flex items-start gap-3">
-                        <div className="min-w-0 flex-1">
+                    <article key={toon.rowIndex} className="relative min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 p-4 transition hover:-translate-y-0.5 hover:border-indigo-500/30">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="min-w-0 flex-1 overflow-hidden">
                           <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="truncate font-bold text-white">{toon.account || toon.owner}</h3>
+                            <h3 className="max-w-full truncate font-bold text-white" title={toon.account || toon.owner}>{toon.account || toon.owner}</h3>
                             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
                               ROLE_STYLES[toon.subClass.trim().toLowerCase()] ?? 'border-slate-700 bg-slate-800 text-slate-300'
                             }`}>
-                              {toon.subClass || 'Unassigned'}
+                              <span className="block max-w-32 truncate">{toon.subClass || 'Unassigned'}</span>
                             </span>
                           </div>
                           <p className="mt-1 truncate text-xs text-slate-500">
-                            Owner: {toon.owner} · Account: {toon.memberNickname}
+                            Owner: <span title={toon.owner}>{toon.owner}</span> · Account: <span title={toon.memberNickname}>{toon.memberNickname}</span>
                           </p>
                         </div>
-                        <div className="shrink-0 text-right">
+                        <div className="shrink-0 pl-2 text-right">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Available</p>
                           <p className="text-lg font-black text-emerald-300">{toon.available.toLocaleString()}</p>
                         </div>
