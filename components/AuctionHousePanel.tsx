@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, Clock3, Gavel, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, ShieldAlert, Sparkles, Trophy } from 'lucide-react';
-import { AUCTION_ROLES, normalizeAuctionRole } from '@/lib/auctionRules';
+import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
   rowIndex: number;
@@ -52,6 +52,7 @@ interface AuctionData {
   weeklyEarnedTotal: number;
   weeklyMinimum: number;
   canBidWeekly: boolean;
+  roles: string[];
   toons: AuctionToon[];
   items: CatalogItem[];
   auctions: Auction[];
@@ -87,7 +88,7 @@ export default function AuctionHousePanel() {
   const [newItemMode, setNewItemMode] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemName, setItemName] = useState('');
-  const [requiredRole, setRequiredRole] = useState<string>(AUCTION_ROLES[0]);
+  const [requiredRole, setRequiredRole] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [selectedToons, setSelectedToons] = useState<Record<string, number>>({});
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
@@ -97,7 +98,7 @@ export default function AuctionHousePanel() {
     let mounted = true;
     const load = async () => {
       try {
-        const response = await fetch('/api/auction');
+        const response = await fetch('/api/auction', { cache: 'no-store' });
         const result = await response.json();
         if (response.status === 401) {
           router.push('/login');
@@ -107,6 +108,11 @@ export default function AuctionHousePanel() {
         if (mounted) {
           setError('');
           setData(result);
+          setRequiredRole((current) =>
+            result.roles.find((role: string) => normalizeAuctionRole(role) === normalizeAuctionRole(current))
+              ?? result.roles[0]
+              ?? '',
+          );
           setSelectedItemId((current) => current || result.items[0]?.id || '');
         }
       } catch (loadError) {
@@ -127,10 +133,15 @@ export default function AuctionHousePanel() {
   }, [router]);
 
   const refresh = async () => {
-    const response = await fetch('/api/auction');
+    const response = await fetch('/api/auction', { cache: 'no-store' });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Unable to refresh auctions');
     setError('');
+    setRequiredRole((current: string) =>
+      result.roles.find((role: string) => normalizeAuctionRole(role) === normalizeAuctionRole(current))
+        ?? result.roles[0]
+        ?? '',
+    );
     setData(result);
   };
 
@@ -299,12 +310,14 @@ export default function AuctionHousePanel() {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-300" htmlFor="auction-role">Required toon role</label>
-              <select id="auction-role" value={requiredRole} onChange={(event) => setRequiredRole(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm capitalize text-white outline-none focus:border-emerald-400/60">
-                {AUCTION_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+              <select id="auction-role" value={requiredRole} onChange={(event) => setRequiredRole(event.target.value)} disabled={data.roles.length === 0} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm capitalize text-white outline-none focus:border-emerald-400/60 disabled:opacity-50">
+                {data.roles.length === 0
+                  ? <option value="">No roles found in the sheet</option>
+                  : data.roles.map((role) => <option key={role} value={role}>{role}</option>)}
               </select>
-              <p className="text-xs text-slate-500">Only a member’s linked toon with this exact role can bid. New item names and images are saved for future auctions.</p>
+              <p className="text-xs text-slate-500">Roles come directly from the Google Sheets roster. Only a linked toon with the selected role can bid.</p>
             </div>
-            <button type="submit" disabled={saving || (!newItemMode && !selectedItemId)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
+            <button type="submit" disabled={saving || !requiredRole || (!newItemMode && !selectedItemId)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
               {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />} Post 24-hour auction
             </button>
           </form>

@@ -10,7 +10,6 @@ import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import {
   AUCTION_ANTI_SNIPE_MS,
   AUCTION_DURATION_MS,
-  AUCTION_ROLES,
   AUCTION_WEEKLY_MINIMUM,
   normalizeAuctionRole,
 } from '@/lib/auctionRules';
@@ -18,6 +17,8 @@ import {
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MANAGER_ROLES = new Set(['chief', 'general', 'guardian']);
+
+export const dynamic = 'force-dynamic';
 
 function isManager(role: string) {
   return MANAGER_ROLES.has(role);
@@ -135,6 +136,14 @@ export async function GET() {
       second.createdAt.getTime() - first.createdAt.getTime(),
     );
     const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
+    const roles = [...new Map(
+      roster
+        .map((record) => record.subClass.trim().replace(/\s+/g, ' '))
+        .filter(Boolean)
+        .map((role) => [normalizeAuctionRole(role), role] as const),
+    ).values()].sort((first, second) =>
+      first.localeCompare(second, undefined, { sensitivity: 'base' }),
+    );
     const linkedRows = getLinkedSheetRecordRows(user, rosterWithWeekly);
     const linkedRowSet = new Set(linkedRows);
     const linkedToons = rosterWithWeekly
@@ -151,6 +160,7 @@ export async function GET() {
       weeklyEarnedTotal,
       weeklyMinimum: AUCTION_WEEKLY_MINIMUM,
       canBidWeekly: weeklyEarnedTotal >= AUCTION_WEEKLY_MINIMUM,
+      roles,
       toons: linkedToons,
       items: items.map(({ _id, name }) => ({ id: _id.toString(), name })),
       auctions: auctions.map((auction) => ({
@@ -191,12 +201,15 @@ export async function POST(req: Request) {
       const itemName = form.get('itemName');
       const image = form.get('image');
 
-      if (
-        action !== 'create-auction' ||
-        typeof role !== 'string' ||
-        !(AUCTION_ROLES as readonly string[]).includes(normalizeAuctionRole(role))
-      ) {
+      if (action !== 'create-auction' || typeof role !== 'string' || !role.trim()) {
         return NextResponse.json({ error: 'Select a valid auction role' }, { status: 400 });
+      }
+      const roster = await getSheetRoster();
+      const requiredRole = roster.find((record) =>
+        normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role),
+      )?.subClass.trim();
+      if (!requiredRole) {
+        return NextResponse.json({ error: 'Select a role currently listed in the Google Sheets roster' }, { status: 400 });
       }
 
       let item;
@@ -242,7 +255,7 @@ export async function POST(req: Request) {
       const auction = await Auction.create({
         itemId: item._id,
         itemName: item.name,
-        requiredRole: normalizeAuctionRole(role),
+        requiredRole,
         createdBy: user.nickname,
         endsAt: new Date(Date.now() + AUCTION_DURATION_MS),
         status: 'active',
