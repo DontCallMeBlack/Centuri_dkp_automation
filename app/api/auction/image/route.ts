@@ -32,7 +32,7 @@ export async function GET(request: Request) {
     return new Response(Uint8Array.from(image), {
       headers: {
         'Content-Type': selectedImage.contentType,
-        'Cache-Control': 'private, no-store',
+        'Cache-Control': 'private, max-age=31536000, immutable',
         'Content-Length': image.byteLength.toString(),
         'X-Content-Type-Options': 'nosniff',
       },

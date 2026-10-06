@@ -4,6 +4,10 @@ import Auction, { type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
+import {
+  MAX_AUCTION_ITEM_IMAGE_BYTES,
+  optimizeAuctionImage,
+} from '@/lib/auctionImage';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
@@ -15,7 +19,8 @@ import {
   normalizeAuctionRole,
 } from '@/lib/auctionRules';
 
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
+const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
 type AuctionImageType = 'image/png' | 'image/jpeg' | 'image/webp';
 const MANAGER_ROLES = new Set(['chief', 'general', 'guardian']);
 
@@ -286,17 +291,38 @@ export async function POST(req: Request) {
         if (images.length > 8) {
           return NextResponse.json({ error: 'Upload no more than 8 images per item' }, { status: 400 });
         }
+        const totalUploadBytes = images.reduce(
+          (total, image) => total + (image instanceof File ? image.size : 0),
+          0,
+        );
+        if (totalUploadBytes > MAX_TOTAL_UPLOAD_BYTES) {
+          return NextResponse.json({ error: 'The optimized images must total no more than 2 MB per item' }, { status: 413 });
+        }
         const storedImages: Array<{ data: Buffer; contentType: AuctionImageType }> = [];
+        let totalStoredBytes = 0;
         for (const image of images) {
-          if (!(image instanceof File) || image.size <= 0 || image.size > MAX_IMAGE_BYTES) {
-            return NextResponse.json({ error: 'Each image must be a PNG, JPEG, or WebP no larger than 4 MB' }, { status: 400 });
+          if (!(image instanceof File) || image.size <= 0 || image.size > MAX_UPLOAD_IMAGE_BYTES) {
+            return NextResponse.json({ error: 'Each optimized upload must be no larger than 1 MB' }, { status: 400 });
           }
           const imageBytes = new Uint8Array(await image.arrayBuffer());
           const imageType = verifyImageType(imageBytes);
           if (imageType !== image.type) {
             return NextResponse.json({ error: 'An uploaded image is invalid or does not match its file type' }, { status: 400 });
           }
-          storedImages.push({ data: Buffer.from(imageBytes), contentType: imageType });
+          let optimizedImage: Buffer;
+          try {
+            optimizedImage = await optimizeAuctionImage(imageBytes);
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'Unable to optimize image';
+            return NextResponse.json({ error: message }, { status: 400 });
+          }
+          totalStoredBytes += optimizedImage.byteLength;
+          if (totalStoredBytes > MAX_AUCTION_ITEM_IMAGE_BYTES) {
+            return NextResponse.json({
+              error: 'The optimized images exceed 150 KB total for this item. Remove an image and try again.',
+            }, { status: 413 });
+          }
+          storedImages.push({ data: optimizedImage, contentType: 'image/webp' });
         }
 
         try {

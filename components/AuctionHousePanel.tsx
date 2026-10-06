@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Gavel, ImageOff, ImagePlus, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
@@ -85,6 +85,45 @@ function formatRemaining(endsAt: string, now: number) {
   return `${hours}h ${minutes}m ${remainingSeconds}s`;
 }
 
+async function optimizeImageForUpload(file: File): Promise<File> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    if (bitmap.width * bitmap.height > 40_000_000) {
+      throw new Error(`${file.name} is too large to process in the browser.`);
+    }
+
+    const variants = [
+      { width: 1200, quality: 0.78 },
+      { width: 1000, quality: 0.74 },
+      { width: 900, quality: 0.68 },
+      { width: 800, quality: 0.62 },
+      { width: 700, quality: 0.55 },
+    ] as const;
+
+    for (const { width, quality } of variants) {
+      const scale = Math.min(1, width / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Your browser could not prepare the selected image.');
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, 'image/webp', quality),
+      );
+      if (blob?.type === 'image/webp' && blob.size <= 256 * 1024) {
+        const filename = file.name.replace(/\.[^.]+$/, '') || 'auction-item';
+        return new File([blob], `${filename}.webp`, { type: 'image/webp' });
+      }
+    }
+
+    throw new Error(`${file.name} could not be compressed enough. Choose a smaller or simpler image.`);
+  } finally {
+    bitmap.close();
+  }
+}
+
 function AuctionItemImage({
   itemId,
   imageCount,
@@ -99,9 +138,35 @@ function AuctionItemImage({
   const [imageIndex, setImageIndex] = useState(0);
   const [imageUrl, setImageUrl] = useState('');
   const [imageError, setImageError] = useState('');
+  const [imageVisible, setImageVisible] = useState(false);
+  const imageContainerRef = useRef<HTMLDivElement>(null);
   const imageTotal = Math.max(1, imageCount);
 
   useEffect(() => {
+    const container = imageContainerRef.current;
+    if (!container) return;
+
+    setImageVisible(false);
+    if (!('IntersectionObserver' in window)) {
+      setImageVisible(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setImageVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [itemId]);
+
+  useEffect(() => {
+    if (!imageVisible) return;
     let active = true;
     let objectUrl = '';
 
@@ -110,7 +175,6 @@ function AuctionItemImage({
         setImageError('');
         const response = await fetch(`/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`, {
           credentials: 'same-origin',
-          cache: 'no-store',
         });
         if (!response.ok) {
           throw new Error(`Image request failed (${response.status})`);
@@ -147,11 +211,11 @@ function AuctionItemImage({
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [itemId, imageIndex]);
+  }, [itemId, imageIndex, imageVisible]);
 
   if (imageError) {
     return (
-      <div role="img" aria-label={`${alt}: ${imageError}`} title={imageError} className={`${className} relative flex flex-col items-center justify-center gap-1 overflow-hidden p-2 text-center text-[9px] text-rose-300`}>
+      <div ref={imageContainerRef} role="img" aria-label={`${alt}: ${imageError}`} title={imageError} className={`${className} relative flex flex-col items-center justify-center gap-1 overflow-hidden p-2 text-center text-[9px] text-rose-300`}>
         <ImageOff className="h-4 w-4 shrink-0" />
         <span>Image unavailable</span>
         {imageTotal > 1 && (
@@ -167,8 +231,8 @@ function AuctionItemImage({
 
   if (!imageUrl) {
     return (
-      <div aria-label={`Loading ${alt}`} className={`${className} relative flex items-center justify-center overflow-hidden`}>
-        <LoaderCircle className="h-4 w-4 animate-spin text-slate-500" />
+      <div ref={imageContainerRef} aria-label={imageVisible ? `Loading ${alt}` : alt} className={`${className} relative flex items-center justify-center overflow-hidden`}>
+        {imageVisible && <LoaderCircle className="h-4 w-4 animate-spin text-slate-500" />}
         {imageTotal > 1 && (
           <ImageNavigation
             imageIndex={imageIndex}
@@ -181,7 +245,7 @@ function AuctionItemImage({
   }
 
   return (
-    <div className={`${className} relative overflow-hidden`}>
+    <div ref={imageContainerRef} className={`${className} relative overflow-hidden`}>
       <img src={imageUrl} alt={`${alt} image ${imageIndex + 1}`} className="h-full w-full object-contain" />
       {imageTotal > 1 && (
         <ImageNavigation
@@ -240,6 +304,7 @@ export default function AuctionHousePanel() {
   const [todoListOpen, setTodoListOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
+  const [itemResultLimit, setItemResultLimit] = useState(40);
   const [itemName, setItemName] = useState('');
   const [requiredRole, setRequiredRole] = useState('');
   const [imageFiles, setImageFiles] = useState<File[]>([]);
@@ -309,7 +374,12 @@ export default function AuctionHousePanel() {
       if (newItemMode) {
         if (imageFiles.length === 0) throw new Error('Upload at least one image for the new item.');
         form.set('itemName', itemName);
-        for (const file of imageFiles) form.append('images', file);
+        const optimizedFiles = await Promise.all(imageFiles.map(optimizeImageForUpload));
+        const totalUploadBytes = optimizedFiles.reduce((total, file) => total + file.size, 0);
+        if (totalUploadBytes > 2 * 1024 * 1024) {
+          throw new Error('The optimized images exceed 2 MB total. Remove an image and try again.');
+        }
+        for (const file of optimizedFiles) form.append('images', file);
       } else {
         form.set('itemId', selectedItemId);
       }
@@ -448,6 +518,7 @@ export default function AuctionHousePanel() {
   const filteredItems = data.items.filter((item) =>
     item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()),
   );
+  const visibleItems = filteredItems.slice(0, itemResultLimit);
   const selectedCatalogItem = data.items.find((item) => item.id === selectedItemId);
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
@@ -518,7 +589,7 @@ export default function AuctionHousePanel() {
                   <input id="auction-item" required maxLength={120} value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Full item name" className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-emerald-400/60" />
                   <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-950/50 px-3.5 py-3 text-sm text-slate-300 hover:border-emerald-400/40">
                     <ImagePlus className="h-4 w-4 shrink-0 text-emerald-300" />
-                    <span className="min-w-0 truncate">{imageFiles.length > 0 ? `${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} selected` : 'Upload item images (PNG, JPEG, WebP · max 4 MB each)'}</span>
+                    <span className="min-w-0 truncate">{imageFiles.length > 0 ? `${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} selected` : 'Upload up to 8 images · auto-optimized to WebP'}</span>
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
@@ -530,7 +601,7 @@ export default function AuctionHousePanel() {
                   </label>
                   {imageFiles.length > 0 && (
                     <ul className="space-y-1 text-[11px] text-slate-400">
-                      {imageFiles.map((file) => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
+                      {imageFiles.map((file) =>                       <li key={`${file.name}-${file.lastModified}`}>{file.name} · {(file.size / 1024).toFixed(0)} KB original</li>)}
                     </ul>
                   )}
                 </>
@@ -543,7 +614,10 @@ export default function AuctionHousePanel() {
                       type="search"
                       autoComplete="off"
                       value={itemSearch}
-                      onChange={(event) => setItemSearch(event.target.value)}
+                      onChange={(event) => {
+                        setItemSearch(event.target.value);
+                        setItemResultLimit(40);
+                      }}
                       placeholder="Search saved items..."
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-9 pr-3.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/60"
                     />
@@ -566,7 +640,7 @@ export default function AuctionHousePanel() {
                       <p className="px-3 py-4 text-center text-xs text-slate-500">
                         {data.items.length === 0 ? 'No saved items yet. Add a new item below.' : 'No items match your search.'}
                       </p>
-                    ) : filteredItems.map((item) => (
+                    ) : visibleItems.map((item) => (
                       <button
                         key={item.id}
                         type="button"
@@ -584,6 +658,15 @@ export default function AuctionHousePanel() {
                       </button>
                     ))}
                   </div>
+                  {filteredItems.length > visibleItems.length && (
+                    <button
+                      type="button"
+                      onClick={() => setItemResultLimit((limit) => limit + 40)}
+                      className="w-full rounded-lg border border-slate-800 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                    >
+                      Show more ({filteredItems.length - visibleItems.length} remaining)
+                    </button>
+                  )}
                 </div>
               )}
               <button type="button" onClick={() => setNewItemMode((mode) => !mode)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-300 hover:text-emerald-200">
@@ -608,7 +691,7 @@ export default function AuctionHousePanel() {
                   ? <option value="">No roles found in the sheet</option>
                   : data.roles.map((role) => <option key={role} value={role}>{role}</option>)}
               </select>
-              <p className="text-xs text-slate-500">Roles come directly from the Google Sheets roster. Only a linked toon with the selected role can bid.</p>
+              <p className="text-xs text-slate-500">Roles come directly from the Google Sheets roster. Only a linked toon with the selected role can bid. Saved WebP images are limited to 150 KB total per item.</p>
             </div>
             <button type="submit" disabled={saving || !requiredRole || (!newItemMode && !selectedItemId)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-2">
               {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />} Post 2-minute auction
