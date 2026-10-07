@@ -66,6 +66,11 @@ interface AuctionData {
   toons: AuctionToon[];
   items: CatalogItem[];
   auctions: Auction[];
+  rosterSync: {
+    fetchedAt: string;
+    stale: boolean;
+    refreshDelayed: boolean;
+  };
 }
 
 const roleStyles: Record<string, string> = {
@@ -304,7 +309,7 @@ export default function AuctionHousePanel() {
     };
 
     void load();
-    const refreshTimer = window.setInterval(() => void load(), 15000);
+    const refreshTimer = window.setInterval(() => void load(), 30000);
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       mounted = false;
@@ -573,6 +578,16 @@ export default function AuctionHousePanel() {
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
+      {data.rosterSync?.stale && (
+        <p role="status" className="rounded-xl border border-amber-400/25 bg-amber-400/5 px-4 py-3 text-xs leading-relaxed text-amber-100">
+          {data.rosterSync.refreshDelayed
+            ? 'Google Sheets could not refresh; showing the cached roster'
+            : 'Showing the cached roster while Google Sheets refreshes'}
+          {' · Last updated '}
+          {new Date(data.rosterSync.fetchedAt).toLocaleTimeString()}.
+          {' Bids and DKP changes still require a fresh Sheets check.'}
+        </p>
+      )}
 
       {data.manager && postFormOpen && (
         <section id="auction-post-form" className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-5 shadow-lg sm:p-6">

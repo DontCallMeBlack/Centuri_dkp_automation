@@ -36,6 +36,12 @@ interface UserSession {
   sheetRecordRows: number[];
 }
 
+interface RosterSyncStatus {
+  fetchedAt: string;
+  stale: boolean;
+  refreshDelayed: boolean;
+}
+
 const BOSSES = [
   { name: 'Base', points: 1, tier: 'Tier 1' },
   { name: 'Prime', points: 2, tier: 'Tier 2' },
@@ -78,6 +84,8 @@ export default function DashboardPage() {
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
+  const [rosterSync, setRosterSync] = useState<RosterSyncStatus | null>(null);
+  const [rosterSyncError, setRosterSyncError] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedBoss, setSelectedBoss] = useState('Base');
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
@@ -105,9 +113,12 @@ export default function DashboardPage() {
         setRoster(data.roster);
         setClanMembers(data.clanMembers);
         setUserSession(data.user);
+        setRosterSync(data.rosterSync);
+        setRosterSyncError('');
       }
     } catch (err) {
       console.error('Failed to load dashboard data', err);
+      setRosterSyncError(err instanceof Error ? err.message : 'Unable to load Google Sheets data');
     } finally {
       setLoading(false);
     }
@@ -302,10 +313,29 @@ export default function DashboardPage() {
           </div>
           <div>
             <p className="text-xs text-slate-400 uppercase font-medium">Sync Status</p>
-            <p className="text-sm font-semibold text-emerald-400 flex items-center gap-1.5 mt-0.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Google Sheets Live
+            <p className={`mt-0.5 flex items-center gap-1.5 text-sm font-semibold ${
+              rosterSyncError
+                ? 'text-rose-300'
+                : rosterSync?.stale ? 'text-amber-300' : 'text-emerald-400'
+            }`}>
+              <span className={`h-2 w-2 rounded-full ${
+                rosterSyncError
+                  ? 'bg-rose-300'
+                  : rosterSync?.stale ? 'bg-amber-300' : 'animate-pulse bg-emerald-400'
+              }`} />
+              {rosterSyncError
+                ? 'Google Sheets unavailable'
+                : rosterSync ? rosterSync.stale ? 'Cached roster' : 'Google Sheets synced' : 'Checking roster...'}
             </p>
+            {rosterSyncError && (
+              <p className="mt-1 break-words text-[10px] text-rose-300">{rosterSyncError}</p>
+            )}
+            {rosterSync && (
+              <p className="mt-1 text-[10px] text-slate-500">
+                {rosterSync.refreshDelayed ? 'Refresh delayed; using cached data · ' : 'Last updated · '}
+                {new Date(rosterSync.fetchedAt).toLocaleTimeString()}
+              </p>
+            )}
           </div>
         </div>
       </div>

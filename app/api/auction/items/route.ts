@@ -23,7 +23,7 @@ function canManageItems(role: string) {
 }
 
 async function getValidRole(role: string) {
-  const roster = await getSheetRoster();
+  const roster = await getSheetRoster({ fresh: true });
   return roster.find((record) =>
     normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role),
   )?.subClass.trim();

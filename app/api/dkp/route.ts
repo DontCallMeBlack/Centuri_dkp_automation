@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
-import { getSheetRoster, adjustPlayersDKP } from '@/lib/googleSheets';
+import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
 import User from '@/lib/models/User';
@@ -29,13 +29,14 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const [roster, activeUsers] = await Promise.all([
-      getSheetRoster(),
+    const [rosterSnapshot, activeUsers] = await Promise.all([
+      getSheetRosterSnapshot(),
       User.find({ status: 'approved' })
         .select('nickname role sheetRecordName sheetRecords')
         .sort({ nickname: 1 })
         .lean(),
     ]);
+    const roster = rosterSnapshot.roster;
     const rosterWithCycleEarnings = await getRosterWithWeeklyEarned(roster);
     const recordsByRow = new Map(rosterWithCycleEarnings.map((record) => [record.rowIndex, record]));
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
@@ -51,6 +52,11 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       roster: rosterWithCycleEarnings,
+      rosterSync: {
+        fetchedAt: rosterSnapshot.fetchedAt.toISOString(),
+        stale: rosterSnapshot.stale,
+        refreshDelayed: rosterSnapshot.refreshDelayed,
+      },
       clanMembers,
       user: {
         nickname: user.nickname,
@@ -84,7 +90,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Select at least one valid roster record' }, { status: 400 });
     }
 
-    const roster = await getSheetRoster();
+    const roster = await getSheetRoster({ fresh: true });
     const recordsByRow = new Map(roster.map((member) => [member.rowIndex, member]));
     const participants = selectedRows.map((rowIndex) => recordsByRow.get(rowIndex));
     if (participants.some((record) => record === undefined)) {

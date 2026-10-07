@@ -101,7 +101,7 @@ export async function PATCH(req: Request) {
 
     let sheetChangesApplied = false;
     try {
-      const roster = await getSheetRoster();
+      const roster = await getSheetRoster({ fresh: true });
       const rosterByRow = new Map(roster.map((record) => [record.rowIndex, record]));
       const selectedRecords = selectedRows.map((rowIndex) => rosterByRow.get(rowIndex));
       if (selectedRecords.some((record) => record === undefined)) {
@@ -199,7 +199,7 @@ export async function DELETE(req: Request) {
 
     let sheetChangesApplied = false;
     try {
-      const roster = await getSheetRoster();
+      const roster = await getSheetRoster({ fresh: true });
       const adjustments = award.participants.map((participant) => ({
         ...resolveParticipant(participant, roster),
         points: -award.points,
