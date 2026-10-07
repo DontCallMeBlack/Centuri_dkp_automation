@@ -967,8 +967,8 @@ export default function AuctionHousePanel() {
                       </span>
                     </div>
 
-                    <div>
-                      <h4 className="break-all text-center text-xl font-black leading-snug text-white sm:text-2xl">{auction.itemName}</h4>
+                    <div className="@container min-w-0">
+                      <h4 className="w-full whitespace-nowrap text-center text-[clamp(0.75rem,4cqi,1.5rem)] font-black leading-snug text-white">{auction.itemName}</h4>
                       {auction.highBid ? (
                         <div className="mt-4 grid gap-2 rounded-2xl border border-amber-400/15 bg-gradient-to-br from-amber-400/10 to-amber-400/[0.02] p-4 text-center sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
