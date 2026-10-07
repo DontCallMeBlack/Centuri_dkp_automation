@@ -391,22 +391,22 @@ export default function DashboardPage() {
         {activeTab === 'dkp' ? (
           <div className="space-y-8">
             {canSubmitDkp && (
-              <section className="relative overflow-hidden rounded-3xl border border-indigo-400/20 bg-gradient-to-br from-indigo-950 via-slate-900 to-violet-950 p-6 shadow-2xl shadow-indigo-950/30 sm:p-8">
-                <div className="pointer-events-none absolute -right-12 -top-24 h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
-                <div className="relative flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+              <section className="relative overflow-hidden rounded-2xl border border-indigo-400/25 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 px-4 py-4 shadow-xl shadow-indigo-950/25 sm:px-5">
+                <div className="pointer-events-none absolute -right-10 -top-20 h-48 w-48 rounded-full bg-indigo-400/15 blur-3xl" />
+                <div className="relative flex flex-row items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Raid operations</p>
-                    <h2 className="mt-2 text-2xl font-black tracking-tight text-white">Distribute boss DKP</h2>
-                    <p className="mt-2 max-w-xl text-sm text-slate-300">Choose a boss, find every participating toon, and record the award.</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-300">Raid operations</p>
+                    <h2 className="mt-0.5 text-lg font-black tracking-tight text-white sm:text-xl">Distribute boss DKP</h2>
                   </div>
                   <button
+                    type="button"
                     onClick={() => {
                       setPickerQuery('');
                       setPickerOpen(true);
                     }}
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-3 font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400"
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-3.5 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 sm:px-4 sm:text-sm"
                   >
-                    <Plus className="h-4 w-4" /> Submit &amp; distribute
+                    <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Submit &amp; distribute</span><span className="sm:hidden">Distribute</span>
                   </button>
                 </div>
                 {statusMessage && (
