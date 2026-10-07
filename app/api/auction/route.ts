@@ -111,7 +111,7 @@ export async function GET(request: Request) {
       includeArchive
         ? Auction.find().sort({ createdAt: -1 }).lean()
         : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
-      AuctionItem.find().select('name requiredRole bossType imageCount').sort({ name: 1 }).lean(),
+      AuctionItem.find().select('name requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints').lean(),
       Auction.find({ status: 'completed', deliveryStatus: 'pending' }).sort({ createdAt: 1 }).lean(),
       Auction.find({
@@ -187,7 +187,7 @@ export async function GET(request: Request) {
       },
       roles,
       toons: linkedToons,
-      items: items.map(({ _id, name, requiredRole }) => ({
+      items: items.filter((item) => item.isListed !== false).map(({ _id, name, requiredRole }) => ({
         id: _id.toString(),
         name,
         requiredRole: requiredRole ?? '',
@@ -270,6 +270,7 @@ export async function POST(req: Request) {
         getSheetRoster({ fresh: true }),
       ]);
       if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
+      if (item.isListed === false) return NextResponse.json({ error: 'That item is no longer in the catalog' }, { status: 404 });
       if (!item.requiredRole?.trim()) {
         return NextResponse.json({ error: 'Set this item’s auction role in the Items tab before posting it' }, { status: 400 });
       }

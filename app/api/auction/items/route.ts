@@ -95,7 +95,7 @@ export async function GET() {
 
   try {
     const [items, roster] = await Promise.all([
-      AuctionItem.find().select('name requiredRole bossType imageCount').sort({ name: 1 }).lean(),
+      AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRole bossType imageCount').sort({ name: 1 }).lean(),
       getSheetRoster(),
     ]);
     const roles = [...new Set(
@@ -195,6 +195,7 @@ export async function PATCH(request: Request) {
     const images = await readOptimizedImages(form);
     const item = await AuctionItem.findById(itemId);
     if (!item) return NextResponse.json({ error: 'Catalog item not found.' }, { status: 404 });
+    if (item.isListed === false) return NextResponse.json({ error: 'This item is no longer in the catalog.' }, { status: 404 });
 
     item.name = name.trim();
     item.requiredRole = selectedRole;
@@ -214,5 +215,36 @@ export async function PATCH(request: Request) {
     const message = error instanceof Error ? error.message : 'Unable to update catalog item';
     const isClientError = /image|upload|file/i.test(message);
     return NextResponse.json({ error: message }, { status: isClientError ? 400 : 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+
+  try {
+    const body: unknown = await request.json();
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      !('itemId' in body) ||
+      typeof body.itemId !== 'string' ||
+      !mongoose.isValidObjectId(body.itemId)
+    ) {
+      return NextResponse.json({ error: 'Invalid catalog item ID.' }, { status: 400 });
+    }
+
+    const item = await AuctionItem.findOneAndUpdate(
+      { _id: body.itemId, isListed: { $ne: false } },
+      { $set: { isListed: false } },
+      { new: true },
+    );
+    if (!item) return NextResponse.json({ error: 'Catalog item not found.' }, { status: 404 });
+
+    return NextResponse.json({ success: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unable to remove catalog item';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
