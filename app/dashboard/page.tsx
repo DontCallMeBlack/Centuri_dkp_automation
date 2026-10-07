@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, History, Package } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, Package } from 'lucide-react';
 import BossHistoryPanel from '@/components/BossHistoryPanel';
 import AuctionHousePanel from '@/components/AuctionHousePanel';
 import AuctionItemsPanel from '@/components/AuctionItemsPanel';
@@ -340,42 +340,51 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex border-b border-slate-800/80 px-6 max-w-6xl w-full mx-auto mt-6">
+      <nav aria-label="Dashboard sections" className="mx-auto mt-5 w-full max-w-6xl px-4 sm:px-6">
+        <div role="tablist" className="flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 p-1">
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'dkp'}
           onClick={() => setActiveTab('dkp')}
-          className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${
+          className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:px-4 ${
             activeTab === 'dkp'
-              ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
-              : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'bg-indigo-500/15 text-indigo-300 shadow-sm'
+              : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
           }`}
         >
-          <span>DKP Log & Assignment</span>
+          DKP History
         </button>
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'auction'}
           onClick={() => setActiveTab('auction')}
-          className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${
+          className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:px-4 ${
             activeTab === 'auction'
-              ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
-              : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'bg-indigo-500/15 text-indigo-300 shadow-sm'
+              : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
           }`}
         >
-          <span>Auction House</span>
+          Auction House
         </button>
         {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'boss-history'}
             onClick={() => setActiveTab('boss-history')}
-            className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${
+            className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:px-4 ${
               activeTab === 'boss-history'
-                ? 'border-indigo-500 text-indigo-400 bg-indigo-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+                ? 'bg-indigo-500/15 text-indigo-300 shadow-sm'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
             }`}
           >
-            <History className="h-4 w-4" />
-            <span>Boss Kill History</span>
+            Kill Logs
           </button>
         )}
-      </div>
+        </div>
+      </nav>
 
       {/* Main Content Area */}
       <main className="flex-1 p-6 max-w-6xl w-full mx-auto">
