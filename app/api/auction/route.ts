@@ -5,7 +5,7 @@ import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
 import { getSessionUser } from '@/lib/auth/session';
-import { adjustPlayersDKP, getSheetRoster } from '@/lib/googleSheets';
+import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import {
@@ -106,8 +106,8 @@ export async function GET(request: Request) {
   try {
     const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
     await settleExpiredAuctions();
-    const [roster, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions] = await Promise.all([
-      getSheetRoster(),
+    const [rosterSnapshot, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions] = await Promise.all([
+      getSheetRosterSnapshot(),
       includeArchive
         ? Auction.find().sort({ createdAt: -1 }).lean()
         : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
@@ -128,6 +128,7 @@ export async function GET(request: Request) {
         winner: { $exists: true },
       }).sort({ createdAt: -1 }).limit(100).lean(),
     ]);
+    const roster = rosterSnapshot.roster;
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
     for (const auction of pendingNoBidTasks) auctionsById.set(auction._id.toString(), auction);
@@ -179,6 +180,11 @@ export async function GET(request: Request) {
       weeklyEarnedTotal,
       weeklyMinimum: AUCTION_WEEKLY_MINIMUM,
       canBidWeekly: weeklyEarnedTotal >= AUCTION_WEEKLY_MINIMUM,
+      rosterSync: {
+        fetchedAt: rosterSnapshot.fetchedAt.toISOString(),
+        stale: rosterSnapshot.stale,
+        refreshDelayed: rosterSnapshot.refreshDelayed,
+      },
       roles,
       toons: linkedToons,
       items: items.map(({ _id, name, requiredRole }) => ({
@@ -261,7 +267,7 @@ export async function POST(req: Request) {
       }
       const [item, roster] = await Promise.all([
         AuctionItem.findById(itemId),
-        getSheetRoster(),
+        getSheetRoster({ fresh: true }),
       ]);
       if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
       if (!item.requiredRole?.trim()) {
@@ -458,7 +464,7 @@ export async function POST(req: Request) {
       }
 
       const [roster, auction] = await Promise.all([
-        getSheetRoster(),
+        getSheetRoster({ fresh: true }),
         Auction.findById(auctionId),
       ]);
       if (!auction) return NextResponse.json({ error: 'Auction not found' }, { status: 404 });

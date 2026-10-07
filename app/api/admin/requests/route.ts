@@ -159,7 +159,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Select one valid linked toon to unlink' }, { status: 400 });
       }
 
-      const roster = await getSheetRoster();
+      const roster = await getSheetRoster({ fresh: true });
       const linkedRows = getLinkedSheetRecordRows(target, roster);
       const rowToUnlink = requestedRows[0];
       if (!linkedRows.includes(rowToUnlink)) {
@@ -227,7 +227,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Select at least one valid toon row' }, { status: 400 });
     }
 
-    const roster = await getSheetRoster();
+    const roster = await getSheetRoster({ fresh: true });
     const rosterByRow = new Map(roster.map((record) => [record.rowIndex, record]));
     const selectedRecords = requestedRows.map((rowIndex) => rosterByRow.get(rowIndex));
     if (selectedRecords.some((record) => record === undefined)) {
