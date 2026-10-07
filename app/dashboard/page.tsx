@@ -364,19 +364,6 @@ export default function DashboardPage() {
         </button>
         {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
           <button
-            onClick={() => setActiveTab('items')}
-            className={`flex items-center space-x-2 border-b-2 px-6 py-3 text-sm font-semibold transition-all ${
-              activeTab === 'items'
-                ? 'border-indigo-500 bg-indigo-500/5 text-indigo-400'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Package className="h-4 w-4" />
-            <span>Items</span>
-          </button>
-        )}
-        {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
-          <button
             onClick={() => setActiveTab('boss-history')}
             className={`py-3 px-6 font-semibold text-sm border-b-2 transition-all flex items-center space-x-2 ${
               activeTab === 'boss-history'
