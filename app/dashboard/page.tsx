@@ -334,7 +334,7 @@ export default function DashboardPage() {
         >
           Auction House
         </button>
-        {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
+        {['chief', 'general', 'guardian', 'clansman'].includes(userSession?.role ?? '') && (
           <button
             type="button"
             role="tab"
