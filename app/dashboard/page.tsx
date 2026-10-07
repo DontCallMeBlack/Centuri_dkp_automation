@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, LogOut, Award, Users, Zap, UserCheck, X, ArrowDownUp, Package } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Shield, LogOut, Users, Zap, UserCheck, X, Package } from 'lucide-react';
 import BossHistoryPanel from '@/components/BossHistoryPanel';
 import AuctionHousePanel from '@/components/AuctionHousePanel';
 import AuctionItemsPanel from '@/components/AuctionItemsPanel';
@@ -92,7 +92,6 @@ export default function DashboardPage() {
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
-  const [toonSort, setToonSort] = useState<'owner' | 'role-dkp'>('owner');
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const router = useRouter();
@@ -165,19 +164,10 @@ export default function DashboardPage() {
     }
   };
 
-  const currentUserRecords = roster.filter(
-    (member) => userSession?.sheetRecordRows.includes(member.rowIndex)
-  );
-
   const activeToons: ActiveToon[] = clanMembers.flatMap((member) =>
     member.toons.map((toon) => ({ ...toon, memberNickname: member.nickname }))
   );
   const sortedActiveToons = [...activeToons].sort((first, second) => {
-    if (toonSort === 'owner') {
-      return first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
-        (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
-    }
-
     const firstRole = normalizeRole(first.subClass);
     const secondRole = normalizeRole(second.subClass);
     const firstRoleIndex = ROLE_ORDER.indexOf(firstRole);
@@ -271,31 +261,7 @@ export default function DashboardPage() {
       </header>
 
       {/* Sub-header / Stats Bar */}
-      <div className="bg-slate-900/30 border-b border-slate-800/60 px-6 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-6xl w-full mx-auto mt-4 rounded-2xl">
-        <div className="flex items-center space-x-3 bg-slate-900/60 border border-slate-800 p-3.5 rounded-xl">
-          <div className="p-2.5 rounded-lg bg-indigo-500/10 text-indigo-400">
-            <Award className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400 uppercase font-medium">Your linked toons</p>
-            <p className="text-lg font-bold text-white">
-              {currentUserRecords.length}
-            </p>
-            <p className="text-[10px] text-slate-500">
-              {currentUserRecords.length > 0
-                ? 'Each toon’s DKP is shown below'
-                : userSession?.role === 'chief' || userSession?.role === 'general'
-                  ? 'Link your account in Clan administration'
-                  : 'Ask a Chief or General to link your account'}
-            </p>
-            {currentUserRecords.length === 0 && (userSession?.role === 'chief' || userSession?.role === 'general') && (
-              <button onClick={() => router.push('/admin/requests')} className="mt-2 text-xs font-semibold text-indigo-300 hover:text-indigo-200">
-                Open clan administration
-              </button>
-            )}
-          </div>
-        </div>
-
+      <div className="bg-slate-900/30 border-b border-slate-800/60 px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-6xl w-full mx-auto mt-4 rounded-2xl">
         <div className="flex items-center space-x-3 bg-slate-900/60 border border-slate-800 p-3.5 rounded-xl">
           <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400">
             <Users className="w-5 h-5" />
@@ -423,89 +389,23 @@ export default function DashboardPage() {
               </p>
             )}
 
-            <section>
-              <div className="mb-4 flex items-end justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-300">Personal DKP</p>
-                  <h2 className="mt-1 text-xl font-bold text-white">My toons</h2>
-                  <p className="mt-1 text-sm text-slate-400">Each toon has its own earned, spent, and remaining balance.</p>
-                </div>
-                <Award className="mb-1 h-6 w-6 text-indigo-300" />
-              </div>
-
-              {currentUserRecords.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
-                  <Users className="mx-auto h-7 w-7 text-slate-500" />
-                  <p className="mt-3 font-semibold text-slate-200">No toons linked yet</p>
-                  <p className="mt-1 text-sm text-slate-500">Ask a Chief or General to link your sheet rows to your account.</p>
-                </div>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {currentUserRecords.map((toon) => (
-                    <article key={toon.rowIndex} className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/70 shadow-xl shadow-black/10">
-                      <div className="flex items-start justify-between gap-3 border-b border-slate-800 p-4">
-                        <div className="min-w-0">
-                          <h3 className="truncate text-lg font-bold text-white">{toon.account || toon.owner}</h3>
-                          <p className="mt-1 truncate text-xs text-slate-400">{toon.owner} · {toon.subClass || 'Class not listed'}</p>
-                        </div>
-                        <span className="shrink-0 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-300">
-                          {toon.available.toLocaleString()} left
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 p-4">
-                        {[
-                          ['All-time earned', toon.earned],
-                          ['All-time spent', toon.spent],
-                          ['Available', toon.available],
-                        ].map(([label, value]) => (
-                          <div key={label} className="rounded-xl bg-slate-950/70 p-3">
-                            <p className="text-[10px] font-semibold uppercase leading-tight text-slate-500">{label}</p>
-                            <p className="mt-2 text-lg font-black text-slate-100">{Number(value).toLocaleString()}</p>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="px-4 pb-4 text-xs text-slate-500">
-                        Last Sunday–Sunday week (Eastern): <span className="text-slate-300">{toon.weeklyEarned.toLocaleString()} earned</span>
-                        {' · Current cycle: '}
-                        <span className="text-slate-300">{toon.weeklySpent.toLocaleString()} spent</span>
-                      </p>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-
             <section className="rounded-3xl border border-slate-800 bg-slate-900/50 p-5 shadow-xl sm:p-6">
               <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-300">The roster</p>
                   <h2 className="mt-1 text-xl font-bold text-white">Active toon leaderboard</h2>
-                  <p className="mt-1 text-sm text-slate-400">Compare linked active toons by owner or by role and available DKP.</p>
+                  <p className="mt-1 text-sm text-slate-400">Linked toons grouped by role, then ranked by available DKP.</p>
                 </div>
-                <div className="flex w-full flex-col gap-2 sm:max-w-xl sm:flex-row">
-                  <label className="relative min-w-0 flex-1">
-                    <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-                    <input
-                      type="search"
-                      placeholder="Find a clan member, owner, or toon..."
-                      value={memberQuery}
-                      onChange={(event) => setMemberQuery(event.target.value)}
-                      className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
-                    />
-                  </label>
-                  <label className="relative shrink-0">
-                    <ArrowDownUp className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
-                    <span className="sr-only">Sort toons</span>
-                    <select
-                      value={toonSort}
-                      onChange={(event) => setToonSort(event.target.value as 'owner' | 'role-dkp')}
-                      className="w-full appearance-none rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-slate-200 outline-none focus:border-indigo-500 sm:w-52"
-                    >
-                      <option value="owner">Sort by toon owner</option>
-                      <option value="role-dkp">Role, then available DKP</option>
-                    </select>
-                  </label>
-                </div>
+                <label className="relative w-full sm:max-w-sm">
+                  <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+                  <input
+                    type="search"
+                    placeholder="Find a clan member, owner, or toon..."
+                    value={memberQuery}
+                    onChange={(event) => setMemberQuery(event.target.value)}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
+                  />
+                </label>
               </div>
 
               {loading ? (
@@ -514,7 +414,7 @@ export default function DashboardPage() {
                 <div className="rounded-2xl border border-dashed border-slate-800 py-12 text-center text-sm text-slate-500">
                   No active toons match that search.
                 </div>
-              ) : toonSort === 'role-dkp' ? (
+              ) : (
                 <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/50 shadow-xl shadow-black/10">
                   <table className="w-full table-fixed border-collapse text-left">
                     <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] uppercase tracking-[0.16em] text-slate-500">
@@ -564,36 +464,6 @@ export default function DashboardPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {rankedActiveToons.map((toon) => (
-                    <article key={toon.rowIndex} className="relative min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70 p-4 transition hover:-translate-y-0.5 hover:border-indigo-500/30">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="min-w-0 flex-1 overflow-hidden">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="max-w-full truncate font-bold text-white" title={toon.account || toon.owner}>{toon.account || toon.owner}</h3>
-                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                              ROLE_STYLES[toon.subClass.trim().toLowerCase()] ?? 'border-slate-700 bg-slate-800 text-slate-300'
-                            }`}>
-                              <span className="block max-w-32 truncate">{toon.subClass || 'Unassigned'}</span>
-                            </span>
-                          </div>
-                          <p className="mt-1 truncate text-xs text-slate-500">
-                            Owner: <span title={toon.owner}>{toon.owner}</span>
-                          </p>
-                        </div>
-                        <div className="shrink-0 pl-2 text-right">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Available</p>
-                          <p className="text-lg font-black text-emerald-300">{toon.available.toLocaleString()}</p>
-                        </div>
-                      </div>
-                      <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-800 pt-3 text-xs">
-                        <p className="text-slate-500">All-time earned <span className="float-right font-semibold text-slate-300">{toon.earned.toLocaleString()}</span></p>
-                        <p className="text-right text-slate-500">Spent <span className="font-semibold text-slate-300">{toon.spent.toLocaleString()}</span></p>
-                      </div>
-                    </article>
-                  ))}
                 </div>
               )}
             </section>
