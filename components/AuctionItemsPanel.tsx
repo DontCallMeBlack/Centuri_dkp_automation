@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ImagePlus, LoaderCircle, Package, Save, Search } from 'lucide-react';
+import { ImagePlus, LoaderCircle, Package, Save, Search, Trash2 } from 'lucide-react';
 import { optimizeImageForUpload } from '@/lib/auctionImageClient';
 
 interface CatalogItem {
@@ -41,10 +41,12 @@ function ItemEditor({
   item,
   roles,
   onSaved,
+  onRemoved,
 }: {
   item: CatalogItem;
   roles: string[];
   onSaved: (itemId: string, name: string, requiredRole: string, bossType: string, imageCount?: number) => void;
+  onRemoved: (itemId: string) => Promise<void>;
 }) {
   const [name, setName] = useState(item.name);
   const [requiredRole, setRequiredRole] = useState(item.requiredRole);
@@ -58,6 +60,7 @@ function ItemEditor({
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [imageVersion, setImageVersion] = useState(0);
 
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -70,6 +73,7 @@ function ItemEditor({
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save item changes.');
       onSaved(item.id, name.trim(), requiredRole, bossType, files.length || undefined);
+      if (files.length) setImageVersion((version) => version + 1);
       setFiles([]);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save item changes.');
@@ -82,7 +86,8 @@ function ItemEditor({
     <form onSubmit={save} className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:items-center">
       <div className="relative h-20 w-20 overflow-hidden rounded-xl bg-slate-900">
         <img
-          src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0`}
+          src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`}
+          key={imageVersion}
           alt={`${item.name} catalog image`}
           className="h-full w-full object-contain"
         />
@@ -145,14 +150,37 @@ function ItemEditor({
         </label>
         {error && <p role="alert" className="text-xs text-rose-300">{error}</p>}
       </div>
-      <button
-        type="submit"
-        disabled={saving || (!files.length && name.trim() === item.name && requiredRole === item.requiredRole && bossType === item.bossType)}
-        className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-400/10 px-4 py-2.5 text-xs font-bold text-indigo-200 transition hover:bg-indigo-400/20 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-        Save
-      </button>
+      <div className="flex gap-2 sm:flex-col">
+        <button
+          type="submit"
+          disabled={saving || (!files.length && name.trim() === item.name && requiredRole === item.requiredRole && bossType === item.bossType)}
+          className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-400/10 px-4 py-2.5 text-xs font-bold text-indigo-200 transition hover:bg-indigo-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          Save
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={async () => {
+            if (!window.confirm(`Remove "${item.name}" from the catalog? Existing auction history will be kept.`)) return;
+            setSaving(true);
+            setError('');
+            try {
+              await onRemoved(item.id);
+            } catch (removeError) {
+              setError(removeError instanceof Error ? removeError.message : 'Unable to remove item.');
+            } finally {
+              setSaving(false);
+            }
+          }}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-400/25 bg-rose-400/5 px-3 py-2.5 text-xs font-bold text-rose-200 transition hover:bg-rose-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={`Remove ${item.name} from catalog`}
+        >
+          <Trash2 className="h-4 w-4" />
+          Remove
+        </button>
+      </div>
     </form>
   );
 }
@@ -258,6 +286,19 @@ export default function AuctionItemsPanel() {
         : item)
       .sort((first, second) => first.name.localeCompare(second.name)));
     setNotice('Saved item updated.');
+    setError('');
+  };
+
+  const removeItem = async (itemId: string) => {
+    const response = await fetch('/api/auction/items', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Unable to remove item.');
+    setItems((current) => current.filter((item) => item.id !== itemId));
+    setNotice('Item removed from the catalog. Existing auction history is preserved.');
     setError('');
   };
 
@@ -368,7 +409,7 @@ export default function AuctionItemsPanel() {
         ) : (
           <div className="grid gap-3">
             {filteredItems.map((item) => (
-              <ItemEditor key={item.id} item={item} roles={roles} onSaved={updateItem} />
+              <ItemEditor key={item.id} item={item} roles={roles} onSaved={updateItem} onRemoved={removeItem} />
             ))}
           </div>
         )}

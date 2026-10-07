@@ -11,6 +11,7 @@ export interface IAuctionItem extends Document {
   image?: Buffer;
   imageType?: 'image/png' | 'image/jpeg' | 'image/webp';
   imageCount: number;
+  isListed: boolean;
   createdBy: string;
   createdAt: Date;
 }
@@ -33,6 +34,7 @@ const AuctionItemSchema: Schema<IAuctionItem> = new Schema({
   image: { type: Buffer },
   imageType: { type: String, enum: ['image/png', 'image/jpeg', 'image/webp'] },
   imageCount: { type: Number, required: true, default: 1, min: 1 },
+  isListed: { type: Boolean, required: true, default: true },
   createdBy: { type: String, required: true },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
