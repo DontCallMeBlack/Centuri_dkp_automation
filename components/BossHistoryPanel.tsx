@@ -33,6 +33,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [accessDenied, setAccessDenied] = useState(false);
+  const [canManage, setCanManage] = useState(false);
   const router = useRouter();
 
   const loadHistory = async () => {
@@ -48,6 +49,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
         return;
       }
       if (!response.ok) throw new Error(data.error || 'Unable to load boss history');
+      setCanManage(data.canManage === true);
       setAwards(data.awards);
       setRoster(data.roster);
       setSelectedRows(Object.fromEntries(
@@ -149,7 +151,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       <section className="flex min-h-screen items-center justify-center bg-[#07090e] px-5 text-slate-100">
         <section className="w-full max-w-md border-y border-slate-800 py-8 text-center">
           <Shield className="mx-auto h-8 w-8 text-amber-300" />
-          <h1 className="mt-4 text-lg font-bold text-white">Manager or Guardian access required</h1>
+          <h1 className="mt-4 text-lg font-bold text-white">Clan member access required</h1>
           <button onClick={() => router.push('/dashboard')} className="mt-5 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800">
             Back to dashboard
           </button>
@@ -168,7 +170,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
             </div>
             <div>
               <h1 className="text-base font-bold text-white">Boss history</h1>
-              <p className="text-xs text-slate-400">Review awards and correct toon attendance</p>
+              <p className="text-xs text-slate-400">{canManage ? 'Review awards and correct toon attendance' : 'View recorded boss kills and attendance'}</p>
             </div>
           </div>
           <button onClick={() => router.push('/admin/requests')} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800">
@@ -179,7 +181,9 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
 
       <div className="mx-auto max-w-5xl space-y-4 px-5 py-6 sm:px-8">
         <p className="text-sm text-slate-400">
-          Add or remove attendees to adjust the award. Deleting a kill reverses its DKP for every attendee.
+          {canManage
+            ? 'Add or remove attendees to adjust the award. Deleting a kill reverses its DKP for every attendee.'
+            : 'Boss history is view-only. Only Chiefs, Generals, and Guardians can change records.'}
         </p>
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
@@ -210,7 +214,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
                     {award.updatedBy ? ` · Last edited by ${award.updatedBy}` : ''}
                   </p>
                 </div>
-                {award.status === 'applied' && !isEditing && (
+                {canManage && award.status === 'applied' && !isEditing && (
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => setEditingId(award.id)}
@@ -234,7 +238,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
                 <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{award.failureReason}</p>
               )}
 
-              {isEditing ? (
+              {canManage && isEditing ? (
                 <div className="mt-4">
                   <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
                     <span>Select who should receive this boss award; clear all to reverse it for everyone.</span>

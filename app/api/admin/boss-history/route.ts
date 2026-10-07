@@ -37,17 +37,16 @@ function resolveParticipant(
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageBossHistory(user.role)) {
-    return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-  }
+  const canManage = canManageBossHistory(user.role);
 
   try {
     const [awards, roster] = await Promise.all([
       BossAward.find().sort({ createdAt: -1 }).lean(),
-      getSheetRoster(),
+      canManage ? getSheetRoster() : Promise.resolve([]),
     ]);
     return NextResponse.json({
       success: true,
+      canManage,
       awards: awards.map(({ _id, ...award }) => ({
         ...award,
         id: _id.toString(),
