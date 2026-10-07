@@ -49,33 +49,35 @@ function zonedMidnightToUtc(year: number, month: number, day: number) {
   return new Date(timestamp);
 }
 
-export function getDkpCycleRange(now = new Date()) {
+export function getPreviousDkpWeekRange(now = new Date()) {
   const localParts = getZonedParts(now);
   const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone: DKP_TIME_ZONE,
     weekday: 'short',
   }).format(now);
   const weekdayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(weekday);
-  if (weekdayIndex < 0) throw new Error('Unable to determine weekday for DKP cycle');
+  if (weekdayIndex < 0) throw new Error('Unable to determine weekday for DKP activity period');
 
-  const daysSinceSaturday = (weekdayIndex + 1) % 7;
-  const currentLocalDate = new Date(Date.UTC(
+  const daysSinceSunday = weekdayIndex;
+  const currentWeekStartLocalDate = new Date(Date.UTC(
     localParts.year,
     localParts.month - 1,
-    localParts.day - daysSinceSaturday,
+    localParts.day - daysSinceSunday,
   ));
-  const nextLocalDate = new Date(currentLocalDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const previousWeekStartLocalDate = new Date(
+    currentWeekStartLocalDate.getTime() - 7 * 24 * 60 * 60 * 1000,
+  );
 
   return {
     start: zonedMidnightToUtc(
-      currentLocalDate.getUTCFullYear(),
-      currentLocalDate.getUTCMonth() + 1,
-      currentLocalDate.getUTCDate(),
+      previousWeekStartLocalDate.getUTCFullYear(),
+      previousWeekStartLocalDate.getUTCMonth() + 1,
+      previousWeekStartLocalDate.getUTCDate(),
     ),
     end: zonedMidnightToUtc(
-      nextLocalDate.getUTCFullYear(),
-      nextLocalDate.getUTCMonth() + 1,
-      nextLocalDate.getUTCDate(),
+      currentWeekStartLocalDate.getUTCFullYear(),
+      currentWeekStartLocalDate.getUTCMonth() + 1,
+      currentWeekStartLocalDate.getUTCDate(),
     ),
   };
 }
