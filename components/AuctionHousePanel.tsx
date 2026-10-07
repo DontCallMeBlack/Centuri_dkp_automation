@@ -559,7 +559,7 @@ export default function AuctionHousePanel() {
           )}
           </div>
           <div className="w-fit rounded-xl border border-slate-700/80 bg-slate-950/40 px-3 py-2 text-sm sm:px-4 sm:py-3">
-            <p className="text-xs text-slate-400">Weekly DKP · all your linked toons</p>
+            <p className="text-xs text-slate-400">Last full Sunday–Sunday week (Eastern) · all linked toons</p>
             <p className="mt-1 font-bold text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="font-medium text-slate-400">/ {data.weeklyMinimum.toLocaleString()} required</span></p>
           </div>
         </div>

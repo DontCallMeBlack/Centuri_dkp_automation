@@ -456,8 +456,8 @@ export default function DashboardPage() {
                         ))}
                       </div>
                       <p className="px-4 pb-4 text-xs text-slate-500">
-                        Since Saturday: <span className="text-slate-300">{toon.weeklyEarned.toLocaleString()} earned</span>
-                        {' · '}
+                        Last Sunday–Sunday week (Eastern): <span className="text-slate-300">{toon.weeklyEarned.toLocaleString()} earned</span>
+                        {' · Current cycle: '}
                         <span className="text-slate-300">{toon.weeklySpent.toLocaleString()} spent</span>
                       </p>
                     </article>

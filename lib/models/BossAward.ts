@@ -38,6 +38,7 @@ BossAwardSchema.index(
   { createdAt: 1 },
   { expireAfterSeconds: 365 * 24 * 60 * 60, name: 'boss_award_one_year_retention' },
 );
+BossAwardSchema.index({ status: 1, createdAt: 1 });
 
 const BossAward: Model<IBossAward> = mongoose.models.BossAward
   || mongoose.model<IBossAward>('BossAward', BossAwardSchema);

@@ -1,5 +1,5 @@
 import BossAward from '@/lib/models/BossAward';
-import { getDkpCycleRange } from '@/lib/dkpCycle';
+import { getPreviousDkpWeekRange } from '@/lib/dkpCycle';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 
 export interface WeeklyRosterRecord {
@@ -9,7 +9,7 @@ export interface WeeklyRosterRecord {
 }
 
 export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(roster: T[]) {
-  const { start, end } = getDkpCycleRange();
+  const { start, end } = getPreviousDkpWeekRange();
   const weeklyAwards = await BossAward.find({
     status: 'applied',
     createdAt: { $gte: start, $lt: end },
