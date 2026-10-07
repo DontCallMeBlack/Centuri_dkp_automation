@@ -530,43 +530,33 @@ export default function AuctionHousePanel() {
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-amber-400/20 bg-gradient-to-br from-amber-950/70 via-slate-900 to-slate-950 p-5 shadow-xl shadow-amber-950/20 sm:p-7">
-        <div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full bg-amber-400/10 blur-3xl" />
-        <div className="relative space-y-3">
-          <div className="flex items-start justify-between gap-2 sm:items-center">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-400/30 bg-amber-400/10 text-amber-300">
-              <Gavel className="h-5 w-5" />
+      <section className="relative overflow-hidden rounded-2xl border border-amber-400/20 bg-gradient-to-br from-amber-950/60 via-slate-900 to-slate-950 px-4 py-3 shadow-lg shadow-amber-950/15 sm:px-5">
+        <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-amber-400/10 blur-3xl" />
+        <div className="relative flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-400/10 text-amber-300">
+              <Gavel className="h-4 w-4" />
             </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-300">Centuri marketplace</p>
-              <h2 className="mt-1 text-xl font-black text-white sm:text-2xl">Auction House</h2>
-              <p className="mt-1 text-sm text-slate-300">DKP is held while bidding and deducted from the winner when the auction ends.</p>
-            </div>
+            <h2 className="truncate text-lg font-black text-white">Auction House</h2>
           </div>
-          {data.manager && (
-            <button
-              type="button"
-              onClick={() => setPostFormOpen((open) => !open)}
-              aria-expanded={postFormOpen}
-              aria-controls="auction-post-form"
-              aria-label={postFormOpen ? 'Close auction post form' : 'Post an auction'}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-sm font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400 sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-3"
-            >
-              {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-              <span className="hidden sm:inline">{postFormOpen ? 'Close form' : 'Post an auction'}</span>
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="rounded-lg border border-slate-700/80 bg-slate-950/40 px-3 py-2 text-xs font-semibold text-slate-200">
+              Weekly DKP <span className="text-white">{data.weeklyEarnedTotal.toLocaleString()} / {data.weeklyMinimum.toLocaleString()}</span>
+            </p>
+            {data.manager && (
+              <button
+                type="button"
+                onClick={() => setPostFormOpen((open) => !open)}
+                aria-expanded={postFormOpen}
+                aria-controls="auction-post-form"
+                aria-label={postFormOpen ? 'Close auction post form' : 'Post an auction'}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3 text-xs font-bold text-white shadow-md shadow-emerald-950/30 transition hover:bg-emerald-400"
+              >
+                {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                <span>{postFormOpen ? 'Close' : 'Post auction'}</span>
+              </button>
+            )}
           </div>
-          <div className="w-fit rounded-xl border border-slate-700/80 bg-slate-950/40 px-3 py-2 text-sm sm:px-4 sm:py-3">
-            <p className="text-xs text-slate-400">Last full Sunday–Sunday week (Eastern) · all linked toons</p>
-            <p className="mt-1 font-bold text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="font-medium text-slate-400">/ {data.weeklyMinimum.toLocaleString()} required</span></p>
-          </div>
-        </div>
-        <div className="relative mt-4 flex flex-wrap gap-2 text-[11px] text-slate-300">
-          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">2-minute auctions</span>
-          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">2-minute anti-snipe extension</span>
-          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5">Held DKP is released when outbid</span>
         </div>
       </section>
 
