@@ -372,7 +372,7 @@ export async function POST(req: Request) {
           success: true,
           message: resolution === 'banked'
             ? 'Item marked as mailed to the bank.'
-            : 'Auction reposted for another two minutes.',
+            : 'Auction reposted for another 24 hours.',
           auctionId: repostedAuctionId || auctionId,
         });
       } catch (error: unknown) {
