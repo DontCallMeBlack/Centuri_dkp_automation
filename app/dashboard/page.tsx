@@ -448,8 +448,11 @@ export default function DashboardPage() {
                                 {toon.account || toon.owner}
                               </span>
                             </td>
-                            <td className="overflow-hidden px-2 py-2.5 sm:px-3">
-                              <span className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-1 text-[9px] font-bold uppercase tracking-wide sm:px-2 sm:text-[10px] ${roleStyle}`}>
+                            <td className="overflow-hidden px-1 py-2.5 sm:px-3">
+                              <span
+                                title={toon.subClass || 'Unassigned'}
+                                className={`inline-flex max-w-full whitespace-nowrap rounded-full border px-1 py-1 text-[8px] font-bold uppercase tracking-normal sm:px-2 sm:text-[10px] sm:tracking-wide ${roleStyle}`}
+                              >
                                 {toon.subClass || 'Unassigned'}
                               </span>
                             </td>
