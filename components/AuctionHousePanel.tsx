@@ -386,7 +386,7 @@ export default function AuctionHousePanel() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to place bid');
-      setNotice(result.message);
+      setNotice(`Your ${amount.toLocaleString()} DKP bid is leading for ${auction.itemName}.`);
       await refresh();
     } catch (bidError) {
       setError(bidError instanceof Error ? bidError.message : 'Unable to place bid');
@@ -984,7 +984,10 @@ export default function AuctionHousePanel() {
                         <div className="mt-4 grid gap-2 rounded-2xl border border-amber-400/15 bg-gradient-to-br from-amber-400/10 to-amber-400/[0.02] p-4 text-center sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning bid' : 'Leading bid'}</p>
-                            <p className="mt-1 break-all text-sm font-bold leading-snug text-slate-100">{auction.highBid.nickname}</p>
+                            <p className="mt-1 break-all text-sm font-bold leading-snug text-slate-100">
+                              {auction.highBid.nickname}
+                              {auction.highBid.isMine && <span className="ml-2 inline-flex rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 align-middle text-[10px] font-bold text-emerald-300">You</span>}
+                            </p>
                             <p className="mt-0.5 break-all text-xs leading-snug text-slate-400">Toon: {auction.highBid.account || auction.highBid.owner}</p>
                           </div>
                           <p className="text-2xl font-black tabular-nums text-amber-200 sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold text-amber-400/70">DKP</span></p>
