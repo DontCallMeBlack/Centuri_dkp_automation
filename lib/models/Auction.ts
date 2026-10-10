@@ -27,6 +27,10 @@ export interface IAuction extends Document {
   deliveredBy?: string;
   deliveredAt?: Date;
   settlementError?: string;
+  settlementLockUntil?: Date;
+  settlementLockToken?: string;
+  settlementAttempts?: number;
+  nextSettlementAttemptAt?: Date;
   createdAt: Date;
 }
 
@@ -44,7 +48,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   itemId: { type: Schema.Types.ObjectId, ref: 'AuctionItem', required: true },
   itemName: { type: String, required: true },
   bossType: { type: String, enum: ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Unassigned'] },
-  requiredRoles: { type: [String], default: undefined, required: true },
+  requiredRoles: { type: [String], default: undefined },
   requiredRole: { type: String, required: true },
   createdBy: { type: String, required: true },
   createdByUserId: { type: Schema.Types.ObjectId },
@@ -67,6 +71,10 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   deliveredBy: { type: String },
   deliveredAt: { type: Date },
   settlementError: { type: String },
+  settlementLockUntil: { type: Date, default: () => new Date(0) },
+  settlementLockToken: { type: String },
+  settlementAttempts: { type: Number, default: 0 },
+  nextSettlementAttemptAt: { type: Date },
 }, { timestamps: { createdAt: true, updatedAt: true } });
 
 AuctionSchema.index({ status: 1, endsAt: 1 });

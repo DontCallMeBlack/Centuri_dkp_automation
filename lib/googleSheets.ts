@@ -3,8 +3,11 @@ import { google } from 'googleapis';
 import AuctionHold from '@/lib/models/AuctionHold';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
 import dbConnect from '@/lib/mongodb';
+import { withDkpSheetWriteLock } from '@/lib/sheetWriteLock';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
+const AUCTION_LEDGER_SHEET_NAME = 'DKP_Auction_Transactions';
+const AUCTION_LEDGER_RANGE = `'${AUCTION_LEDGER_SHEET_NAME}'!A2:F`;
 const ROSTER_CACHE_TTL_MS = 30_000;
 const ROSTER_REFRESH_LOCK_MS = 20_000;
 const ROSTER_REFRESH_WAIT_MS = 15_000;
@@ -75,6 +78,111 @@ function readDkpValue(value: string | undefined) {
   if (!value || value.trim() === '-') return 0;
   const parsed = Number(value.replace(/,/g, '').trim());
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function updateNumberCell(sheetId: number, rowIndex: number, columnIndex: number, value: number) {
+  return {
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: rowIndex - 1,
+        endRowIndex: rowIndex,
+        startColumnIndex: columnIndex,
+        endColumnIndex: columnIndex + 1,
+      },
+      rows: [{ values: [{ userEnteredValue: { numberValue: value } }] }],
+      fields: 'userEnteredValue',
+    },
+  };
+}
+
+async function getSheetId(sheets: ReturnType<typeof google.sheets>, spreadsheetId: string, title: string) {
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties(sheetId,title)',
+  });
+  const properties = response.data.sheets?.find((sheet) => sheet.properties?.title === title)?.properties;
+  if (typeof properties?.sheetId !== 'number') {
+    throw new Error(`Google Sheets tab "${title}" could not be found.`);
+  }
+  return properties.sheetId;
+}
+
+async function getOrCreateAuctionLedgerSheet(sheets: ReturnType<typeof google.sheets>, spreadsheetId: string) {
+  let metadata = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties(sheetId,title)',
+  });
+  let properties = metadata.data.sheets?.find((sheet) =>
+    sheet.properties?.title === AUCTION_LEDGER_SHEET_NAME,
+  )?.properties;
+
+  if (typeof properties?.sheetId !== 'number') {
+    const created = await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          addSheet: {
+            properties: {
+              title: AUCTION_LEDGER_SHEET_NAME,
+              hidden: true,
+              gridProperties: { rowCount: 100_000, columnCount: 6 },
+            },
+          },
+        }],
+      },
+    });
+    properties = created.data.replies?.[0]?.addSheet?.properties;
+    if (typeof properties?.sheetId !== 'number') {
+      metadata = await sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties(sheetId,title)',
+      });
+      properties = metadata.data.sheets?.find((sheet) =>
+        sheet.properties?.title === AUCTION_LEDGER_SHEET_NAME,
+      )?.properties;
+    }
+  }
+
+  if (typeof properties?.sheetId !== 'number') {
+    throw new Error('Could not initialize the auction settlement ledger tab.');
+  }
+
+  const header = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${AUCTION_LEDGER_SHEET_NAME}'!A1:F1`,
+  });
+  if (!header.data.values?.length) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateCells: {
+            range: { sheetId: properties.sheetId, startRowIndex: 0, startColumnIndex: 0 },
+            rows: [{ values: [
+              { userEnteredValue: { stringValue: 'operationId' } },
+              { userEnteredValue: { stringValue: 'rowIndex' } },
+              { userEnteredValue: { stringValue: 'points' } },
+              { userEnteredValue: { stringValue: 'owner' } },
+              { userEnteredValue: { stringValue: 'account' } },
+              { userEnteredValue: { stringValue: 'appliedAt' } },
+            ] }],
+            fields: 'userEnteredValue',
+          },
+        }],
+      },
+    });
+  }
+
+  return properties.sheetId;
+}
+
+async function invalidateRosterCacheAfterSheetWrite() {
+  try {
+    await invalidateSheetRosterCache();
+  } catch (error: unknown) {
+    console.error('Google Sheets was updated, but the roster cache could not be invalidated', error);
+  }
 }
 
 async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
@@ -292,36 +400,118 @@ export async function adjustPlayersDKP(
   options: { reservedPointsToConsume?: Map<number, number> } = {},
 ) {
   if (adjustments.length === 0) return;
+  await withDkpSheetWriteLock(async () => {
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = getSpreadsheetId();
+    const [response, sheetId] = await Promise.all([
+      withGoogleSheetsRetry(
+        () => sheets.spreadsheets.values.get({ spreadsheetId, range: `${SHEET_NAME}!A3:H1000` }),
+        true,
+      ),
+      getSheetId(sheets, spreadsheetId, 'DKP_Sheet_automated'),
+    ]);
+    const rows = response.data.values ?? [];
+    const holds = await AuctionHold.find({
+      rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
+    }).select('rowIndex heldPoints').lean();
+    const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
+    const requests = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
+      if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
+        throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
+      }
+      if (!Number.isFinite(points)) throw new Error('DKP adjustment must be a finite number.');
 
-  const sheets = google.sheets({ version: 'v4', auth });
-  const spreadsheetId = getSpreadsheetId();
-  const response = await withGoogleSheetsRetry(
-    () => sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${SHEET_NAME}!A3:H1000`,
-    }),
-    true,
-  );
-  const rows = response.data.values ?? [];
-  const holds = await AuctionHold.find({
-    rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
-  }).select('rowIndex heldPoints').lean();
-  const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
-  const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
+      const row = rows[rowIndex - 3];
+      if (!row || !row[0]) throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
+      if (
+        (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
+        (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
+      ) {
+        throw new Error(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
+      }
+
+      const readValue = (columnIndex: number, columnName: string) => {
+        const value = row[columnIndex];
+        if (value === undefined || value === '' || value === '-') return 0;
+        const parsed = Number(String(value).replace(/,/g, '').trim());
+        if (!Number.isFinite(parsed)) throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
+        return parsed;
+      };
+
+      if (points < 0) {
+        const heldPoints = holdsByRow.get(rowIndex) ?? 0;
+        const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
+        if (
+          reservedPointsToConsume < 0 ||
+          reservedPointsToConsume > heldPoints ||
+          readValue(7, 'H') + points < heldPoints - reservedPointsToConsume
+        ) {
+          throw new Error(`Cannot reduce DKP for row ${rowIndex} below its ${heldPoints} held auction points.`);
+        }
+      }
+
+      return [
+        updateNumberCell(sheetId, rowIndex, 3, readValue(3, 'D') + points),
+        updateNumberCell(sheetId, rowIndex, 5, readValue(5, 'F') + points),
+        updateNumberCell(sheetId, rowIndex, 7, readValue(7, 'H') + points),
+      ];
+    });
+
+    await withGoogleSheetsRetry(
+      () => sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }),
+      false,
+    );
+    await invalidateRosterCacheAfterSheetWrite();
+  });
+}
+
+export async function spendPlayerDKP(input: {
+  rowIndex: number;
+  points: number;
+  owner: string;
+  account: string;
+}, options: { operationId: string; reservedPointsToConsume: number }) {
+  const { rowIndex, points, owner, account } = input;
+  const { operationId, reservedPointsToConsume } = options;
+  if (!operationId.trim()) throw new Error('An idempotency key is required for an auction charge.');
+  if (!Number.isSafeInteger(points) || points <= 0) throw new Error('Auction spend must be a positive whole number.');
+  if (!Number.isSafeInteger(reservedPointsToConsume) || reservedPointsToConsume < 0) {
+    throw new Error('Reserved auction points are invalid.');
+  }
+
+  return withDkpSheetWriteLock(async () => {
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = getSpreadsheetId();
+    const [response, mainSheetId, ledgerSheetId] = await Promise.all([
+      withGoogleSheetsRetry(
+        () => sheets.spreadsheets.values.get({ spreadsheetId, range: `${SHEET_NAME}!A3:H1000` }),
+        true,
+      ),
+      getSheetId(sheets, spreadsheetId, 'DKP_Sheet_automated'),
+      getOrCreateAuctionLedgerSheet(sheets, spreadsheetId),
+    ]);
+
+    const previousOperations = await withGoogleSheetsRetry(
+      () => sheets.spreadsheets.values.get({ spreadsheetId, range: AUCTION_LEDGER_RANGE }),
+      true,
+    );
+    const previousOperation = previousOperations.data.values?.find((row) => row[0] === operationId);
+    if (previousOperation) {
+      if (Number(previousOperation[1]) !== rowIndex || Number(previousOperation[2]) !== points) {
+        throw new Error('This auction settlement key was already used for a different DKP charge.');
+      }
+      await invalidateRosterCacheAfterSheetWrite();
+      return { alreadyApplied: true };
+    }
+
     if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
       throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
     }
-    if (!Number.isFinite(points)) {
-      throw new Error('DKP adjustment must be a finite number.');
-    }
-
-    const row = rows[rowIndex - 3];
-    if (!row || !row[0]) {
-      throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
-    }
+    const row = response.data.values?.[rowIndex - 3];
+    if (!row || !row[0]) throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
     if (
-      (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
-      (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
+      row[0].trim().toLowerCase() !== owner.trim().toLowerCase() ||
+      (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase()
     ) {
       throw new Error(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
     }
@@ -330,46 +520,45 @@ export async function adjustPlayersDKP(
       const value = row[columnIndex];
       if (value === undefined || value === '' || value === '-') return 0;
       const parsed = Number(String(value).replace(/,/g, '').trim());
-      if (!Number.isFinite(parsed)) {
-        throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
-      }
+      if (!Number.isFinite(parsed)) throw new Error(`Cannot settle auction: ${columnName}${rowIndex} is not numeric.`);
       return parsed;
     };
-
-    if (points < 0) {
-      const heldPoints = holdsByRow.get(rowIndex) ?? 0;
-      const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
-      if (
-        reservedPointsToConsume < 0 ||
-        reservedPointsToConsume > heldPoints ||
-        readValue(7, 'H') + points < heldPoints - reservedPointsToConsume
-      ) {
-        throw new Error(`Cannot reduce DKP for row ${rowIndex} below its ${heldPoints} held auction points.`);
-      }
+    const hold = await AuctionHold.findOne({ rowIndex }).select('heldPoints').lean();
+    const heldPoints = hold?.heldPoints ?? 0;
+    if (
+      reservedPointsToConsume > heldPoints ||
+      readValue(7, 'H') - points < heldPoints - reservedPointsToConsume
+    ) {
+      throw new Error(`Cannot charge row ${rowIndex} below its remaining ${heldPoints - reservedPointsToConsume} held auction points.`);
     }
 
-    return [
-      { range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] },
-      { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(5, 'F') + points]] },
-      { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
-    ];
-  });
-
-  await withGoogleSheetsRetry(
-    () => sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        valueInputOption: 'USER_ENTERED',
-        data: updates,
+    const weeklySpent = readValue(4, 'E') + points;
+    const spent = readValue(6, 'G') + points;
+    const available = readValue(7, 'H') - points;
+    const requests = [
+      updateNumberCell(mainSheetId, rowIndex, 4, weeklySpent),
+      updateNumberCell(mainSheetId, rowIndex, 6, spent),
+      updateNumberCell(mainSheetId, rowIndex, 7, available),
+      {
+        appendCells: {
+          sheetId: ledgerSheetId,
+          rows: [{ values: [
+            { userEnteredValue: { stringValue: operationId } },
+            { userEnteredValue: { numberValue: rowIndex } },
+            { userEnteredValue: { numberValue: points } },
+            { userEnteredValue: { stringValue: owner } },
+            { userEnteredValue: { stringValue: account } },
+            { userEnteredValue: { stringValue: new Date().toISOString() } },
+          ] }],
+          fields: 'userEnteredValue',
+        },
       },
-    }),
-    false,
-  );
-  try {
-    await invalidateSheetRosterCache();
-  } catch (error: unknown) {
-    console.error('DKP was updated in Google Sheets, but the roster cache could not be invalidated', error);
-  }
+    ];
+
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+    await invalidateRosterCacheAfterSheetWrite();
+    return { alreadyApplied: false };
+  });
 }
 
 export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {

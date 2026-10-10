@@ -51,6 +51,7 @@ interface Auction {
   endsAt: string;
   status: 'active' | 'settling' | 'completed' | 'settlement-failed';
   highBid: AuctionBid | null;
+  bidHistory: AuctionBid[];
   winner: AuctionBid | null;
   deliveryStatus: 'pending' | 'done' | 'not-required' | 'banked' | 'reposted';
   deliveredBy: string | null;
@@ -368,7 +369,11 @@ export default function AuctionHousePanel() {
   };
 
   const submitBid = async (auction: Auction) => {
-    const rowIndex = selectedToons[auction.id];
+    const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
+    const firstEligibleToon = data?.toons.find((toon) =>
+      auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
+    );
+    const rowIndex = selectedToons[auction.id] ?? firstEligibleToon?.rowIndex;
     const amount = Number(bidAmounts[auction.id]);
     setSaving(true);
     setError('');
@@ -992,6 +997,24 @@ export default function AuctionHousePanel() {
                         }`}>
                           {isActive ? 'No bids yet · starting bid 1 DKP' : 'Auction ended with no bids'}
                         </p>
+                      )}
+                      {auction.bidHistory.length > 0 && (
+                        <details className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40">
+                          <summary className="cursor-pointer px-3 py-2.5 text-xs font-semibold text-slate-300">
+                            Bid history ({auction.bidHistory.length})
+                          </summary>
+                          <div className="max-h-52 space-y-2 overflow-y-auto border-t border-slate-800 px-3 py-2.5">
+                            {auction.bidHistory.map((bid, index) => (
+                              <div key={`${bid.placedAt}-${bid.rowIndex}-${bid.amount}-${index}`} className="flex items-start justify-between gap-3 text-xs">
+                                <div className="min-w-0">
+                                  <p className="break-all font-semibold text-slate-200">{bid.nickname}{bid.isMine ? ' (you)' : ''}</p>
+                                  <p className="break-all text-[10px] text-slate-500">{bid.account || bid.owner} · {new Date(bid.placedAt).toLocaleString()}</p>
+                                </div>
+                                <p className="shrink-0 font-bold tabular-nums text-amber-200">{bid.amount.toLocaleString()} DKP</p>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
                       )}
                     </div>
 

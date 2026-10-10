@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import Auction, { type IAuctionBid } from '@/lib/models/Auction';
+import AuctionBid from '@/lib/models/AuctionBid';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
 import { getSessionUser } from '@/lib/auth/session';
-import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot } from '@/lib/googleSheets';
+import { getSheetRoster, getSheetRosterSnapshot } from '@/lib/googleSheets';
+import { withDkpSheetWriteLock } from '@/lib/sheetWriteLock';
+import { settleExpiredAuctions } from '@/lib/auctionSettlement';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import {
@@ -31,72 +34,6 @@ function serializeBid(bid: IAuctionBid | undefined, currentUserId: mongoose.Type
     isMine: bid.userId.equals(currentUserId),
     placedAt: bid.placedAt.toISOString(),
   };
-}
-
-async function settleExpiredAuctions() {
-  const now = new Date();
-  const expiredAuctions = await Auction.find({
-    status: 'active',
-    endsAt: { $lte: now },
-  }).sort({ endsAt: 1 }).limit(25);
-
-  for (const expired of expiredAuctions) {
-    if (!expired.highBid) {
-      await Auction.updateOne(
-        { _id: expired._id, status: 'active', endsAt: { $lte: now } },
-        { $set: { status: 'completed', deliveryStatus: 'not-required' } },
-      );
-      continue;
-    }
-
-    const claimed = await Auction.findOneAndUpdate(
-      { _id: expired._id, status: 'active', endsAt: { $lte: now } },
-      { $set: { status: 'settling' } },
-      { new: true },
-    );
-    if (!claimed?.highBid) continue;
-
-    try {
-      const winningBid = claimed.highBid;
-      await adjustPlayersDKP(
-        [{
-          rowIndex: winningBid.rowIndex,
-          points: -winningBid.amount,
-          owner: winningBid.owner,
-          account: winningBid.account,
-        }],
-        { reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]) },
-      );
-
-      const session = await mongoose.startSession();
-      try {
-        await session.withTransaction(async () => {
-          const auction = await Auction.findOne({ _id: claimed._id, status: 'settling' }).session(session);
-          const hold = await AuctionHold.findOne({ rowIndex: winningBid.rowIndex }).session(session);
-          if (!auction || !hold || hold.heldPoints < winningBid.amount) {
-            throw new Error('Auction settlement records are inconsistent; manual review is required.');
-          }
-
-          hold.heldPoints -= winningBid.amount;
-          await hold.save({ session });
-          auction.status = 'completed';
-          auction.winner = winningBid;
-          auction.deliveryStatus = 'pending';
-          auction.settlementError = undefined;
-          await auction.save({ session });
-        });
-      } finally {
-        await session.endSession();
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown auction settlement failure';
-      await Auction.updateOne(
-        { _id: claimed._id, status: 'settling' },
-        { $set: { status: 'settlement-failed', settlementError: message } },
-      );
-      console.error(`Failed to settle auction ${claimed._id.toString()}`, error);
-    }
-  }
 }
 
 export async function GET(request: Request) {
@@ -137,6 +74,26 @@ export async function GET(request: Request) {
     const auctions = [...auctionsById.values()].sort((first, second) =>
       second.createdAt.getTime() - first.createdAt.getTime(),
     );
+    const bidRecords = auctions.length
+      ? await AuctionBid.find({ auctionId: { $in: auctions.map((auction) => auction._id) } })
+        .sort({ placedAt: -1 })
+        .lean()
+      : [];
+    const bidHistoryByAuction = new Map<string, IAuctionBid[]>();
+    for (const bid of bidRecords) {
+      const auctionId = bid.auctionId.toString();
+      const history = bidHistoryByAuction.get(auctionId) ?? [];
+      history.push({
+        userId: bid.userId,
+        nickname: bid.nickname,
+        rowIndex: bid.rowIndex,
+        owner: bid.owner,
+        account: bid.account,
+        amount: bid.amount,
+        placedAt: bid.placedAt,
+      });
+      bidHistoryByAuction.set(auctionId, history);
+    }
     const creatorNicknames = [...new Set(auctions.map((auction) => auction.createdBy))];
     const creatorUserIds = [...new Set(
       auctions.flatMap((auction) => auction.createdByUserId ? [auction.createdByUserId] : []),
@@ -227,6 +184,9 @@ export async function GET(request: Request) {
         endsAt: auction.endsAt.toISOString(),
         status: auction.status,
         highBid: serializeBid(auction.highBid, user._id),
+        bidHistory: (bidHistoryByAuction.get(auction._id.toString()) ??
+          (auction.highBid ? [auction.highBid] : []))
+          .map((bid) => serializeBid(bid, user._id)),
         winner: serializeBid(auction.winner, user._id),
         deliveryStatus: auction.deliveryStatus,
         deliveredBy: auction.deliveredBy ?? null,
@@ -435,6 +395,7 @@ export async function POST(req: Request) {
             }
           }
 
+          await AuctionBid.deleteMany({ auctionId: claimed._id }).session(session);
           const deletion = await Auction.deleteOne({ _id: claimed._id, status: 'removing' }).session(session);
           if (deletion.deletedCount !== 1) {
             throw new Error('Auction could not be removed; manual review is required.');
@@ -467,6 +428,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Enter a valid toon and a positive whole-number bid' }, { status: 400 });
       }
 
+      return withDkpSheetWriteLock(async () => {
       const [roster, auction] = await Promise.all([
         getSheetRoster({ fresh: true }),
         Auction.findById(auctionId),
@@ -562,12 +524,23 @@ export async function POST(req: Request) {
           currentAuction.endsAt = endsAt;
           currentAuction.bidVersion += 1;
           await currentAuction.save({ session });
+          await AuctionBid.create([{
+            auctionId: currentAuction._id,
+            userId: user._id,
+            nickname: user.nickname,
+            rowIndex,
+            owner: toon.owner,
+            account: toon.account,
+            amount,
+            placedAt: now,
+          }], { session });
         });
       } finally {
         await session.endSession();
       }
 
       return NextResponse.json({ success: true, message: 'Bid placed and DKP reserved until the auction ends or you are outbid.' });
+      });
     }
 
     if (payload.action === 'mark-delivered') {
