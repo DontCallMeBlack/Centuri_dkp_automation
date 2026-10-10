@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   try {
     const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
     await settleExpiredAuctions();
-    const [rosterSnapshot, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions] = await Promise.all([
+    const [rosterSnapshot, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions, personalBidRecords] = await Promise.all([
       getSheetRosterSnapshot(),
       includeArchive
         ? Auction.find().sort({ createdAt: -1 }).lean()
@@ -64,13 +64,18 @@ export async function GET(request: Request) {
         status: 'completed',
         winner: { $exists: true },
       }).sort({ createdAt: -1 }).limit(100).lean(),
+      AuctionBid.find({ userId: user._id }).sort({ placedAt: -1 }).limit(100).select('auctionId').lean(),
     ]);
     const roster = rosterSnapshot.roster;
+    const personalBidAuctions = personalBidRecords.length
+      ? await Auction.find({ _id: { $in: [...new Set(personalBidRecords.map((bid) => bid.auctionId.toString()))] } }).lean()
+      : [];
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
     for (const auction of pendingNoBidTasks) auctionsById.set(auction._id.toString(), auction);
     for (const auction of personalWinningAuctions) auctionsById.set(auction._id.toString(), auction);
     for (const auction of allWinnerAuctions) auctionsById.set(auction._id.toString(), auction);
+    for (const auction of personalBidAuctions) auctionsById.set(auction._id.toString(), auction);
     const auctions = [...auctionsById.values()].sort((first, second) =>
       second.createdAt.getTime() - first.createdAt.getTime(),
     );

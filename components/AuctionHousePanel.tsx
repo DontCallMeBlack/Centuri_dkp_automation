@@ -509,7 +509,10 @@ export default function AuctionHousePanel() {
   );
   const auctionHolders = [...new Set(allAuctions.flatMap((auction) => {
     const bid = auction.winner ?? auction.highBid;
-    return bid ? [bid.nickname] : [];
+    return [...new Set([
+      ...(bid ? [bid.nickname] : []),
+      ...auction.bidHistory.map((historyBid) => historyBid.nickname),
+    ])];
   }))].sort((first, second) => first.localeCompare(second));
   const filteredAuctions = allAuctions.filter((auction) =>
     (!auctionRoleFilter || (auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''])
@@ -517,7 +520,8 @@ export default function AuctionHousePanel() {
     (!auctionBossFilter || auction.bossType === auctionBossFilter) &&
     (!auctionHolderFilter ||
       auction.winner?.nickname === auctionHolderFilter ||
-      (!auction.winner && auction.highBid?.nickname === auctionHolderFilter)) &&
+      (!auction.winner && auction.highBid?.nickname === auctionHolderFilter) ||
+      auction.bidHistory.some((bid) => bid.nickname === auctionHolderFilter)) &&
     (!auctionSearch.trim() || [
       auction.itemName,
       auction.createdBy,
@@ -527,6 +531,7 @@ export default function AuctionHousePanel() {
       auction.highBid?.nickname,
       auction.highBid?.owner,
       auction.highBid?.account,
+      ...auction.bidHistory.flatMap((bid) => [bid.nickname, bid.owner, bid.account]),
     ].some((value) => value?.toLowerCase().includes(auctionSearch.trim().toLowerCase()))),
   );
   const activeAuctionFilterCount = [
@@ -1002,7 +1007,7 @@ export default function AuctionHousePanel() {
                         </p>
                       )}
                       {auction.bidHistory.length > 0 && (
-                        <details className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40">
+                        <details open className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40">
                           <summary className="cursor-pointer px-3 py-2.5 text-xs font-semibold text-slate-300">
                             Bid history ({auction.bidHistory.length})
                           </summary>
