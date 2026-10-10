@@ -265,6 +265,7 @@ function ImageNavigation({
 }
 
 export default function AuctionHousePanel() {
+  const dataRequestVersion = useRef(0);
   const [data, setData] = useState<AuctionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -292,6 +293,7 @@ export default function AuctionHousePanel() {
   useEffect(() => {
     let mounted = true;
     const load = async () => {
+      const requestVersion = ++dataRequestVersion.current;
       try {
         const response = await fetch('/api/auction', { cache: 'no-store' });
         const result = await response.json();
@@ -300,14 +302,16 @@ export default function AuctionHousePanel() {
           return;
         }
         if (!response.ok) throw new Error(result.error || 'Unable to load auctions');
-        if (mounted) {
+        if (mounted && requestVersion === dataRequestVersion.current) {
           setError('');
           setData(result);
         }
       } catch (loadError) {
-        if (mounted) setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
+        if (mounted && requestVersion === dataRequestVersion.current) {
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
+        }
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted && requestVersion === dataRequestVersion.current) setLoading(false);
       }
     };
 
@@ -322,9 +326,11 @@ export default function AuctionHousePanel() {
   }, [router]);
 
   const refresh = async () => {
+    const requestVersion = ++dataRequestVersion.current;
     const response = await fetch('/api/auction', { cache: 'no-store' });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Unable to refresh auctions');
+    if (requestVersion !== dataRequestVersion.current) return;
     setError('');
     setData(result);
   };
@@ -974,6 +980,13 @@ export default function AuctionHousePanel() {
                 ? Math.max(0, selectedToon.available - selectedToon.heldPoints + currentBidCredit)
                 : 0;
               const minimumBid = (auction.highBid?.amount ?? 0) + 1;
+              const myLatestBid = auction.bidHistory.find((bid) => bid.isMine) ??
+                (auction.highBid?.isMine ? auction.highBid : null);
+              const myBidStatus = auction.winner?.isMine
+                ? 'Won'
+                : auction.highBid?.isMine
+                  ? 'Leading'
+                  : isActive ? 'Outbid' : 'Not leading';
               const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
@@ -991,6 +1004,25 @@ export default function AuctionHousePanel() {
                       </div>
                     </div>
                   </header>
+
+                  {myLatestBid && (
+                    <div className="border-y border-indigo-400/20 bg-indigo-500/[0.06] px-4 py-3 sm:px-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-indigo-200">Your bid · {myBidStatus}</p>
+                          <p className="mt-1 truncate text-[11px] text-slate-400">
+                            {myLatestBid.amount.toLocaleString()} DKP · {myLatestBid.account || myLatestBid.owner}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold ${myBidStatus === 'Leading' || myBidStatus === 'Won'
+                          ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'
+                          : 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+                        }`}>
+                          {myBidStatus}
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex justify-center border-y border-slate-800 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800/70 via-slate-950 to-black px-3 py-4 sm:px-6 sm:py-6">
                     <AuctionItemImage
