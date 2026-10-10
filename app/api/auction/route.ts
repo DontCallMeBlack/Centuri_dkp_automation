@@ -481,6 +481,8 @@ export async function POST(req: Request) {
 
       const session = await mongoose.startSession();
       const now = new Date();
+      let placedBid: IAuctionBid | undefined;
+      let placedBidEndsAt: Date | undefined;
       try {
         await session.withTransaction(async () => {
           const currentAuction = await Auction.findOne({
@@ -517,7 +519,7 @@ export async function POST(req: Request) {
           const endsAt = currentAuction.endsAt.getTime() - now.getTime() <= AUCTION_ANTI_SNIPE_MS
             ? new Date(now.getTime() + AUCTION_ANTI_SNIPE_MS)
             : currentAuction.endsAt;
-          currentAuction.highBid = {
+          placedBid = {
             userId: user._id,
             nickname: user.nickname,
             rowIndex,
@@ -526,7 +528,9 @@ export async function POST(req: Request) {
             amount,
             placedAt: now,
           };
+          currentAuction.highBid = placedBid;
           currentAuction.endsAt = endsAt;
+          placedBidEndsAt = endsAt;
           currentAuction.bidVersion += 1;
           await currentAuction.save({ session });
           await AuctionBid.create([{
@@ -544,7 +548,12 @@ export async function POST(req: Request) {
         await session.endSession();
       }
 
-      return NextResponse.json({ success: true, message: 'Bid placed and DKP reserved until the auction ends or you are outbid.' });
+      return NextResponse.json({
+        success: true,
+        message: 'Bid placed and DKP reserved until the auction ends or you are outbid.',
+        bid: serializeBid(placedBid, user._id),
+        endsAt: placedBidEndsAt?.toISOString(),
+      });
       });
     }
 

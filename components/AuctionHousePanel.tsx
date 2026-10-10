@@ -386,8 +386,41 @@ export default function AuctionHousePanel() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to place bid');
-      setNotice(`Your ${amount.toLocaleString()} DKP bid is leading for ${auction.itemName}.`);
-      await refresh();
+      const placedBid = result.bid as AuctionBid | null;
+      if (!placedBid) throw new Error('The bid was accepted, but the server did not return its saved bid details. Refresh the auction.');
+      const holdDeltas = new Map<number, number>();
+      if (auction.highBid) {
+        holdDeltas.set(auction.highBid.rowIndex, (holdDeltas.get(auction.highBid.rowIndex) ?? 0) - auction.highBid.amount);
+      }
+      holdDeltas.set(placedBid.rowIndex, (holdDeltas.get(placedBid.rowIndex) ?? 0) + placedBid.amount);
+      setData((current) => current && ({
+        ...current,
+        toons: current.toons.map((toon) => ({
+          ...toon,
+          heldPoints: Math.max(0, toon.heldPoints + (holdDeltas.get(toon.rowIndex) ?? 0)),
+        })),
+        auctions: current.auctions.map((currentAuction) => currentAuction.id !== auction.id
+          ? currentAuction
+          : {
+              ...currentAuction,
+              highBid: placedBid,
+              endsAt: typeof result.endsAt === 'string' ? result.endsAt : currentAuction.endsAt,
+              bidHistory: [
+                placedBid,
+                ...currentAuction.bidHistory.filter((bid) =>
+                  bid.placedAt !== placedBid.placedAt ||
+                  bid.rowIndex !== placedBid.rowIndex ||
+                  bid.amount !== placedBid.amount,
+                ),
+              ],
+            }),
+      }));
+      setNotice(`Your ${amount.toLocaleString()} DKP bid was placed for ${auction.itemName}.`);
+      try {
+        await refresh();
+      } catch (refreshError) {
+        setError(`Your bid was placed, but the auction could not refresh: ${refreshError instanceof Error ? refreshError.message : 'Unknown refresh error'}`);
+      }
     } catch (bidError) {
       setError(bidError instanceof Error ? bidError.message : 'Unable to place bid');
       try {
