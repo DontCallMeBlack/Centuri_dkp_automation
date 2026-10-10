@@ -8,7 +8,7 @@ import { optimizeImageForUpload } from '@/lib/auctionImageClient';
 interface CatalogItem {
   id: string;
   name: string;
-  requiredRole: string;
+  requiredRoles: string[];
   bossType: string;
   imageCount: number;
 }
@@ -22,7 +22,7 @@ const BOSS_TYPES = [
 ] as const;
 const BOSS_TYPE_VALUES = BOSS_TYPES.map((boss) => boss.value);
 
-async function buildItemForm(name: string, requiredRole: string, bossType: string, files: File[]) {
+async function buildItemForm(name: string, requiredRoles: string[], bossType: string, files: File[]) {
   const optimizedFiles = await Promise.all(files.map(optimizeImageForUpload));
   const totalUploadBytes = optimizedFiles.reduce((total, file) => total + file.size, 0);
   if (totalUploadBytes > 2 * 1024 * 1024) {
@@ -31,7 +31,7 @@ async function buildItemForm(name: string, requiredRole: string, bossType: strin
 
   const form = new FormData();
   form.set('name', name);
-  form.set('requiredRole', requiredRole);
+  for (const role of requiredRoles) form.append('requiredRoles', role);
   form.set('bossType', bossType);
   for (const file of optimizedFiles) form.append('images', file);
   return form;
@@ -45,11 +45,11 @@ function ItemEditor({
 }: {
   item: CatalogItem;
   roles: string[];
-  onSaved: (itemId: string, name: string, requiredRole: string, bossType: string, imageCount?: number) => void;
+  onSaved: (itemId: string, name: string, requiredRoles: string[], bossType: string, imageCount?: number) => void;
   onRemoved: (itemId: string) => Promise<void>;
 }) {
   const [name, setName] = useState(item.name);
-  const [requiredRole, setRequiredRole] = useState(item.requiredRole);
+  const [requiredRoles, setRequiredRoles] = useState(item.requiredRoles);
   const [bossType, setBossType] = useState(
     item.bossType === 'Base' || item.bossType === 'Prime'
       ? 'Prot'
@@ -67,12 +67,12 @@ function ItemEditor({
     setSaving(true);
     setError('');
     try {
-      const form = await buildItemForm(name.trim(), requiredRole, bossType, files);
+      const form = await buildItemForm(name.trim(), requiredRoles, bossType, files);
       form.set('itemId', item.id);
       const response = await fetch('/api/auction/items', { method: 'PATCH', body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save item changes.');
-      onSaved(item.id, name.trim(), requiredRole, bossType, files.length || undefined);
+      onSaved(item.id, name.trim(), requiredRoles, bossType, files.length || undefined);
       if (files.length) setImageVersion((version) => version + 1);
       setFiles([]);
     } catch (saveError) {
@@ -107,18 +107,18 @@ function ItemEditor({
           onChange={(event) => setName(event.target.value)}
           className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white outline-none focus:border-indigo-400/60"
         />
-        <label className="sr-only" htmlFor={`item-role-${item.id}`}>Auction role</label>
-        <select
-          id={`item-role-${item.id}`}
-          required
-          value={requiredRole}
-          onChange={(event) => setRequiredRole(event.target.value)}
-          className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs capitalize text-slate-200 outline-none focus:border-indigo-400/60"
-        >
-          <option value="">Choose a roster role</option>
-          {requiredRole && !roles.includes(requiredRole) && <option value={requiredRole}>{requiredRole} (no longer on roster)</option>}
-          {roles.map((role) => <option key={role} value={role}>{role}</option>)}
-        </select>
+        <fieldset className="space-y-2">
+          <legend className="text-xs text-slate-400">Allowed roles (choose up to 2)</legend>
+          <div className="grid grid-cols-2 gap-1.5">
+            {[...new Set([...requiredRoles, ...roles])].map((role) => (
+              <label key={role} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/70 px-2 py-1.5 text-xs capitalize text-slate-300">
+                <input type="checkbox" checked={requiredRoles.includes(role)} disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
+                  onChange={(event) => setRequiredRoles((current) => event.target.checked ? [...current, role] : current.filter((entry) => entry !== role))} />
+                {role}{!roles.includes(role) ? ' (not on roster)' : ''}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <label className="sr-only" htmlFor={`item-boss-${item.id}`}>Boss type</label>
         <select
           id={`item-boss-${item.id}`}
@@ -153,7 +153,7 @@ function ItemEditor({
       <div className="flex gap-2 sm:flex-col">
         <button
           type="submit"
-          disabled={saving || (!files.length && name.trim() === item.name && requiredRole === item.requiredRole && bossType === item.bossType)}
+          disabled={saving || (!files.length && name.trim() === item.name && requiredRoles.join('|') === item.requiredRoles.join('|') && bossType === item.bossType)}
           className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-indigo-400/30 bg-indigo-400/10 px-4 py-2.5 text-xs font-bold text-indigo-200 transition hover:bg-indigo-400/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -190,7 +190,7 @@ export default function AuctionItemsPanel() {
   const [roles, setRoles] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [name, setName] = useState('');
-  const [requiredRole, setRequiredRole] = useState('');
+  const [requiredRoles, setRequiredRoles] = useState<string[]>([]);
   const [bossType, setBossType] = useState('Prot');
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(true);
@@ -249,14 +249,14 @@ export default function AuctionItemsPanel() {
     setNotice('');
     try {
       if (!files.length) throw new Error('Upload at least one image for the new item.');
-      if (!requiredRole) throw new Error('Choose a role for this item.');
-      const form = await buildItemForm(name.trim(), requiredRole, bossType, files);
+      if (!requiredRoles.length) throw new Error('Choose at least one role for this item.');
+      const form = await buildItemForm(name.trim(), requiredRoles, bossType, files);
       const response = await fetch('/api/auction/items', { method: 'POST', body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to add saved item.');
       await loadItems();
       setName('');
-      setRequiredRole('');
+      setRequiredRoles([]);
       setBossType('Prot');
       setFiles([]);
       setNotice('Item added to the auction catalog.');
@@ -270,7 +270,7 @@ export default function AuctionItemsPanel() {
   const updateItem = (
     itemId: string,
     updatedName: string,
-    updatedRequiredRole: string,
+    updatedRequiredRoles: string[],
     updatedBossType: string,
     imageCount?: number,
   ) => {
@@ -279,7 +279,7 @@ export default function AuctionItemsPanel() {
         ? {
             ...item,
             name: updatedName,
-            requiredRole: updatedRequiredRole,
+            requiredRoles: updatedRequiredRoles,
             bossType: updatedBossType,
             imageCount: imageCount ?? item.imageCount,
           }
@@ -334,17 +334,18 @@ export default function AuctionItemsPanel() {
             placeholder="Item name"
             className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-indigo-400/60"
           />
-          <label className="sr-only" htmlFor="new-item-role">Auction role</label>
-          <select
-            id="new-item-role"
-            required
-            value={requiredRole}
-            onChange={(event) => setRequiredRole(event.target.value)}
-            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm capitalize text-slate-200 outline-none focus:border-indigo-400/60"
-          >
-            <option value="">Choose role</option>
-            {roles.map((role) => <option key={role} value={role}>{role}</option>)}
-          </select>
+          <fieldset className="space-y-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
+            <legend className="px-1 text-xs text-slate-400">Allowed roles (up to 2)</legend>
+            <div className="grid grid-cols-2 gap-1">
+              {roles.map((role) => (
+                <label key={role} className="flex items-center gap-1.5 text-xs capitalize text-slate-300">
+                  <input type="checkbox" checked={requiredRoles.includes(role)} disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
+                    onChange={(event) => setRequiredRoles((current) => event.target.checked ? [...current, role] : current.filter((entry) => entry !== role))} />
+                  {role}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label className="sr-only" htmlFor="new-item-boss">Boss type</label>
           <select
             id="new-item-boss"

@@ -18,7 +18,8 @@ interface AuctionToon {
 interface CatalogItem {
   id: string;
   name: string;
-  requiredRole: string;
+  requiredRoles: string[];
+  requiredRole?: string;
   bossType: string;
   imageCount: number;
 }
@@ -39,7 +40,8 @@ interface Auction {
   imageCount: number;
   itemName: string;
   bossType: string;
-  requiredRole: string;
+  requiredRoles: string[];
+  requiredRole?: string;
   createdBy: string;
   isPoster: boolean;
   isWinner: boolean;
@@ -486,10 +488,10 @@ export default function AuctionHousePanel() {
   const visibleItems = filteredItems.slice(0, itemResultLimit);
   const selectedCatalogItem = data.items.find((item) => item.id === selectedItemId);
   const selectedItemRoleIsValid = Boolean(
-    selectedCatalogItem?.requiredRole.trim() &&
-    data.roles.some((role) =>
-      normalizeAuctionRole(role) === normalizeAuctionRole(selectedCatalogItem.requiredRole),
-    ),
+    Boolean(selectedCatalogItem?.requiredRoles.length) &&
+    selectedCatalogItem!.requiredRoles.every((requiredRole) => data.roles.some((role) =>
+      normalizeAuctionRole(role) === normalizeAuctionRole(requiredRole),
+    )),
   );
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
@@ -505,7 +507,8 @@ export default function AuctionHousePanel() {
     return bid ? [bid.nickname] : [];
   }))].sort((first, second) => first.localeCompare(second));
   const filteredAuctions = allAuctions.filter((auction) =>
-    (!auctionRoleFilter || normalizeAuctionRole(auction.requiredRole) === normalizeAuctionRole(auctionRoleFilter)) &&
+    (!auctionRoleFilter || (auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''])
+      .some((role) => normalizeAuctionRole(role) === normalizeAuctionRole(auctionRoleFilter))) &&
     (!auctionBossFilter || auction.bossType === auctionBossFilter) &&
     (!auctionHolderFilter ||
       auction.winner?.nickname === auctionHolderFilter ||
@@ -639,7 +642,7 @@ export default function AuctionHousePanel() {
                           className="h-10 w-10 shrink-0 rounded-lg bg-slate-900"
                         />
                         <span title={item.name} className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-slate-200">{item.name}</span>
-                        <span className="max-w-28 shrink-0 break-words text-right text-[10px] leading-snug text-slate-500">{item.requiredRole || 'Role not set'} · {item.bossType}</span>
+                        <span className="max-w-28 shrink-0 break-words text-right text-[10px] leading-snug text-slate-500">{item.requiredRoles.join(' / ') || 'Role not set'} · {item.bossType}</span>
                       </button>
                     ))}
                   </div>
@@ -668,11 +671,11 @@ export default function AuctionHousePanel() {
                   <div className="min-w-0">
                     <p className="break-words text-sm font-bold leading-snug text-white">{selectedCatalogItem.name}</p>
                     <p className="mt-1 break-words text-xs text-slate-400">
-                      {selectedCatalogItem.requiredRole || 'Role not set'} · {selectedCatalogItem.bossType}
+                      {selectedCatalogItem.requiredRoles.join(' / ') || 'Role not set'} · {selectedCatalogItem.bossType}
                     </p>
                     {!selectedItemRoleIsValid && (
                       <p className="mt-1 text-xs leading-snug text-amber-200">
-                        {selectedCatalogItem.requiredRole
+                        {selectedCatalogItem.requiredRoles.length
                           ? 'This saved role is not on the current roster. Update it in Items before posting.'
                           : 'A role must be set for this item in Items before it can be posted.'}
                       </p>
@@ -681,7 +684,7 @@ export default function AuctionHousePanel() {
                 </div>
               )}
             </div>
-            <p className="self-center text-xs text-slate-500">The saved item’s role and boss type are used automatically for the auction.</p>
+            <p className="self-center text-xs text-slate-500">The saved item’s allowed roles and boss type are used automatically for the auction.</p>
             <button
               type="submit"
               disabled={saving || !selectedCatalogItem || !selectedItemRoleIsValid}
@@ -915,8 +918,9 @@ export default function AuctionHousePanel() {
           <div className="mx-auto grid w-full max-w-2xl gap-5">
             {filteredAuctions.map((auction) => {
               const isActive = auction.status === 'active' && new Date(auction.endsAt).getTime() > now;
+              const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
               const eligibleToons = data.toons.filter((toon) =>
-                normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(auction.requiredRole),
+                auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
               );
               const selectedRow = selectedToons[auction.id] ?? eligibleToons[0]?.rowIndex;
               const selectedToon = eligibleToons.find((toon) => toon.rowIndex === selectedRow);
@@ -927,7 +931,7 @@ export default function AuctionHousePanel() {
                 ? Math.max(0, selectedToon.available - selectedToon.heldPoints + currentBidCredit)
                 : 0;
               const minimumBid = (auction.highBid?.amount ?? 0) + 1;
-              const roleStyle = roleStyles[normalizeAuctionRole(auction.requiredRole)] ?? 'border-slate-700 bg-slate-800 text-slate-300';
+              const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
                 <article key={auction.id} className={`overflow-hidden rounded-3xl border bg-slate-900/70 shadow-xl shadow-black/20 ${isActive ? 'border-slate-700/80' : 'border-slate-800'}`}>
@@ -959,7 +963,7 @@ export default function AuctionHousePanel() {
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/10 text-emerald-300' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>
                         {isActive ? 'Live' : auction.status === 'settling' ? 'Settling' : auction.status === 'settlement-failed' ? 'Needs review' : 'Ended'}
                       </span>
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auction.requiredRole} only</span>
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auctionRoles.join(' / ')}</span>
                       <span className="rounded-full border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-[10px] font-semibold text-slate-300">{auction.bossType}</span>
                       <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
                         {isActive ? <Clock3 className="h-3.5 w-3.5 text-emerald-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}
@@ -1032,7 +1036,7 @@ export default function AuctionHousePanel() {
                           </>
                         ) : (
                           <p className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-xs text-slate-400">
-                            {data.canBidWeekly ? `You need a linked ${auction.requiredRole} toon to bid.` : `You need ${data.weeklyMinimum} weekly DKP across your toons to bid.`}
+                            {data.canBidWeekly ? `You need a linked ${auctionRoles.join(' or ')} toon to bid.` : `You need ${data.weeklyMinimum} weekly DKP across your toons to bid.`}
                           </p>
                         )}
                       </div>

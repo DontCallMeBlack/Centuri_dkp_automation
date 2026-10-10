@@ -14,7 +14,8 @@ export interface IAuction extends Document {
   itemId: Types.ObjectId;
   itemName: string;
   bossType?: 'Prot' | 'Bt' | 'Gele' | 'Dino' | 'Crom' | 'Unassigned';
-  requiredRole: string;
+  requiredRoles: string[];
+  requiredRole?: string;
   createdBy: string;
   createdByUserId?: Types.ObjectId;
   endsAt: Date;
@@ -43,6 +44,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   itemId: { type: Schema.Types.ObjectId, ref: 'AuctionItem', required: true },
   itemName: { type: String, required: true },
   bossType: { type: String, enum: ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Unassigned'] },
+  requiredRoles: { type: [String], default: undefined, required: true },
   requiredRole: { type: String, required: true },
   createdBy: { type: String, required: true },
   createdByUserId: { type: Schema.Types.ObjectId },

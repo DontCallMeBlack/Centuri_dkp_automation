@@ -111,7 +111,7 @@ export async function GET(request: Request) {
       includeArchive
         ? Auction.find().sort({ createdAt: -1 }).lean()
         : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
-      AuctionItem.find().select('name requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
+      AuctionItem.find().select('name requiredRoles requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints').lean(),
       Auction.find({ status: 'completed', deliveryStatus: 'pending' }).sort({ createdAt: 1 }).lean(),
       Auction.find({
@@ -187,10 +187,10 @@ export async function GET(request: Request) {
       },
       roles,
       toons: linkedToons,
-      items: items.filter((item) => item.isListed !== false).map(({ _id, name, requiredRole }) => ({
+      items: items.filter((item) => item.isListed !== false).map(({ _id, name, requiredRoles, requiredRole }) => ({
         id: _id.toString(),
         name,
-        requiredRole: requiredRole ?? '',
+        requiredRoles: requiredRoles?.length ? requiredRoles : requiredRole ? [requiredRole] : [],
         bossType: catalogBossTypes.get(_id.toString()) ?? 'Unassigned',
         imageCount: catalogImageCounts.get(_id.toString()) ?? 1,
       })),
@@ -200,7 +200,7 @@ export async function GET(request: Request) {
         imageCount: catalogImageCounts.get(auction.itemId.toString()) ?? 1,
         itemName: auction.itemName,
         bossType: auction.bossType ?? catalogBossTypes.get(auction.itemId.toString()) ?? 'Unassigned',
-        requiredRole: auction.requiredRole,
+        requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole],
         createdBy: auction.createdBy,
         isPoster: auction.createdByUserId?.equals(user._id) === true ||
           (!auction.createdByUserId && auction.createdBy === user.nickname),
@@ -271,20 +271,22 @@ export async function POST(req: Request) {
       ]);
       if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
       if (item.isListed === false) return NextResponse.json({ error: 'That item is no longer in the catalog' }, { status: 404 });
-      if (!item.requiredRole?.trim()) {
+      const itemRoles = item.requiredRoles?.length ? item.requiredRoles : item.requiredRole ? [item.requiredRole] : [];
+      if (!itemRoles.length) {
         return NextResponse.json({ error: 'Set this item’s auction role in the Items tab before posting it' }, { status: 400 });
       }
-      const selectedRole = roster.find((record) =>
-        normalizeAuctionRole(record.subClass) === normalizeAuctionRole(item.requiredRole),
-      )?.subClass.trim();
-      if (!selectedRole) {
+      const selectedRoles = itemRoles.map((role) => roster.find((record) =>
+        normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role),
+      )?.subClass.trim()).filter((role): role is string => Boolean(role));
+      if (selectedRoles.length !== itemRoles.length) {
         return NextResponse.json({ error: 'This item’s saved role is no longer in the roster. Update it in the Items tab before posting.' }, { status: 400 });
       }
       const auction = await Auction.create({
         itemId: item._id,
         itemName: item.name,
         bossType: item.bossType,
-        requiredRole: selectedRole,
+        requiredRoles: selectedRoles,
+        requiredRole: selectedRoles[0],
         createdBy: user.nickname,
         endsAt: new Date(Date.now() + AUCTION_DURATION_MS),
         createdByUserId: user._id,
@@ -354,7 +356,8 @@ export async function POST(req: Request) {
               itemId: resolvedAuction.itemId,
               itemName: resolvedAuction.itemName,
               bossType: resolvedAuction.bossType,
-              requiredRole: resolvedAuction.requiredRole,
+              requiredRoles: resolvedAuction.requiredRoles?.length ? resolvedAuction.requiredRoles : [resolvedAuction.requiredRole ?? ''],
+              requiredRole: resolvedAuction.requiredRole ?? '',
               createdBy: user.nickname,
               createdByUserId: user._id,
               endsAt: new Date(Date.now() + AUCTION_DURATION_MS),
@@ -490,8 +493,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Choose one of your linked toons' }, { status: 403 });
       }
       const toon = roster.find((record) => record.rowIndex === rowIndex);
-      if (!toon || normalizeAuctionRole(toon.subClass) !== auction.requiredRole) {
-        return NextResponse.json({ error: `Only a linked ${auction.requiredRole} toon can bid` }, { status: 403 });
+      const auctionRoles: string[] = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
+      if (!toon || !auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role))) {
+        return NextResponse.json({ error: `Only a linked ${auctionRoles.join(' or ')} toon can bid` }, { status: 403 });
       }
       if (amount > toon.available) {
         return NextResponse.json({ error: 'Your bid is higher than this toon’s current available DKP' }, { status: 400 });

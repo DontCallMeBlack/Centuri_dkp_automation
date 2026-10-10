@@ -22,11 +22,17 @@ function canManageItems(role: string) {
   return role === 'chief' || role === 'general' || role === 'guardian';
 }
 
-async function getValidRole(role: string) {
+async function getValidRoles(value: FormDataEntryValue[]) {
+  const requested = value.filter((entry): entry is string => typeof entry === 'string')
+    .flatMap((entry) => entry.split(','))
+    .map((role) => role.trim())
+    .filter(Boolean);
+  const unique = [...new Set(requested.map(normalizeAuctionRole))];
+  if (unique.length === 0 || unique.length > 2) return null;
   const roster = await getSheetRoster({ fresh: true });
-  return roster.find((record) =>
-    normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role),
-  )?.subClass.trim();
+  const roles = [...new Map(roster.map((record) => [normalizeAuctionRole(record.subClass), record.subClass.trim()])).entries()];
+  const resolved = unique.map((key) => roles.find(([roleKey]) => roleKey === key)?.[1]);
+  return resolved.every(Boolean) ? resolved as string[] : null;
 }
 
 export const dynamic = 'force-dynamic';
@@ -95,7 +101,7 @@ export async function GET() {
 
   try {
     const [items, roster] = await Promise.all([
-      AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRole bossType imageCount').sort({ name: 1 }).lean(),
+      AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRoles requiredRole bossType imageCount').sort({ name: 1 }).lean(),
       getSheetRoster(),
     ]);
     const roles = [...new Set(
@@ -107,7 +113,7 @@ export async function GET() {
       items: items.map((item) => ({
         id: item._id.toString(),
         name: item.name,
-        requiredRole: item.requiredRole ?? '',
+        requiredRoles: item.requiredRoles?.length ? item.requiredRoles : item.requiredRole ? [item.requiredRole] : [],
         bossType: item.bossType ?? 'Unassigned',
         imageCount: item.imageCount ?? 1,
       })),
@@ -127,19 +133,16 @@ export async function POST(request: Request) {
     const form = await request.formData();
     const name = form.get('name');
     const bossType = form.get('bossType');
-    const requiredRole = form.get('requiredRole');
+    const requiredRolesInput = form.getAll('requiredRoles');
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 120) {
       return NextResponse.json({ error: 'Enter an item name of 1 to 120 characters.' }, { status: 400 });
     }
     if (typeof bossType !== 'string' || !isBossType(bossType) || bossType === 'Unassigned') {
       return NextResponse.json({ error: 'Choose the boss type for this item.' }, { status: 400 });
     }
-    if (typeof requiredRole !== 'string' || !requiredRole.trim()) {
-      return NextResponse.json({ error: 'Choose the role for this item.' }, { status: 400 });
-    }
-    const selectedRole = await getValidRole(requiredRole);
-    if (!selectedRole) {
-      return NextResponse.json({ error: 'Choose a role currently listed in the Google Sheets roster.' }, { status: 400 });
+    const selectedRoles = await getValidRoles(requiredRolesInput);
+    if (!selectedRoles) {
+      return NextResponse.json({ error: 'Choose one or two roles currently listed in the Google Sheets roster.' }, { status: 400 });
     }
     const images = await readOptimizedImages(form);
     if (!images?.length) {
@@ -148,7 +151,7 @@ export async function POST(request: Request) {
 
     const item = await AuctionItem.create({
       name: name.trim(),
-      requiredRole: selectedRole,
+      requiredRoles: selectedRoles,
       bossType,
       images,
       imageCount: images.length,
@@ -175,7 +178,7 @@ export async function PATCH(request: Request) {
     const itemId = form.get('itemId');
     const name = form.get('name');
     const bossType = form.get('bossType');
-    const requiredRole = form.get('requiredRole');
+    const requiredRolesInput = form.getAll('requiredRoles');
     if (typeof itemId !== 'string' || !mongoose.isValidObjectId(itemId)) {
       return NextResponse.json({ error: 'Invalid catalog item ID.' }, { status: 400 });
     }
@@ -185,12 +188,9 @@ export async function PATCH(request: Request) {
     if (typeof bossType !== 'string' || !isBossType(bossType) || bossType === 'Unassigned') {
       return NextResponse.json({ error: 'Choose the boss type for this item.' }, { status: 400 });
     }
-    if (typeof requiredRole !== 'string' || !requiredRole.trim()) {
-      return NextResponse.json({ error: 'Choose the role for this item.' }, { status: 400 });
-    }
-    const selectedRole = await getValidRole(requiredRole);
-    if (!selectedRole) {
-      return NextResponse.json({ error: 'Choose a role currently listed in the Google Sheets roster.' }, { status: 400 });
+    const selectedRoles = await getValidRoles(requiredRolesInput);
+    if (!selectedRoles) {
+      return NextResponse.json({ error: 'Choose one or two roles currently listed in the Google Sheets roster.' }, { status: 400 });
     }
     const images = await readOptimizedImages(form);
     const item = await AuctionItem.findById(itemId);
@@ -198,7 +198,8 @@ export async function PATCH(request: Request) {
     if (item.isListed === false) return NextResponse.json({ error: 'This item is no longer in the catalog.' }, { status: 404 });
 
     item.name = name.trim();
-    item.requiredRole = selectedRole;
+    item.requiredRoles = selectedRoles;
+    item.requiredRole = selectedRoles[0];
     item.bossType = bossType;
     if (images) {
       item.images = images;

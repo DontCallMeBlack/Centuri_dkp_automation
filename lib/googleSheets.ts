@@ -4,7 +4,7 @@ import AuctionHold from '@/lib/models/AuctionHold';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
 import dbConnect from '@/lib/mongodb';
 
-const SHEET_NAME = "'DKP Sheet'";
+const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
 const ROSTER_REFRESH_LOCK_MS = 20_000;
 const ROSTER_REFRESH_WAIT_MS = 15_000;
