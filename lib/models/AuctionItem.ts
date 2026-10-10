@@ -2,7 +2,8 @@ import mongoose, { Document, Model, Schema } from 'mongoose';
 
 export interface IAuctionItem extends Document {
   name: string;
-  requiredRole: string;
+  requiredRoles: string[];
+  requiredRole?: string;
   bossType: 'Prot' | 'Bt' | 'Gele' | 'Dino' | 'Crom' | 'Unassigned';
   images: Array<{
     data: Buffer;
@@ -23,6 +24,7 @@ const AuctionItemImageSchema = new Schema({
 
 const AuctionItemSchema: Schema<IAuctionItem> = new Schema({
   name: { type: String, required: true, trim: true, maxlength: 120 },
+  requiredRoles: { type: [String], default: undefined },
   requiredRole: { type: String, default: '' },
   bossType: {
     type: String,
