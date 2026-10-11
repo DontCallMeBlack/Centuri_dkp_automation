@@ -540,6 +540,8 @@ export async function POST(req: Request) {
       });
 
       const session = await mongoose.startSession();
+      let acceptedBid: IAuctionBid | undefined;
+      let acceptedEndsAt: Date | undefined;
       try {
         await session.withTransaction(async () => {
           const bidAt = new Date();
@@ -587,6 +589,8 @@ export async function POST(req: Request) {
             placedAt: bidAt,
           };
           currentAuction.endsAt = endsAt;
+          acceptedBid = currentAuction.highBid;
+          acceptedEndsAt = endsAt;
           currentAuction.bidVersion += 1;
           await currentAuction.save({ session });
         });
@@ -594,7 +598,12 @@ export async function POST(req: Request) {
         await session.endSession();
       }
 
-      return NextResponse.json({ success: true, message: 'Bid placed and DKP reserved until the auction ends or you are outbid.' });
+      return NextResponse.json({
+        success: true,
+        message: 'Bid placed and DKP reserved until the auction ends or you are outbid.',
+        highBid: serializeBid(acceptedBid, user._id),
+        endsAt: acceptedEndsAt?.toISOString(),
+      });
     }
 
     if (payload.action === 'mark-delivered') {
