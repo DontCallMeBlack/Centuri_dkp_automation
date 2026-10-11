@@ -1184,7 +1184,6 @@ export default function AuctionHousePanel() {
                     {!isActive && auction.status === 'completed' && auction.winner && (
                       <p className="flex items-start gap-2 break-words text-xs leading-snug text-emerald-300">
                         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>Winner: <span className="break-all">{auction.winner.account || auction.winner.owner}</span>
-                        {auction.deliveryStatus === 'done' && <span className="text-slate-500">· mailed by {auction.deliveredBy}</span>}
                         </span>
                       </p>
                     )}
