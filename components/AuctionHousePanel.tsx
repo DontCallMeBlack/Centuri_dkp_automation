@@ -382,8 +382,17 @@ export default function AuctionHousePanel() {
   };
 
   const submitBid = async (auction: Auction) => {
-    const rowIndex = selectedToons[auction.id];
-    const amount = Number(bidAmounts[auction.id]);
+    const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
+    const eligibleToons = data?.toons.filter((toon) =>
+      auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
+    ) ?? [];
+    const rowIndex = selectedToons[auction.id] ?? eligibleToons[0]?.rowIndex;
+    const rawAmount = bidAmounts[auction.id]?.trim() ?? '';
+    const amount = /^\d+$/.test(rawAmount) ? Number(rawAmount) : NaN;
+    if (!Number.isInteger(rowIndex) || !Number.isSafeInteger(amount) || amount <= 0) {
+      setError('Choose an eligible toon and enter a positive whole-number bid.');
+      return;
+    }
     setSaving(true);
     setError('');
     setNotice('');
