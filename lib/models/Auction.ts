@@ -19,6 +19,7 @@ export interface IAuction extends Document {
   createdBy: string;
   createdByUserId?: Types.ObjectId;
   endsAt: Date;
+  biddingClosed: boolean;
   status: 'active' | 'removing' | 'settling' | 'completed' | 'settlement-failed';
   highBid?: IAuctionBid;
   winner?: IAuctionBid;
@@ -50,6 +51,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   createdBy: { type: String, required: true },
   createdByUserId: { type: Schema.Types.ObjectId },
   endsAt: { type: Date, required: true },
+  biddingClosed: { type: Boolean, default: false, required: true },
   status: {
     type: String,
     enum: ['active', 'removing', 'settling', 'completed', 'settlement-failed'],
