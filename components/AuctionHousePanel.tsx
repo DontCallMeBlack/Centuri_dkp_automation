@@ -1123,7 +1123,7 @@ export default function AuctionHousePanel() {
 
               return (
                 <article key={auction.id} className={`group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
-                  <header className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                  <header className="flex items-start justify-between gap-3 p-4">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0">
                         <p className="break-words text-[11px] text-slate-500">Posted by {auction.createdBy} · {localTimeReady ? new Date(auction.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Local date and time'}</p>
@@ -1131,8 +1131,8 @@ export default function AuctionHousePanel() {
                       </div>
                     </div>
                     {isActive && auction.canRemove && (
-                      <div className="flex shrink-0 flex-wrap justify-start gap-1.5 sm:justify-end">
-                        <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="group/remove inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-400/30 bg-gradient-to-br from-rose-500/20 via-rose-950/50 to-slate-950 px-3.5 py-2 text-xs font-bold text-rose-100 shadow-lg shadow-rose-950/20 transition duration-200 hover:-translate-y-0.5 hover:border-rose-300/60 hover:from-rose-500/35 hover:shadow-xl hover:shadow-rose-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`}><span className="flex h-6 w-6 items-center justify-center rounded-lg border border-rose-300/25 bg-rose-400/10 transition group-hover/remove:rotate-90 group-hover/remove:bg-rose-400/20"><X className="h-4 w-4" strokeWidth={2.5} /></span><span>Remove auction</span></button>
+                      <div className="flex shrink-0 justify-end">
+                        <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="group/remove inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-400/30 bg-gradient-to-br from-rose-500/20 via-rose-950/60 to-slate-950 text-rose-200 shadow-lg shadow-rose-950/25 transition duration-200 hover:-translate-y-0.5 hover:border-rose-300/70 hover:from-rose-500/40 hover:text-white hover:shadow-xl hover:shadow-rose-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`} title="Remove auction"><X className="h-4 w-4 transition group-hover/remove:rotate-90" strokeWidth={2.5} /></button>
                       </div>
                     )}
                   </header>
@@ -1165,7 +1165,7 @@ export default function AuctionHousePanel() {
                             ? 'border-slate-800 bg-slate-950/50 text-slate-400'
                             : 'border-slate-700 bg-slate-950/70 font-semibold text-slate-300'
                         }`}>
-                          {isActive ? 'No bids yet · starting bid 1 DKP' : 'Auction ended with no bids'}
+                          {isActive ? 'No bids yet' : 'Auction ended with no bids'}
                         </p>
                       )}
                       {isActive && auction.highBid?.isMine && (
