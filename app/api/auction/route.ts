@@ -239,11 +239,10 @@ export async function GET(request: Request) {
             auction.createdByUserId?.equals(user._id) === true ||
             (!auction.createdByUserId && auction.createdBy === user.nickname)),
         canRemove: user.role === 'chief' ||
-          auction.createdByUserId?.equals(user._id) === true ||
-          auction.createdBy === user.nickname ||
-          (user.role === 'general' && (
-            creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian' ||
-            creatorByNickname.get(auction.createdBy)?.role === 'guardian'
+          user.role === 'general' ||
+          ((user.role === 'guardian') && (
+            auction.createdByUserId?.equals(user._id) === true ||
+            (!auction.createdByUserId && auction.createdBy === user.nickname)
           )),
         canClose: user.role === 'chief' ||
           auction.createdByUserId?.equals(user._id) === true ||
@@ -435,8 +434,8 @@ export async function POST(req: Request) {
         ? auction.createdByUserId.equals(user._id)
         : auction.createdBy === user.nickname;
       const mayRemove = user.role === 'chief' ||
-        ownsAuction ||
-        (user.role === 'general' && createdByUser?.role === 'guardian');
+        user.role === 'general' ||
+        (user.role === 'guardian' && ownsAuction);
       if (!mayRemove) {
         return NextResponse.json({ error: 'You cannot remove this auction' }, { status: 403 });
       }
