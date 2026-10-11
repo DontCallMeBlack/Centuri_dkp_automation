@@ -74,6 +74,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
 }, { timestamps: { createdAt: true, updatedAt: true } });
 
 AuctionSchema.index({ status: 1, endsAt: 1 });
+AuctionSchema.index({ status: 1, createdAt: -1 });
 AuctionSchema.index({ deliveryStatus: 1, status: 1 });
 
 const Auction: Model<IAuction> = mongoose.models.Auction

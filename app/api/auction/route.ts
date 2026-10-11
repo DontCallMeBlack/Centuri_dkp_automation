@@ -16,6 +16,7 @@ import {
 } from '@/lib/auctionRules';
 
 const MANAGER_ROLES = new Set(['chief', 'general', 'guardian']);
+let lastLiveExpirySweepAt = 0;
 
 export const dynamic = 'force-dynamic';
 
@@ -129,6 +130,9 @@ async function settleExpiredAuctions() {
 export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (new URL(request.url).searchParams.get('live') === '1') {
+    return getLiveAuctionUpdates(request, user);
+  }
 
   try {
     const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
@@ -260,6 +264,7 @@ export async function GET(request: Request) {
         endsAt: auction.endsAt.toISOString(),
         biddingClosed: auction.biddingClosed === true,
         status: auction.status,
+        bidVersion: auction.bidVersion ?? 0,
         highBid: serializeBid(auction.highBid, user._id),
         winner: serializeBid(auction.winner, user._id),
         deliveryStatus: auction.deliveryStatus,
@@ -270,6 +275,113 @@ export async function GET(request: Request) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unable to load auction house';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+/** Lightweight polling path: reads auction state without rebuilding roster and catalog data. */
+async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>) {
+  const url = new URL(request.url);
+  const knownVersions = new Map<string, string>();
+  const rawVersions = url.searchParams.get('versions');
+  if (rawVersions) {
+    try {
+      const parsed: unknown = JSON.parse(rawVersions);
+      if (Array.isArray(parsed)) {
+        for (const entry of parsed) {
+          if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string') {
+            knownVersions.set(entry[0], entry[1]);
+          }
+        }
+      }
+    } catch {
+      return Response.json({ error: 'Invalid auction versions' }, { status: 400 });
+    }
+  }
+
+  try {
+    let auctions = await Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed', 'completed'] } })
+      .select('_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError bidVersion')
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+    const now = Date.now();
+    if (now - lastLiveExpirySweepAt >= 2_000 && auctions.some((auction) => auction.status === 'active' && auction.endsAt.getTime() <= now)) {
+      lastLiveExpirySweepAt = now;
+      await settleExpiredAuctions();
+      auctions = await Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed', 'completed'] } })
+        .select('_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError bidVersion')
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean();
+    }
+    const versionToken = (auction: typeof auctions[number]) => [
+      auction.bidVersion ?? 0,
+      auction.status,
+      auction.endsAt.toISOString(),
+      auction.deliveryStatus,
+    ].join(':');
+    const changed = auctions.some((auction) =>
+      knownVersions.get(auction._id.toString()) !== versionToken(auction),
+    ) || [...knownVersions.keys()].some((id) => !auctions.some((auction) => auction._id.toString() === id));
+    const returnedIds = new Set(auctions.map((auction) => auction._id.toString()));
+    const removedIds = [...knownVersions.keys()].filter((id) => !returnedIds.has(id));
+    if (!changed) {
+      return NextResponse.json({ changed: false }, { status: 200, headers: { 'Cache-Control': 'no-store' } });
+    }
+
+    const itemIds = [...new Set(auctions.map((auction) => auction.itemId))];
+    const items = await AuctionItem.find({ _id: { $in: itemIds } }).select('_id imageCount bossType').lean();
+    const itemById = new Map(items.map((item) => [item._id.toString(), item]));
+    const creatorNicknames = [...new Set(auctions.map((auction) => auction.createdBy))];
+    const creatorUserIds = [...new Set(auctions.flatMap((auction) => auction.createdByUserId ? [auction.createdByUserId] : []))];
+    const creators = await User.find({
+      $or: [
+        { nickname: { $in: creatorNicknames } },
+        ...(creatorUserIds.length > 0 ? [{ _id: { $in: creatorUserIds } }] : []),
+      ],
+    }).select('_id nickname role').lean();
+    const creatorByNickname = new Map(creators.map((creator) => [creator.nickname, creator]));
+    const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
+    const responseAuctions = auctions.map((auction) => {
+      const id = auction._id.toString();
+      const isPoster = auction.createdByUserId?.equals(user._id) === true ||
+        (!auction.createdByUserId && auction.createdBy === user.nickname);
+      return {
+        id,
+        itemId: auction.itemId.toString(),
+        imageCount: itemById.get(auction.itemId.toString())?.imageCount ?? 1,
+        itemName: auction.itemName,
+        bossType: auction.bossType ?? itemById.get(auction.itemId.toString())?.bossType ?? 'Unassigned',
+        requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''],
+        createdBy: auction.createdBy,
+        isPoster,
+        isWinner: auction.winner?.userId.equals(user._id) === true,
+        canMarkDelivered: auction.status === 'completed' && auction.deliveryStatus === 'pending' && Boolean(auction.winner) && (isManager(user.role) || isPoster),
+        canRemove: user.role === 'chief' || user.role === 'general' || (user.role === 'guardian' && isPoster),
+        canClose: user.role === 'chief' || isPoster || (user.role === 'general' && (
+          creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian' ||
+          creatorByNickname.get(auction.createdBy)?.role === 'guardian'
+        )),
+        canResolveNoBid: auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'not-required' && isPoster,
+        createdAt: auction.createdAt.toISOString(),
+        endsAt: auction.endsAt.toISOString(),
+        biddingClosed: auction.biddingClosed === true,
+        status: auction.status,
+        highBid: serializeBid(auction.highBid, user._id),
+        winner: serializeBid(auction.winner, user._id),
+        deliveryStatus: auction.deliveryStatus,
+        deliveredBy: auction.deliveredBy ?? null,
+        deliveredAt: auction.deliveredAt?.toISOString() ?? null,
+        settlementError: auction.settlementError ?? null,
+        bidVersion: auction.bidVersion ?? 0,
+        versionToken: versionToken(auction),
+      };
+    });
+
+    return NextResponse.json({ changed: true, auctions: responseAuctions, removedIds }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unable to refresh live auctions';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -51,6 +51,8 @@ interface Auction {
   createdAt: string;
   endsAt: string;
   biddingClosed: boolean;
+  bidVersion?: number;
+  versionToken?: string;
   status: 'active' | 'settling' | 'completed' | 'settlement-failed';
   highBid: AuctionBid | null;
   winner: AuctionBid | null;
@@ -315,6 +317,7 @@ function ImageNavigation({
 
 export default function AuctionHousePanel() {
   const [data, setData] = useState<AuctionData | null>(() => auctionMemoryCache);
+  const dataRef = useRef<AuctionData | null>(data);
   const [loading, setLoading] = useState(() => !auctionMemoryCache);
   const [syncing, setSyncing] = useState(() => Boolean(auctionMemoryCache));
   const [lastSyncedAt, setLastSyncedAt] = useState<number>(() => Date.now());
@@ -341,6 +344,10 @@ export default function AuctionHousePanel() {
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const [auctionView, setAuctionView] = useState<'live' | 'all'>('live');
   const router = useRouter();
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   useEffect(() => {
     setLocalTimeReady(true);
@@ -391,17 +398,58 @@ export default function AuctionHousePanel() {
     };
 
     void load();
-    // Keep the leading bidder current across users while an auction is open.
-    const refreshTimer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        setSyncing(true);
-        void load();
+    let pollInFlight = false;
+    let lastIdlePollAt = 0;
+    const pollLiveAuctions = async () => {
+      const current = dataRef.current;
+      if (!current || pollInFlight || document.visibilityState !== 'visible') return;
+      const hasLiveAuctions = current.auctions.some((auction) =>
+        auction.status === 'active' && !auction.biddingClosed && new Date(auction.endsAt).getTime() > Date.now(),
+      );
+      if (!hasLiveAuctions && Date.now() - lastIdlePollAt < 5 * 60_000) return;
+      if (!hasLiveAuctions) lastIdlePollAt = Date.now();
+      pollInFlight = true;
+      try {
+        const versions = [...current.auctions]
+          .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+          .slice(0, 100)
+          .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}`]);
+        const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const result = await response.json();
+        if (!result.changed || !Array.isArray(result.auctions)) return;
+        const byId = new Map((result.auctions as Auction[]).map((auction) => [auction.id, auction]));
+        setData((previous) => {
+          if (!previous) return previous;
+          const updated = {
+            ...previous,
+            auctions: previous.auctions.filter((auction) => !(result.removedIds as string[] | undefined)?.includes(auction.id)).map((auction) => {
+              const live = byId.get(auction.id);
+              return live ? { ...auction, ...live, imageCount: auction.imageCount } : auction;
+            }).concat((result.auctions as Auction[]).filter((live) => !previous.auctions.some((auction) => auction.id === live.id)))
+              .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime()),
+          };
+          dataRef.current = updated;
+          rememberAuctionData(updated);
+          return updated;
+        });
+        setLastSyncedAt(Date.now());
+      } catch {
+        // Keep displaying the last known state; the next poll retries.
+      } finally {
+        pollInFlight = false;
       }
-    }, 5000);
+    };
+    // Poll only compact auction state frequently; reload roster/catalog less often.
+    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 30_000);
+    const fullRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, 15 * 60_000);
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       mounted = false;
       window.clearInterval(refreshTimer);
+      window.clearInterval(fullRefreshTimer);
       window.clearInterval(clockTimer);
     };
   }, [router]);
@@ -424,8 +472,12 @@ export default function AuctionHousePanel() {
   };
 
   useEffect(() => {
+    let lastReturnRefreshAt = 0;
     const refreshOnReturn = () => {
-      if (document.visibilityState === 'visible') void refresh().catch(() => undefined);
+      const now = Date.now();
+      if (document.visibilityState !== 'visible' || now - lastReturnRefreshAt < 5_000) return;
+      lastReturnRefreshAt = now;
+      void refresh().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', refreshOnReturn);
     window.addEventListener('focus', refreshOnReturn);
