@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -1138,18 +1138,15 @@ export default function AuctionHousePanel() {
                   </header>
 
                   <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-                    <div className="relative flex min-h-52 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-[radial-gradient(ellipse_at_50%_45%,rgba(99,102,241,0.16),rgba(15,23,42,0.35)_55%,rgba(2,6,23,0.96))] p-3">
-                      {isActive && <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-indigo-400/10 blur-3xl transition group-hover:bg-indigo-300/20" />}
-                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="aspect-square w-full max-w-64 rounded-lg bg-slate-950/40 p-2" />
-                      <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
-                        <span className="rounded-full border border-slate-700 bg-slate-950/90 px-2 py-1 text-[10px] font-semibold text-slate-300">{auction.bossType}</span>
-                      </div>
-                      {isActive && <div className={`absolute right-2 top-2 rounded-xl border px-3 py-2 text-right shadow-lg backdrop-blur-md ${endingSoon ? 'animate-pulse border-rose-300/35 bg-rose-950/75 text-rose-100 shadow-rose-950/30' : 'border-white/10 bg-slate-950/75 text-white shadow-black/30'}`}><p className="text-[8px] font-black uppercase tracking-[0.18em] opacity-60">Time left</p><p className="font-mono text-xl font-black tabular-nums leading-tight">{formatRemaining(auction.endsAt, now)}</p></div>}
+                    <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70">
+                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="absolute inset-0 h-full w-full max-w-none rounded-xl bg-slate-950/20 p-0" />
                     </div>
                     <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
                       <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auctionRoles.join(' / ')}</span>
+                      <span className="rounded-full border border-slate-700 bg-slate-950/60 px-2 py-1 text-[10px] font-semibold text-slate-400">{auction.bossType}</span>
+                      {isActive && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{formatRemaining(auction.endsAt, now)}</span>}
                       {!isActive && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">{auction.status === 'settlement-failed' ? <ShieldAlert className="h-3.5 w-3.5 text-rose-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}{auction.status === 'settlement-failed' ? 'Settlement needs review' : 'Auction closed'}</span>}
                     </div>
 
