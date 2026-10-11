@@ -47,8 +47,10 @@ interface Auction {
   isWinner: boolean;
   canMarkDelivered: boolean;
   canRemove: boolean;
+  canClose: boolean;
   createdAt: string;
   endsAt: string;
+  biddingClosed: boolean;
   status: 'active' | 'settling' | 'completed' | 'settlement-failed';
   highBid: AuctionBid | null;
   winner: AuctionBid | null;
@@ -92,6 +94,7 @@ function rememberAuctionData(data: AuctionData) {
       isWinner: false,
       canMarkDelivered: false,
       canRemove: false,
+      canClose: false,
       canResolveNoBid: false,
       highBid: auction.highBid ? { ...auction.highBid, isMine: false } : null,
       winner: auction.winner ? { ...auction.winner, isMine: false } : null,
@@ -569,6 +572,43 @@ export default function AuctionHousePanel() {
       await refresh();
     } catch (removeError) {
       setError(removeError instanceof Error ? removeError.message : 'Unable to remove auction');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const closeAuction = async (auction: Auction) => {
+    const outcome = auction.highBid
+      ? `${auction.highBid.account || auction.highBid.owner} at ${auction.highBid.amount.toLocaleString()} DKP will win.`
+      : 'This auction will close with no bids and can be sent to the bank or reposted.';
+    if (!window.confirm(`Close bidding on ${auction.itemName} now? ${outcome}`)) return;
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch('/api/auction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'close-auction', auctionId: auction.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to close auction');
+      setNotice(result.message || 'Bidding closed.');
+      setData((current) => {
+        if (!current) return current;
+        const updated = {
+          ...current,
+          auctions: current.auctions.map((item) => item.id === auction.id
+            ? { ...item, biddingClosed: true, endsAt: new Date().toISOString() }
+            : item),
+        };
+        rememberAuctionData(updated);
+        return updated;
+      });
+      await refresh();
+    } catch (closeError) {
+      setError(closeError instanceof Error ? closeError.message : 'Unable to close auction');
     } finally {
       setSaving(false);
     }
@@ -1062,7 +1102,7 @@ export default function AuctionHousePanel() {
         ) : (
           <div className="grid w-full gap-4 xl:grid-cols-2">
             {visibleAuctions.map((auction) => {
-              const isActive = auction.status === 'active' && new Date(auction.endsAt).getTime() > now;
+              const isActive = auction.status === 'active' && !auction.biddingClosed && new Date(auction.endsAt).getTime() > now;
               const secondsLeft = Math.max(0, Math.floor((new Date(auction.endsAt).getTime() - now) / 1000));
               const endingSoon = isActive && secondsLeft <= 30;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
@@ -1082,14 +1122,19 @@ export default function AuctionHousePanel() {
 
               return (
                 <article key={auction.id} className={`group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
-                  <header className="flex items-start justify-between gap-3 p-4">
+                  <header className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0">
                         <p className="break-words text-[11px] text-slate-500">Posted by {auction.createdBy} · {localTimeReady ? new Date(auction.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Local date and time'}</p>
                         <h4 className="mt-1 break-words text-lg font-black leading-tight text-white">{auction.itemName}</h4>
                       </div>
                     </div>
-                    {isActive && auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-2 text-[11px] font-semibold text-slate-300 hover:border-red-400/30 hover:text-red-300 disabled:opacity-50"><X className="h-3.5 w-3.5" /><span className="hidden sm:inline">Remove</span></button>}
+                    {isActive && (auction.canClose || auction.canRemove) && (
+                      <div className="flex shrink-0 flex-wrap justify-start gap-1.5 sm:justify-end">
+                        {auction.canClose && <button type="button" disabled={saving} onClick={() => void closeAuction(auction)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-amber-300/25 bg-amber-300/10 px-2.5 py-2 text-[10px] font-bold text-amber-100 transition hover:bg-amber-300/20 disabled:opacity-50"><Check className="h-3.5 w-3.5" /><span>Close bidding</span></button>}
+                        {auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-700 px-2 py-2 text-[10px] font-semibold text-slate-400 transition hover:border-rose-400/30 hover:text-rose-300 disabled:opacity-50"><X className="h-3.5 w-3.5" /><span>Remove</span></button>}
+                      </div>
+                    )}
                   </header>
 
                   <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">

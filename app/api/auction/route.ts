@@ -245,6 +245,13 @@ export async function GET(request: Request) {
             creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian' ||
             creatorByNickname.get(auction.createdBy)?.role === 'guardian'
           )),
+        canClose: user.role === 'chief' ||
+          auction.createdByUserId?.equals(user._id) === true ||
+          auction.createdBy === user.nickname ||
+          (user.role === 'general' && (
+            creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian' ||
+            creatorByNickname.get(auction.createdBy)?.role === 'guardian'
+          )),
         canResolveNoBid: auction.status === 'completed' &&
           !auction.highBid &&
           auction.deliveryStatus === 'not-required' &&
@@ -252,6 +259,7 @@ export async function GET(request: Request) {
             (!auction.createdByUserId && auction.createdBy === user.nickname)),
         createdAt: auction.createdAt.toISOString(),
         endsAt: auction.endsAt.toISOString(),
+        biddingClosed: auction.biddingClosed === true,
         status: auction.status,
         highBid: serializeBid(auction.highBid, user._id),
         winner: serializeBid(auction.winner, user._id),
@@ -480,6 +488,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, message: 'Auction removed and its reserved DKP released.' });
     }
 
+    if (payload.action === 'close-auction') {
+      const auctionId = payload.auctionId;
+      if (typeof auctionId !== 'string' || !mongoose.isValidObjectId(auctionId)) {
+        return NextResponse.json({ error: 'Invalid auction ID' }, { status: 400 });
+      }
+
+      const auction = await Auction.findById(auctionId).select('createdBy createdByUserId status endsAt biddingClosed');
+      if (!auction) return NextResponse.json({ error: 'Auction not found' }, { status: 404 });
+      const createdByUser = auction.createdByUserId
+        ? await User.findById(auction.createdByUserId).select('_id nickname role').lean()
+        : await User.findOne({ nickname: auction.createdBy }).select('_id nickname role').lean();
+      const ownsAuction = auction.createdByUserId
+        ? auction.createdByUserId.equals(user._id)
+        : auction.createdBy === user.nickname;
+      const mayClose = user.role === 'chief' ||
+        ownsAuction ||
+        (user.role === 'general' && createdByUser?.role === 'guardian');
+      if (!mayClose) return NextResponse.json({ error: 'You cannot close this auction' }, { status: 403 });
+      const now = new Date();
+      if (auction.status !== 'active' || auction.biddingClosed || auction.endsAt.getTime() <= now.getTime()) {
+        return NextResponse.json({ error: 'Only an open auction can be closed' }, { status: 409 });
+      }
+
+      const closedAuction = await Auction.findOneAndUpdate(
+        { _id: auctionId, status: 'active', biddingClosed: { $ne: true }, endsAt: { $gt: now } },
+        { $set: { biddingClosed: true, endsAt: now } },
+        { new: true },
+      ).select('_id');
+      if (!closedAuction) return NextResponse.json({ error: 'This auction ended or changed while you were closing it' }, { status: 409 });
+
+      return NextResponse.json({ success: true, message: 'Bidding closed. The leading bid will be settled.' });
+    }
+
     if (payload.action === 'bid') {
       const { auctionId, rowIndex, amount } = payload;
       if (
@@ -499,7 +540,7 @@ export async function POST(req: Request) {
         Auction.findById(auctionId),
       ]);
       if (!auction) return NextResponse.json({ error: 'Auction not found' }, { status: 404 });
-      if (auction.status !== 'active' || auction.endsAt.getTime() <= Date.now()) {
+      if (auction.status !== 'active' || auction.biddingClosed || auction.endsAt.getTime() <= Date.now()) {
         return NextResponse.json({ error: 'This auction has ended and no longer accepts bids' }, { status: 409 });
       }
       if (auction.highBid && amount <= auction.highBid.amount) {
@@ -548,6 +589,7 @@ export async function POST(req: Request) {
           const currentAuction = await Auction.findOne({
             _id: auctionId,
             status: 'active',
+            biddingClosed: { $ne: true },
             endsAt: { $gt: bidAt },
           }).session(session);
           if (!currentAuction) throw new Error('Auction closed while the bid was being placed; refresh and try again.');
