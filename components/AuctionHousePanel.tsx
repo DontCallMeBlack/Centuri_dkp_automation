@@ -1130,10 +1130,9 @@ export default function AuctionHousePanel() {
                         <h4 className="mt-1 break-words text-lg font-black leading-tight text-white">{auction.itemName}</h4>
                       </div>
                     </div>
-                    {isActive && (auction.canClose || auction.canRemove) && (
+                    {isActive && auction.canRemove && (
                       <div className="flex shrink-0 flex-wrap justify-start gap-1.5 sm:justify-end">
-                        {auction.canClose && <button type="button" disabled={saving} onClick={() => void closeAuction(auction)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-amber-300/25 bg-amber-300/10 px-2.5 py-2 text-[10px] font-bold text-amber-100 transition hover:bg-amber-300/20 disabled:opacity-50"><Check className="h-3.5 w-3.5" /><span>Close bidding</span></button>}
-                        {auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-slate-700 px-2 py-2 text-[10px] font-semibold text-slate-400 transition hover:border-rose-400/30 hover:text-rose-300 disabled:opacity-50"><X className="h-3.5 w-3.5" /><span>Remove</span></button>}
+                        <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="group/remove inline-flex min-h-10 items-center gap-2 rounded-xl border border-rose-400/30 bg-gradient-to-br from-rose-500/20 via-rose-950/50 to-slate-950 px-3.5 py-2 text-xs font-bold text-rose-100 shadow-lg shadow-rose-950/20 transition duration-200 hover:-translate-y-0.5 hover:border-rose-300/60 hover:from-rose-500/35 hover:shadow-xl hover:shadow-rose-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`}><span className="flex h-6 w-6 items-center justify-center rounded-lg border border-rose-300/25 bg-rose-400/10 transition group-hover/remove:rotate-90 group-hover/remove:bg-rose-400/20"><X className="h-4 w-4" strokeWidth={2.5} /></span><span>Remove auction</span></button>
                       </div>
                     )}
                   </header>
