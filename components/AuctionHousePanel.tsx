@@ -311,7 +311,8 @@ export default function AuctionHousePanel() {
     };
 
     void load();
-    const refreshTimer = window.setInterval(() => void load(), 30000);
+    // Keep the leading bidder current across users while an auction is open.
+    const refreshTimer = window.setInterval(() => void load(), 5000);
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       mounted = false;
@@ -327,6 +328,18 @@ export default function AuctionHousePanel() {
     setError('');
     setData(result);
   };
+
+  useEffect(() => {
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') void refresh().catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    window.addEventListener('focus', refreshOnReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+      window.removeEventListener('focus', refreshOnReturn);
+    };
+  }, []);
 
   const loadFullAuctionHistory = async () => {
     setArchiveLoading(true);
@@ -993,6 +1006,9 @@ export default function AuctionHousePanel() {
                           {isActive ? 'No bids yet · starting bid 1 DKP' : 'Auction ended with no bids'}
                         </p>
                       )}
+                      {isActive && auction.highBid?.isMine && (
+                        <p className="mt-2 text-center text-xs font-semibold text-emerald-300">Your bid is leading.</p>
+                      )}
                     </div>
 
                     <div className="space-y-3 border-t border-slate-800/80 pt-4">
@@ -1015,6 +1031,9 @@ export default function AuctionHousePanel() {
 
                     {isActive && (
                       <div className="space-y-3">
+                        {auction.highBid && !auction.highBid.isMine && (
+                          <p className="text-center text-xs font-semibold text-amber-200">Someone else is leading. Bid above {auction.highBid.amount.toLocaleString()} DKP to take the lead.</p>
+                        )}
                         {eligibleToons.length > 0 && data.canBidWeekly ? (
                           <>
                             <label className="block space-y-1.5">
