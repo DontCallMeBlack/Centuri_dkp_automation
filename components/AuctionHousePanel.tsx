@@ -315,13 +315,14 @@ export default function AuctionHousePanel() {
   const [loading, setLoading] = useState(() => !auctionMemoryCache);
   const [syncing, setSyncing] = useState(() => Boolean(auctionMemoryCache));
   const [lastSyncedAt, setLastSyncedAt] = useState<number>(() => Date.now());
+  const [localTimeReady, setLocalTimeReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
   const [postFormOpen, setPostFormOpen] = useState(false);
-  const [todoListOpen, setTodoListOpen] = useState(true);
-  const [wonItemsOpen, setWonItemsOpen] = useState(true);
+  const [todoListOpen, setTodoListOpen] = useState(false);
+  const [wonItemsOpen, setWonItemsOpen] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [itemResultLimit, setItemResultLimit] = useState(40);
@@ -337,6 +338,10 @@ export default function AuctionHousePanel() {
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const [auctionView, setAuctionView] = useState<'live' | 'all'>('live');
   const router = useRouter();
+
+  useEffect(() => {
+    setLocalTimeReady(true);
+  }, []);
 
   useEffect(() => {
     if (data) return;
@@ -869,7 +874,7 @@ export default function AuctionHousePanel() {
                     <div className="min-w-0">
                       <p className="break-words text-sm font-bold text-white">{auction.itemName}</p>
                       {auction.winner ? (
-                        <p className="break-words text-xs leading-snug text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner.nickname}</span> · {auction.winner.account || auction.winner.owner} · {auction.winner.amount.toLocaleString()} DKP</p>
+                        <p className="break-words text-xs leading-snug text-slate-400">Mail to <span className="font-semibold text-amber-200">{auction.winner.account || auction.winner.owner}</span></p>
                       ) : (
                         <p className="text-xs text-slate-400">No bids · choose what happens to this item</p>
                       )}
@@ -1080,7 +1085,7 @@ export default function AuctionHousePanel() {
                   <header className="flex items-start justify-between gap-3 p-4">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0">
-                        <p className="break-words text-[11px] text-slate-500">Posted by {auction.createdBy} · {new Date(auction.createdAt).toLocaleDateString()}</p>
+                        <p className="break-words text-[11px] text-slate-500">Posted by {auction.createdBy} · {localTimeReady ? new Date(auction.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Local date and time'}</p>
                         <h4 className="mt-1 break-words text-lg font-black leading-tight text-white">{auction.itemName}</h4>
                       </div>
                     </div>
@@ -1178,7 +1183,7 @@ export default function AuctionHousePanel() {
                     )}
                     {!isActive && auction.status === 'completed' && auction.winner && (
                       <p className="flex items-start gap-2 break-words text-xs leading-snug text-emerald-300">
-                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>Winner: <span className="break-all">{auction.winner.nickname} · {auction.winner.account || auction.winner.owner}</span>
+                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>Winner: <span className="break-all">{auction.winner.account || auction.winner.owner}</span>
                         {auction.deliveryStatus === 'done' && <span className="text-slate-500">· mailed by {auction.deliveredBy}</span>}
                         </span>
                       </p>
