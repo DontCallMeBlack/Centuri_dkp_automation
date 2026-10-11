@@ -36,7 +36,10 @@ function serializeBid(bid: IAuctionBid | undefined, currentUserId: mongoose.Type
 async function settleExpiredAuctions() {
   const now = new Date();
   const expiredAuctions = await Auction.find({
-    status: 'active',
+    $or: [
+      { status: 'active' },
+      { status: 'settlement-failed', settlementDkpApplied: { $exists: true } },
+    ],
     endsAt: { $lte: now },
   }).sort({ endsAt: 1 }).limit(25);
 
@@ -50,23 +53,41 @@ async function settleExpiredAuctions() {
     }
 
     const claimed = await Auction.findOneAndUpdate(
-      { _id: expired._id, status: 'active', endsAt: { $lte: now } },
-      { $set: { status: 'settling' } },
+      {
+        _id: expired._id,
+        endsAt: { $lte: now },
+        $or: [
+          { status: 'active' },
+          { status: 'settlement-failed', settlementDkpApplied: { $exists: true } },
+        ],
+      },
+      { $set: { status: 'settling', settlementError: undefined } },
       { new: true },
     );
     if (!claimed?.highBid) continue;
 
+    let dkpDeductionCompleted = claimed.settlementDkpApplied;
     try {
       const winningBid = claimed.highBid;
-      await adjustPlayersDKP(
-        [{
-          rowIndex: winningBid.rowIndex,
-          points: -winningBid.amount,
-          owner: winningBid.owner,
-          account: winningBid.account,
-        }],
-        { reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]) },
-      );
+      if (!claimed.settlementDkpApplied) {
+        await adjustPlayersDKP(
+          [{
+            rowIndex: winningBid.rowIndex,
+            points: -winningBid.amount,
+            owner: winningBid.owner,
+            account: winningBid.account,
+          }],
+          { reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]) },
+        );
+        dkpDeductionCompleted = true;
+        const markedApplied = await Auction.updateOne(
+          { _id: claimed._id, status: 'settling', settlementDkpApplied: { $ne: true } },
+          { $set: { settlementDkpApplied: true } },
+        );
+        if (markedApplied.modifiedCount !== 1) {
+          throw new Error('DKP was deducted, but settlement progress could not be recorded. Manual review is required.');
+        }
+      }
 
       const session = await mongoose.startSession();
       try {
@@ -92,7 +113,13 @@ async function settleExpiredAuctions() {
       const message = error instanceof Error ? error.message : 'Unknown auction settlement failure';
       await Auction.updateOne(
         { _id: claimed._id, status: 'settling' },
-        { $set: { status: 'settlement-failed', settlementError: message } },
+        {
+          $set: {
+            status: 'settlement-failed',
+            settlementError: message,
+            ...(dkpDeductionCompleted ? { settlementDkpApplied: true } : {}),
+          },
+        },
       );
       console.error(`Failed to settle auction ${claimed._id.toString()}`, error);
     }
@@ -513,13 +540,13 @@ export async function POST(req: Request) {
       });
 
       const session = await mongoose.startSession();
-      const now = new Date();
       try {
         await session.withTransaction(async () => {
+          const bidAt = new Date();
           const currentAuction = await Auction.findOne({
             _id: auctionId,
             status: 'active',
-            endsAt: { $gt: now },
+            endsAt: { $gt: bidAt },
           }).session(session);
           if (!currentAuction) throw new Error('Auction closed while the bid was being placed; refresh and try again.');
           if (currentAuction.highBid && amount <= currentAuction.highBid.amount) {
@@ -547,8 +574,8 @@ export async function POST(req: Request) {
             await hold.save({ session });
           }
 
-          const endsAt = currentAuction.endsAt.getTime() - now.getTime() <= AUCTION_ANTI_SNIPE_MS
-            ? new Date(now.getTime() + AUCTION_ANTI_SNIPE_MS)
+          const endsAt = currentAuction.endsAt.getTime() - bidAt.getTime() <= AUCTION_ANTI_SNIPE_MS
+            ? new Date(bidAt.getTime() + AUCTION_ANTI_SNIPE_MS)
             : currentAuction.endsAt;
           currentAuction.highBid = {
             userId: user._id,
@@ -557,7 +584,7 @@ export async function POST(req: Request) {
             owner: toon.owner,
             account: toon.account,
             amount,
-            placedAt: now,
+            placedAt: bidAt,
           };
           currentAuction.endsAt = endsAt;
           currentAuction.bidVersion += 1;
@@ -571,7 +598,6 @@ export async function POST(req: Request) {
     }
 
     if (payload.action === 'mark-delivered') {
-      if (!isManager(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
       const auctionId = payload.auctionId;
       if (typeof auctionId !== 'string' || !mongoose.isValidObjectId(auctionId)) {
         return NextResponse.json({ error: 'Invalid auction ID' }, { status: 400 });
