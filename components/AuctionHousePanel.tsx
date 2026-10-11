@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -138,6 +138,7 @@ function formatRemaining(endsAt: string, now: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainingSeconds = seconds % 60;
+  if (hours === 0) return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
   return `${hours}h ${minutes}m ${remainingSeconds}s`;
 }
 
@@ -1057,6 +1058,8 @@ export default function AuctionHousePanel() {
           <div className="grid w-full gap-4 xl:grid-cols-2">
             {visibleAuctions.map((auction) => {
               const isActive = auction.status === 'active' && new Date(auction.endsAt).getTime() > now;
+              const secondsLeft = Math.max(0, Math.floor((new Date(auction.endsAt).getTime() - now) / 1000));
+              const endingSoon = isActive && secondsLeft <= 30;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
               const eligibleToons = data.toons.filter((toon) =>
                 auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
@@ -1073,7 +1076,7 @@ export default function AuctionHousePanel() {
               const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
-                <article key={auction.id} className={`overflow-hidden rounded-2xl border bg-slate-900/70 shadow-lg shadow-black/15 ${isActive ? 'border-emerald-400/20' : 'border-slate-800'}`}>
+                <article key={auction.id} className={`group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
                   <header className="flex items-start justify-between gap-3 p-4">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0">
@@ -1085,35 +1088,29 @@ export default function AuctionHousePanel() {
                   </header>
 
                   <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-                    <div className="relative flex min-h-52 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                    <div className="relative flex min-h-52 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-[radial-gradient(ellipse_at_50%_45%,rgba(99,102,241,0.16),rgba(15,23,42,0.35)_55%,rgba(2,6,23,0.96))] p-3">
+                      {isActive && <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-indigo-400/10 blur-3xl transition group-hover:bg-indigo-300/20" />}
                       <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="aspect-square w-full max-w-64 rounded-lg bg-slate-950/40 p-2" />
                       <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
-                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/15 text-emerald-200' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
                         <span className="rounded-full border border-slate-700 bg-slate-950/90 px-2 py-1 text-[10px] font-semibold text-slate-300">{auction.bossType}</span>
                       </div>
+                      {isActive && <div className={`absolute right-2 top-2 rounded-xl border px-3 py-2 text-right shadow-lg backdrop-blur-md ${endingSoon ? 'animate-pulse border-rose-300/35 bg-rose-950/75 text-rose-100 shadow-rose-950/30' : 'border-white/10 bg-slate-950/75 text-white shadow-black/30'}`}><p className="text-[8px] font-black uppercase tracking-[0.18em] opacity-60">Time left</p><p className="font-mono text-xl font-black tabular-nums leading-tight">{formatRemaining(auction.endsAt, now)}</p></div>}
                     </div>
                     <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/10 text-emerald-300' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>
-                        {isActive ? 'Live' : auction.status === 'settling' ? 'Settling' : auction.status === 'settlement-failed' ? 'Needs review' : 'Ended'}
-                      </span>
                       <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auctionRoles.join(' / ')}</span>
-                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
-                        {isActive ? <Clock3 className="h-3.5 w-3.5 text-emerald-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}
-                        {isActive
-                          ? <>Ends in <strong className="font-mono text-slate-200">{formatRemaining(auction.endsAt, now)}</strong></>
-                          : auction.status === 'settlement-failed' ? 'Settlement needs review' : 'Auction closed'}
-                      </span>
+                      {!isActive && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">{auction.status === 'settlement-failed' ? <ShieldAlert className="h-3.5 w-3.5 text-rose-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}{auction.status === 'settlement-failed' ? 'Settlement needs review' : 'Auction closed'}</span>}
                     </div>
 
                     <div className="@container min-w-0">
                       {auction.highBid ? (
-                        <div className="grid gap-2 rounded-xl border border-amber-400/15 bg-amber-400/[0.06] p-3 text-center sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
+                        <div className="relative grid gap-2 overflow-hidden rounded-xl border border-amber-300/20 bg-gradient-to-br from-amber-300/[0.12] via-amber-400/[0.04] to-slate-950/70 p-4 text-center shadow-inner shadow-amber-200/[0.03] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning toon' : 'Leading toon'}</p>
                             <p className="mt-1 break-all text-lg font-bold leading-snug text-slate-100">{auction.highBid.account || auction.highBid.owner}</p>
                           </div>
-                          <p className="text-4xl font-black tracking-tight tabular-nums text-amber-200 sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold tracking-normal text-amber-400/70">DKP</span></p>
+                          <p aria-live="polite" className="text-4xl font-black tracking-tight tabular-nums text-amber-100 drop-shadow-[0_0_14px_rgba(251,191,36,0.18)] sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold tracking-normal text-amber-300/70">DKP</span></p>
                         </div>
                       ) : (
                         <p className={`rounded-xl border p-3 text-center text-sm ${
@@ -1138,7 +1135,7 @@ export default function AuctionHousePanel() {
                     )}
 
                     {isActive && (
-                      <div className="mt-auto space-y-3 rounded-xl border border-indigo-400/15 bg-indigo-400/[0.04] p-3">
+                      <div className="mt-auto space-y-3 rounded-xl border border-indigo-300/20 bg-[linear-gradient(135deg,rgba(99,102,241,0.11),rgba(15,23,42,0.55)_52%,rgba(2,6,23,0.8))] p-3 shadow-inner shadow-indigo-300/[0.04]">
                         {auction.highBid && !auction.highBid.isMine && (
                           <p className="text-center text-xs font-semibold text-amber-200">Someone else is leading. Bid above {auction.highBid.amount.toLocaleString()} DKP to take the lead.</p>
                         )}
@@ -1155,8 +1152,8 @@ export default function AuctionHousePanel() {
                                 <span className="sr-only">Bid amount</span>
                                 <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="Enter bid amount" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
                               </label>
-                              <button disabled={saving || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-45">
-                                <Gavel className="h-4 w-4" /> Place bid
+                              <button disabled={saving || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 hover:shadow-indigo-900/50 disabled:cursor-not-allowed disabled:opacity-45">
+                                <Gavel className="h-4 w-4" /> {Number(bidAmounts[auction.id]) >= minimumBid ? `Bid ${Number(bidAmounts[auction.id]).toLocaleString()}` : 'Place bid'}
                               </button>
                             </div>
                             <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-gradient-to-r from-emerald-400/[0.09] to-indigo-400/[0.06] px-3 py-2.5">
