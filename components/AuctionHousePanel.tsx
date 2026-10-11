@@ -1210,7 +1210,6 @@ export default function AuctionHousePanel() {
                                 <Gavel className="h-4 w-4" /> {Number(bidAmounts[auction.id]) >= minimumBid ? `Bid ${Number(bidAmounts[auction.id]).toLocaleString()}` : 'Place bid'}
                               </button>
                             </div>
-                            <p className="text-[10px] text-slate-500">Enter your new total bid. Minimum {minimumBid.toLocaleString()} DKP.</p>
                           </>
                         ) : (
                           <p className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-xs text-slate-400">
