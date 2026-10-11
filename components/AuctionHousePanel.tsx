@@ -1083,7 +1083,6 @@ export default function AuctionHousePanel() {
               <Filter className="h-4 w-4" /> Filter
               {activeAuctionFilterCount > 0 && <span className="rounded-full bg-indigo-400/20 px-1.5 py-0.5">{activeAuctionFilterCount}</span>}
             </button>
-            <button onClick={() => void refresh().catch((refreshError: unknown) => setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh auctions'))} aria-label="Refresh auctions" className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800"><RefreshCw className="h-4 w-4" /></button>
           </div>
         </div>
 
