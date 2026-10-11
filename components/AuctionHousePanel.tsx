@@ -75,6 +75,52 @@ interface AuctionData {
   };
 }
 
+let auctionMemoryCache: AuctionData | null = null;
+const AUCTION_SESSION_CACHE_KEY = 'centuri-auction-house-v1';
+
+function rememberAuctionData(data: AuctionData) {
+  auctionMemoryCache = {
+    ...data,
+    manager: false,
+    weeklyEarnedTotal: 0,
+    canBidWeekly: false,
+    roles: [],
+    toons: [],
+    auctions: data.auctions.map((auction) => ({
+      ...auction,
+      isPoster: false,
+      isWinner: false,
+      canMarkDelivered: false,
+      canRemove: false,
+      canResolveNoBid: false,
+      highBid: auction.highBid ? { ...auction.highBid, isMine: false } : null,
+      winner: auction.winner ? { ...auction.winner, isMine: false } : null,
+    })),
+  };
+  try {
+    window.sessionStorage.setItem(AUCTION_SESSION_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data: auctionMemoryCache }));
+  } catch {
+    // Keep the in-memory cache even when browser storage is unavailable.
+  }
+}
+
+function readAuctionCache() {
+  if (auctionMemoryCache) return auctionMemoryCache;
+  try {
+    const cached = window.sessionStorage.getItem(AUCTION_SESSION_CACHE_KEY);
+    if (!cached) return null;
+    const parsed = JSON.parse(cached) as { savedAt?: number; data?: AuctionData };
+    if (!parsed.data || !Array.isArray(parsed.data.auctions) || !parsed.savedAt || Date.now() - parsed.savedAt > 10 * 60 * 1000) {
+      window.sessionStorage.removeItem(AUCTION_SESSION_CACHE_KEY);
+      return null;
+    }
+    auctionMemoryCache = parsed.data;
+    return auctionMemoryCache;
+  } catch {
+    return null;
+  }
+}
+
 const roleStyles: Record<string, string> = {
   ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',
   'dps rogue': 'border-violet-400/30 bg-violet-400/10 text-violet-300',
@@ -264,15 +310,17 @@ function ImageNavigation({
 }
 
 export default function AuctionHousePanel() {
-  const [data, setData] = useState<AuctionData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<AuctionData | null>(() => auctionMemoryCache);
+  const [loading, setLoading] = useState(() => !auctionMemoryCache);
+  const [syncing, setSyncing] = useState(() => Boolean(auctionMemoryCache));
+  const [lastSyncedAt, setLastSyncedAt] = useState<number>(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
   const [postFormOpen, setPostFormOpen] = useState(false);
-  const [todoListOpen, setTodoListOpen] = useState(false);
-  const [wonItemsOpen, setWonItemsOpen] = useState(false);
+  const [todoListOpen, setTodoListOpen] = useState(true);
+  const [wonItemsOpen, setWonItemsOpen] = useState(true);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [itemResultLimit, setItemResultLimit] = useState(40);
@@ -290,12 +338,28 @@ export default function AuctionHousePanel() {
   const router = useRouter();
 
   useEffect(() => {
+    if (data) return;
+    const cachedData = readAuctionCache();
+    if (cachedData) {
+      setData(cachedData);
+      setLoading(false);
+      setSyncing(true);
+    }
+  }, [data]);
+
+  useEffect(() => {
     let mounted = true;
     const load = async () => {
       try {
         const response = await fetch('/api/auction', { cache: 'no-store' });
         const result = await response.json();
         if (response.status === 401) {
+          auctionMemoryCache = null;
+          try {
+            window.sessionStorage.removeItem(AUCTION_SESSION_CACHE_KEY);
+          } catch {
+            // Session storage may be disabled by browser privacy settings.
+          }
           router.push('/login');
           return;
         }
@@ -303,9 +367,15 @@ export default function AuctionHousePanel() {
         if (mounted) {
           setError('');
           setData(result);
+          rememberAuctionData(result);
+          setLastSyncedAt(Date.now());
+          setSyncing(false);
         }
       } catch (loadError) {
-        if (mounted) setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
+        if (mounted) {
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
+          setSyncing(false);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -313,7 +383,12 @@ export default function AuctionHousePanel() {
 
     void load();
     // Keep the leading bidder current across users while an auction is open.
-    const refreshTimer = window.setInterval(() => void load(), 5000);
+    const refreshTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setSyncing(true);
+        void load();
+      }
+    }, 5000);
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       mounted = false;
@@ -323,11 +398,20 @@ export default function AuctionHousePanel() {
   }, [router]);
 
   const refresh = async () => {
-    const response = await fetch('/api/auction', { cache: 'no-store' });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Unable to refresh auctions');
-    setError('');
-    setData(result);
+    setSyncing(true);
+    try {
+      const response = await fetch('/api/auction', { cache: 'no-store' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to refresh auctions');
+      setError('');
+      setData(result);
+      rememberAuctionData(result);
+      setLastSyncedAt(Date.now());
+      setSyncing(false);
+    } catch (refreshError) {
+      setSyncing(false);
+      throw refreshError;
+    }
   };
 
   useEffect(() => {
@@ -357,6 +441,12 @@ export default function AuctionHousePanel() {
       setArchiveLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (auctionView === 'all' && !archiveLoaded && !archiveLoading) {
+      void loadFullAuctionHistory();
+    }
+  }, [auctionView, archiveLoaded, archiveLoading]);
 
   const submitAuction = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -405,6 +495,20 @@ export default function AuctionHousePanel() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to place bid');
       setNotice(result.message);
+      if (result.highBid) {
+        setData((current) => {
+          if (!current) return current;
+          const updated: AuctionData = {
+            ...current,
+            auctions: current.auctions.map((item) => item.id === auction.id
+              ? { ...item, highBid: result.highBid as AuctionBid, endsAt: result.endsAt ?? item.endsAt }
+              : item),
+          };
+          rememberAuctionData(updated);
+          return updated;
+        });
+      }
+      setBidAmounts((current) => ({ ...current, [auction.id]: '' }));
       await refresh();
     } catch (bidError) {
       setError(bidError instanceof Error ? bidError.message : 'Unable to place bid');
@@ -736,11 +840,11 @@ export default function AuctionHousePanel() {
             onClick={() => setTodoListOpen((open) => !open)}
             aria-expanded={todoListOpen}
             aria-controls="auction-todo-list"
-            className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-slate-800/60"
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-amber-400/10 bg-amber-400/[0.04] px-3 py-3 text-left transition hover:bg-amber-400/[0.08]"
           >
             <span className="flex min-w-0 items-center gap-2.5">
               <PackageCheck className="h-4 w-4 shrink-0 text-amber-300" />
-              <span className="font-bold text-white">Auction TODO list</span>
+              <span><span className="block font-bold text-white">Auction follow-up</span><span className="mt-0.5 block text-[11px] font-normal text-slate-400">Confirm delivery or resolve auctions with no bids</span></span>
               <span className="rounded-full bg-amber-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-amber-200">{todoTasks.length}</span>
             </span>
             {todoListOpen
@@ -805,7 +909,7 @@ export default function AuctionHousePanel() {
         </section>
       )}
 
-      {wonAuctions.length > 0 && (
+      {(wonAuctions.length > 0 || archiveLoaded) && (
         <section className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-3 sm:p-4">
           <button
             type="button"
@@ -816,7 +920,7 @@ export default function AuctionHousePanel() {
           >
             <span className="flex min-w-0 items-center gap-2.5">
               <Trophy className="h-4 w-4 shrink-0 text-emerald-300" />
-              <span className="font-bold text-white">Items you won</span>
+              <span><span className="block font-bold text-white">Items you won</span><span className="mt-0.5 block text-[11px] font-normal text-slate-400">Your completed wins and mail status</span></span>
               <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-emerald-200">{wonAuctions.length}</span>
             </span>
             {wonItemsOpen
@@ -825,6 +929,7 @@ export default function AuctionHousePanel() {
           </button>
           {wonItemsOpen && (
             <div id="auction-won-items" className="mt-3 space-y-3 border-t border-slate-800 pt-4">
+              {wonAuctions.length === 0 && <p className="text-sm text-slate-400">No completed wins found in the loaded history.</p>}
               {wonAuctions.map((auction) => (
                 <article key={auction.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                   <div className="min-w-0">
@@ -848,7 +953,7 @@ export default function AuctionHousePanel() {
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} currently open` : `${allAuctions.length} total loaded`}</p></div>
+            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} currently open` : `${allAuctions.length} total loaded`}</p><p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${syncing ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />{syncing ? 'Refreshing live bids' : `Live · synced ${new Date(lastSyncedAt).toLocaleTimeString()}`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="tablist" aria-label="Auction views">
               <button type="button" role="tab" aria-selected={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" role="tab" aria-selected={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
@@ -925,16 +1030,17 @@ export default function AuctionHousePanel() {
               Clear filters
             </button>
           )}
-          <button
-            type="button"
-            disabled={archiveLoaded || archiveLoading}
-            onClick={() => void loadFullAuctionHistory()}
-            className="inline-flex items-center gap-2 text-left text-xs font-semibold text-indigo-300 hover:text-indigo-200 disabled:cursor-default disabled:text-slate-500 sm:col-span-3"
-          >
-            {archiveLoading && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
-            {archiveLoaded ? 'Full auction history loaded' : 'Load full auction history for filtering'}
-          </button>
         </div>}
+
+        {auctionView === 'all' && archiveLoading && (
+          <p role="status" className="flex items-center gap-2 rounded-xl border border-indigo-400/20 bg-indigo-400/5 px-4 py-3 text-sm text-indigo-200"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading full auction history…</p>
+        )}
+        {auctionView === 'all' && archiveLoaded && (
+          <p role="status" className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-400">Showing the full auction history ({allAuctions.length} auctions).</p>
+        )}
+        {auctionView === 'all' && !archiveLoaded && !archiveLoading && error && (
+          <button type="button" onClick={() => void loadFullAuctionHistory()} className="rounded-xl border border-red-400/20 bg-red-400/5 px-4 py-3 text-left text-sm text-red-200">History did not load. Select here to retry.</button>
+        )}
 
         {allAuctions.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
@@ -1004,11 +1110,10 @@ export default function AuctionHousePanel() {
                       {auction.highBid ? (
                         <div className="grid gap-2 rounded-xl border border-amber-400/15 bg-amber-400/[0.06] p-3 text-center sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning bid' : 'Leading bid'}</p>
-                            <p className="mt-1 break-all text-sm font-bold leading-snug text-slate-100">{auction.highBid.nickname}</p>
-                            <p className="mt-0.5 break-all text-xs leading-snug text-slate-400">Toon: {auction.highBid.account || auction.highBid.owner}</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning toon' : 'Leading toon'}</p>
+                            <p className="mt-1 break-all text-lg font-bold leading-snug text-slate-100">{auction.highBid.account || auction.highBid.owner}</p>
                           </div>
-                          <p className="text-2xl font-black tabular-nums text-amber-200 sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold text-amber-400/70">DKP</span></p>
+                          <p className="text-4xl font-black tracking-tight tabular-nums text-amber-200 sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold tracking-normal text-amber-400/70">DKP</span></p>
                         </div>
                       ) : (
                         <p className={`rounded-xl border p-3 text-center text-sm ${
@@ -1042,19 +1147,26 @@ export default function AuctionHousePanel() {
                             <label className="block space-y-1.5">
                               <span className="text-[11px] font-semibold text-slate-400">Bid from your matching toon</span>
                               <select aria-label="Choose toon to bid with" value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
-                                {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner} · {toon.available - toon.heldPoints} DKP free</option>)}
+                                {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner}</option>)}
                               </select>
                             </label>
                             <div className="grid grid-cols-[1fr_auto] gap-2">
                               <label className="min-w-0">
                                 <span className="sr-only">Bid amount</span>
-                                <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder={`${minimumBid}–${maxBid} DKP`} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
+                                <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="Enter bid amount" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
                               </label>
                               <button disabled={saving || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-45">
                                 <Gavel className="h-4 w-4" /> Place bid
                               </button>
                             </div>
-                            <p className="text-[10px] text-slate-500">This toon has {maxBid.toLocaleString()} DKP free. A bid must be at least {minimumBid.toLocaleString()} DKP.</p>
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-gradient-to-r from-emerald-400/[0.09] to-indigo-400/[0.06] px-3 py-2.5">
+                              <div>
+                                <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-200/70">Your maximum total bid</p>
+                                <p className="mt-0.5 text-lg font-black tabular-nums text-emerald-100">{maxBid.toLocaleString()} <span className="text-[10px] font-bold text-emerald-200/60">DKP</span></p>
+                              </div>
+                              <button type="button" disabled={maxBid < minimumBid} onClick={() => setBidAmounts((current) => ({ ...current, [auction.id]: String(maxBid) }))} className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 px-3 py-2 text-[10px] font-black tracking-wider text-emerald-100 transition hover:bg-emerald-300/20 disabled:opacity-40">USE MAX</button>
+                            </div>
+                            <p className="text-[10px] text-slate-500">Enter your new total bid. Minimum {minimumBid.toLocaleString()} DKP; maximum shown above.</p>
                           </>
                         ) : (
                           <p className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-xs text-slate-400">
