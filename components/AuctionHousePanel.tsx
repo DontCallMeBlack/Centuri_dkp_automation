@@ -267,7 +267,7 @@ function AuctionItemImage({
 
   return (
     <div ref={imageContainerRef} className={`${className} relative overflow-hidden`}>
-      <img src={imageUrl} alt={`${alt} image ${imageIndex + 1}`} className="h-full w-full object-contain" />
+      <img src={imageUrl} alt={`${alt} image ${imageIndex + 1}`} className="h-full w-full object-cover" />
       {imageTotal > 1 && (
         <ImageNavigation
           imageIndex={imageIndex}
@@ -1111,12 +1111,13 @@ export default function AuctionHousePanel() {
               );
               const selectedRow = selectedToons[auction.id] ?? eligibleToons[0]?.rowIndex;
               const selectedToon = eligibleToons.find((toon) => toon.rowIndex === selectedRow);
-              const currentBidCredit = auction.highBid?.isMine && auction.highBid.rowIndex === selectedRow
-                ? auction.highBid.amount
-                : 0;
-              const maxBid = selectedToon
-                ? Math.max(0, selectedToon.available - selectedToon.heldPoints + currentBidCredit)
-                : 0;
+              const toonMaximumBid = (toon: AuctionToon) => Math.max(
+                0,
+                toon.available - toon.heldPoints + (
+                  auction.highBid?.isMine && auction.highBid.rowIndex === toon.rowIndex ? auction.highBid.amount : 0
+                ),
+              );
+              const maxBid = selectedToon ? toonMaximumBid(selectedToon) : 0;
               const minimumBid = (auction.highBid?.amount ?? 0) + 1;
               const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
@@ -1137,11 +1138,11 @@ export default function AuctionHousePanel() {
                     )}
                   </header>
 
-                  <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-                    <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70">
+                  <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                    <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-slate-950/70">
                       <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="absolute inset-0 h-full w-full max-w-none rounded-xl bg-slate-950/20 p-0" />
                     </div>
-                    <div className="flex min-w-0 flex-col gap-3">
+                    <div className="flex min-w-0 flex-col gap-3 sm:pt-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
                       <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auctionRoles.join(' / ')}</span>
@@ -1188,12 +1189,19 @@ export default function AuctionHousePanel() {
                         )}
                         {eligibleToons.length > 0 && data.canBidWeekly ? (
                           <>
-                            <label className="block space-y-1.5">
-                              <span className="text-[11px] font-semibold text-slate-400">Bid from your matching toon</span>
-                              <select aria-label="Choose toon to bid with" value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
-                                {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner}</option>)}
-                              </select>
-                            </label>
+                            {eligibleToons.length === 1 ? (
+                              <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5">
+                                <div className="min-w-0"><p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Bidding as</p><p className="truncate text-sm font-bold text-white">{eligibleToons[0].account || eligibleToons[0].owner} <span className="font-normal text-slate-400">· {eligibleToons[0].subClass}</span></p></div>
+                                <p className="shrink-0 text-right"><span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Max total</span><span className="text-sm font-black tabular-nums text-emerald-200">{toonMaximumBid(eligibleToons[0]).toLocaleString()} DKP</span></p>
+                              </div>
+                            ) : (
+                              <label className="block space-y-1.5">
+                                <span className="text-[11px] font-semibold text-slate-400">Choose toon and role</span>
+                                <select aria-label="Choose toon and role to bid with" value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
+                                  {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner} · {toon.subClass} · Max {toonMaximumBid(toon).toLocaleString()} DKP</option>)}
+                                </select>
+                              </label>
+                            )}
                             <div className="grid grid-cols-[1fr_auto] gap-2">
                               <label className="min-w-0">
                                 <span className="sr-only">Bid amount</span>
@@ -1203,14 +1211,7 @@ export default function AuctionHousePanel() {
                                 <Gavel className="h-4 w-4" /> {Number(bidAmounts[auction.id]) >= minimumBid ? `Bid ${Number(bidAmounts[auction.id]).toLocaleString()}` : 'Place bid'}
                               </button>
                             </div>
-                            <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-gradient-to-r from-emerald-400/[0.09] to-indigo-400/[0.06] px-3 py-2.5">
-                              <div>
-                                <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-200/70">Your maximum total bid</p>
-                                <p className="mt-0.5 text-lg font-black tabular-nums text-emerald-100">{maxBid.toLocaleString()} <span className="text-[10px] font-bold text-emerald-200/60">DKP</span></p>
-                              </div>
-                              <button type="button" disabled={maxBid < minimumBid} onClick={() => setBidAmounts((current) => ({ ...current, [auction.id]: String(maxBid) }))} className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 px-3 py-2 text-[10px] font-black tracking-wider text-emerald-100 transition hover:bg-emerald-300/20 disabled:opacity-40">USE MAX</button>
-                            </div>
-                            <p className="text-[10px] text-slate-500">Enter your new total bid. Minimum {minimumBid.toLocaleString()} DKP; maximum shown above.</p>
+                            <p className="text-[10px] text-slate-500">Enter your new total bid. Minimum {minimumBid.toLocaleString()} DKP.</p>
                           </>
                         ) : (
                           <p className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-xs text-slate-400">
