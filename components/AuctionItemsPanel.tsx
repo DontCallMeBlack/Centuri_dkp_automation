@@ -12,7 +12,7 @@ interface CatalogItem {
   bossType: string;
   imageCount: number;
 }
-
+ 
 const BOSS_TYPES = [
   { value: 'Prot', label: 'Prot (Base / Prime)' },
   { value: 'Bt', label: 'Bt' },
@@ -88,7 +88,7 @@ function ItemEditor({
         <img
           src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`}
           key={imageVersion}
-          alt={`${item.name} catalog image`}
+          alt={item.name}
           className="h-full w-full object-contain"
         />
         {item.imageCount > 1 && (
@@ -112,8 +112,16 @@ function ItemEditor({
           <div className="grid grid-cols-2 gap-1.5">
             {[...new Set([...requiredRoles, ...roles])].map((role) => (
               <label key={role} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/70 px-2 py-1.5 text-xs capitalize text-slate-300">
-                <input type="checkbox" checked={requiredRoles.includes(role)} disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
-                  onChange={(event) => setRequiredRoles((current) => event.target.checked ? [...current, role] : current.filter((entry) => entry !== role))} />
+                <input
+                  type="checkbox"
+                  checked={requiredRoles.includes(role)}
+                  disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
+                  onChange={(event) =>
+                    setRequiredRoles((current) =>
+                      event.target.checked ? [...current, role] : current.filter((entry) => entry !== role)
+                    )
+                  }
+                />
                 {role}{!roles.includes(role) ? ' (not on roster)' : ''}
               </label>
             ))}
@@ -339,8 +347,16 @@ export default function AuctionItemsPanel() {
             <div className="grid grid-cols-2 gap-1">
               {roles.map((role) => (
                 <label key={role} className="flex items-center gap-1.5 text-xs capitalize text-slate-300">
-                  <input type="checkbox" checked={requiredRoles.includes(role)} disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
-                    onChange={(event) => setRequiredRoles((current) => event.target.checked ? [...current, role] : current.filter((entry) => entry !== role))} />
+                  <input
+                    type="checkbox"
+                    checked={requiredRoles.includes(role)}
+                    disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
+                    onChange={(event) =>
+                      setRequiredRoles((current) =>
+                        event.target.checked ? [...current, role] : current.filter((entry) => entry !== role)
+                      )
+                    }
+                  />
                   {role}
                 </label>
               ))}

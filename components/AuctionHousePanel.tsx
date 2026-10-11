@@ -286,6 +286,7 @@ export default function AuctionHousePanel() {
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [selectedToons, setSelectedToons] = useState<Record<string, number>>({});
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
+  const [auctionView, setAuctionView] = useState<'live' | 'all'>('live');
   const router = useRouter();
 
   useEffect(() => {
@@ -543,22 +544,27 @@ export default function AuctionHousePanel() {
     auctionHolderFilter,
     auctionSearch.trim(),
   ].filter(Boolean).length;
+  const liveAuctions = allAuctions.filter((auction) => auction.status === 'active' && new Date(auction.endsAt).getTime() > now);
+  const visibleAuctions = auctionView === 'live'
+    ? filteredAuctions.filter((auction) => liveAuctions.some((live) => live.id === auction.id))
+    : filteredAuctions;
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-2xl border border-amber-400/20 bg-gradient-to-br from-amber-950/60 via-slate-900 to-slate-950 px-4 py-3 shadow-lg shadow-amber-950/15 sm:px-5">
-        <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-amber-400/10 blur-3xl" />
-        <div className="relative flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-400/10 text-amber-300">
-              <Gavel className="h-4 w-4" />
+    <div className="mx-auto max-w-6xl space-y-5 pb-8">
+      <section className="relative overflow-hidden rounded-3xl border border-slate-700/80 bg-slate-950 shadow-xl shadow-black/20">
+        <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl" />
+        <div className="relative flex flex-col gap-5 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/25"><Gavel className="h-5 w-5" /></div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-300">Centuri loot</p>
+              <h2 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">Auction house</h2>
+              <p className="mt-1 text-sm text-slate-400">Browse live items, check the lead, and place a bid.</p>
             </div>
-            <h2 className="truncate text-lg font-black text-white">Auction House</h2>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="rounded-lg border border-slate-700/80 bg-slate-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300">
-              Weekly DKP <span className="ml-1 text-white">{data.weeklyEarnedTotal.toLocaleString()}</span>
-            </p>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+            <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Weekly DKP</p><p className="mt-0.5 text-lg font-black tabular-nums text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ {data.weeklyMinimum.toLocaleString()}</span></p></div>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Live auctions</p><p className="mt-0.5 text-lg font-black tabular-nums text-emerald-300">{liveAuctions.length}</p></div>
             {data.manager && (
               <button
                 type="button"
@@ -566,10 +572,10 @@ export default function AuctionHousePanel() {
                 aria-expanded={postFormOpen}
                 aria-controls="auction-post-form"
                 aria-label={postFormOpen ? 'Close auction post form' : 'Post an auction'}
-                className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-2.5 text-[11px] font-bold text-white shadow-md shadow-emerald-950/30 transition hover:bg-emerald-400"
+                className="col-span-2 inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 text-sm font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-400 sm:col-span-1"
               >
-                {postFormOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                <span>{postFormOpen ? 'Close' : 'Post'}</span>
+                {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                <span>{postFormOpen ? 'Close form' : 'Post auction'}</span>
               </button>
             )}
           </div>
@@ -830,12 +836,16 @@ export default function AuctionHousePanel() {
         </section>
       )}
 
-      <section className="space-y-3">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-        <div className="min-w-0">
-            <h3 className="text-lg font-bold text-white">Auctions</h3>
+      <section className="space-y-4">
+        <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
+            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} currently open` : `${allAuctions.length} total loaded`}</p></div>
+            <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="tablist" aria-label="Auction views">
+              <button type="button" role="tab" aria-selected={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
+              <button type="button" role="tab" aria-selected={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
+            </div>
           </div>
-        <div className="flex min-w-0 gap-2">
+          <div className="flex min-w-0 gap-2">
           <label className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <input
@@ -922,14 +932,15 @@ export default function AuctionHousePanel() {
             <Gavel className="mx-auto h-7 w-7 text-slate-600" />
             <p className="mt-3 text-sm text-slate-400">There are no auctions yet.</p>
           </div>
-        ) : filteredAuctions.length === 0 ? (
+        ) : visibleAuctions.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
             <Search className="mx-auto h-7 w-7 text-slate-600" />
-            <p className="mt-3 text-sm text-slate-400">No auctions match these filters.</p>
+            <p className="mt-3 text-sm text-slate-400">{auctionView === 'live' && liveAuctions.length === 0 ? 'There are no live auctions right now.' : 'No auctions match these filters.'}</p>
+            {auctionView === 'live' && liveAuctions.length === 0 && <button type="button" onClick={() => setAuctionView('all')} className="mt-3 text-xs font-semibold text-indigo-300 hover:text-indigo-200">Browse auction history</button>}
           </div>
         ) : (
-          <div className="mx-auto grid w-full max-w-2xl gap-5">
-            {filteredAuctions.map((auction) => {
+          <div className="grid w-full gap-4 xl:grid-cols-2">
+            {visibleAuctions.map((auction) => {
               const isActive = auction.status === 'active' && new Date(auction.endsAt).getTime() > now;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
               const eligibleToons = data.toons.filter((toon) =>
@@ -947,37 +958,31 @@ export default function AuctionHousePanel() {
               const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
-                <article key={auction.id} className={`overflow-hidden rounded-3xl border bg-slate-900/70 shadow-xl shadow-black/20 ${isActive ? 'border-slate-700/80' : 'border-slate-800'}`}>
-                  <header className="flex items-start gap-3 p-4 sm:p-5">
+                <article key={auction.id} className={`overflow-hidden rounded-2xl border bg-slate-900/70 shadow-lg shadow-black/15 ${isActive ? 'border-emerald-400/20' : 'border-slate-800'}`}>
+                  <header className="flex items-start justify-between gap-3 p-4">
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-indigo-400/30 bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-sm font-black uppercase text-indigo-200">
-                        {auction.createdBy.trim().charAt(0) || 'C'}
-                      </div>
                       <div className="min-w-0">
-                        <p className="break-all text-sm font-bold leading-snug text-white">{auction.createdBy}</p>
-                        <p className="mt-0.5 break-words text-[11px] leading-snug text-slate-500">
-                          Posted {new Date(auction.createdAt).toLocaleString()}
-                        </p>
+                        <p className="break-words text-[11px] text-slate-500">Posted by {auction.createdBy} · {new Date(auction.createdAt).toLocaleDateString()}</p>
+                        <h4 className="mt-1 break-words text-lg font-black leading-tight text-white">{auction.itemName}</h4>
                       </div>
                     </div>
+                    {isActive && auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-2 text-[11px] font-semibold text-slate-300 hover:border-red-400/30 hover:text-red-300 disabled:opacity-50"><X className="h-3.5 w-3.5" /><span className="hidden sm:inline">Remove</span></button>}
                   </header>
 
-                  <div className="flex justify-center border-y border-slate-800 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-800/70 via-slate-950 to-black px-3 py-4 sm:px-6 sm:py-6">
-                    <AuctionItemImage
-                      itemId={auction.itemId}
-                      imageCount={auction.imageCount}
-                      alt={auction.itemName}
-                      className="mx-auto aspect-square w-full max-w-[34rem] rounded-2xl border border-white/5 bg-slate-950/40 p-3 sm:p-5"
-                    />
-                  </div>
-
-                  <div className="space-y-4 p-4 sm:p-5">
-                    <div className="flex flex-wrap items-center justify-center gap-2">
+                  <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                    <div className="relative flex min-h-52 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="aspect-square w-full max-w-64 rounded-lg bg-slate-950/40 p-2" />
+                      <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
+                        <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/15 text-emerald-200' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
+                        <span className="rounded-full border border-slate-700 bg-slate-950/90 px-2 py-1 text-[10px] font-semibold text-slate-300">{auction.bossType}</span>
+                      </div>
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${isActive ? 'bg-emerald-400/10 text-emerald-300' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>
                         {isActive ? 'Live' : auction.status === 'settling' ? 'Settling' : auction.status === 'settlement-failed' ? 'Needs review' : 'Ended'}
                       </span>
                       <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auctionRoles.join(' / ')}</span>
-                      <span className="rounded-full border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-[10px] font-semibold text-slate-300">{auction.bossType}</span>
                       <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">
                         {isActive ? <Clock3 className="h-3.5 w-3.5 text-emerald-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}
                         {isActive
@@ -987,9 +992,8 @@ export default function AuctionHousePanel() {
                     </div>
 
                     <div className="@container min-w-0">
-                      <h4 className="w-full whitespace-nowrap text-center text-[clamp(0.75rem,4cqi,1.5rem)] font-black leading-snug text-white">{auction.itemName}</h4>
                       {auction.highBid ? (
-                        <div className="mt-4 grid gap-2 rounded-2xl border border-amber-400/15 bg-gradient-to-br from-amber-400/10 to-amber-400/[0.02] p-4 text-center sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
+                        <div className="grid gap-2 rounded-xl border border-amber-400/15 bg-amber-400/[0.06] p-3 text-center sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning bid' : 'Leading bid'}</p>
                             <p className="mt-1 break-all text-sm font-bold leading-snug text-slate-100">{auction.highBid.nickname}</p>
@@ -998,7 +1002,7 @@ export default function AuctionHousePanel() {
                           <p className="text-2xl font-black tabular-nums text-amber-200 sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold text-amber-400/70">DKP</span></p>
                         </div>
                       ) : (
-                        <p className={`mt-4 rounded-2xl border p-3 text-center text-sm ${
+                        <p className={`rounded-xl border p-3 text-center text-sm ${
                           isActive
                             ? 'border-slate-800 bg-slate-950/50 text-slate-400'
                             : 'border-slate-700 bg-slate-950/70 font-semibold text-slate-300'
@@ -1011,17 +1015,7 @@ export default function AuctionHousePanel() {
                       )}
                     </div>
 
-                    <div className="space-y-3 border-t border-slate-800/80 pt-4">
-                    {isActive && auction.canRemove && (
-                      <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => void removeAuction(auction)}
-                        className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        <X className="h-3.5 w-3.5" /> Remove auction
-                      </button>
-                    )}
+                    <div className="space-y-3 border-t border-slate-800/80 pt-3">
                     {auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'banked' && (
                       <p className="text-xs text-amber-200">Mailed to bank by {auction.deliveredBy}</p>
                     )}
@@ -1030,7 +1024,7 @@ export default function AuctionHousePanel() {
                     )}
 
                     {isActive && (
-                      <div className="space-y-3">
+                      <div className="mt-auto space-y-3 rounded-xl border border-indigo-400/15 bg-indigo-400/[0.04] p-3">
                         {auction.highBid && !auction.highBid.isMine && (
                           <p className="text-center text-xs font-semibold text-amber-200">Someone else is leading. Bid above {auction.highBid.amount.toLocaleString()} DKP to take the lead.</p>
                         )}
@@ -1038,17 +1032,17 @@ export default function AuctionHousePanel() {
                           <>
                             <label className="block space-y-1.5">
                               <span className="text-[11px] font-semibold text-slate-400">Bid from your matching toon</span>
-                              <select value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-xs text-white outline-none focus:border-indigo-400/60">
+                              <select aria-label="Choose toon to bid with" value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400/60">
                                 {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner} · {toon.available - toon.heldPoints} DKP free</option>)}
                               </select>
                             </label>
                             <div className="grid grid-cols-[1fr_auto] gap-2">
                               <label className="min-w-0">
                                 <span className="sr-only">Bid amount</span>
-                                <input type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder={`${minimumBid}–${maxBid} DKP`} className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
+                                <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder={`${minimumBid}–${maxBid} DKP`} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
                               </label>
-                              <button disabled={saving || !selectedToon || maxBid < minimumBid} onClick={() => void submitBid(auction)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-45">
-                                <Gavel className="h-3.5 w-3.5" /> Bid
+                              <button disabled={saving || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-indigo-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-45">
+                                <Gavel className="h-4 w-4" /> Place bid
                               </button>
                             </div>
                             <p className="text-[10px] text-slate-500">This toon has {maxBid.toLocaleString()} DKP free. A bid must be at least {minimumBid.toLocaleString()} DKP.</p>
@@ -1071,6 +1065,7 @@ export default function AuctionHousePanel() {
                         </span>
                       </p>
                     )}
+                    </div>
                     </div>
                   </div>
                 </article>
