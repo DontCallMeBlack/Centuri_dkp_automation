@@ -461,7 +461,7 @@ export default function AuctionHousePanel() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to post auction');
-      setNotice('Auction posted. It will close in 24 hours; bids in the final 2 minutes extend the timer.');
+      setNotice('Auction posted. It will close in 2 minutes; bids in the final 2 minutes extend the timer.');
       setPostFormOpen(false);
       await refresh();
     } catch (submitError) {
@@ -571,7 +571,7 @@ export default function AuctionHousePanel() {
   const resolveNoBidAuction = async (auction: Auction, resolution: 'banked' | 'repost') => {
     const description = resolution === 'banked'
       ? `Mark ${auction.itemName} as mailed to the bank?`
-      : `Repost ${auction.itemName} for another 24 hours?`;
+      : `Repost ${auction.itemName} for another 2 minutes?`;
     if (!window.confirm(description)) return;
 
     setSaving(true);
@@ -720,7 +720,7 @@ export default function AuctionHousePanel() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></div>
             <div>
               <h3 className="font-bold text-white">Post an auction</h3>
-              <p className="text-xs text-slate-400">Chief, General, and Guardian access · closes 24 hours after posting</p>
+              <p className="text-xs text-slate-400">Chief, General, and Guardian access · closes 2 minutes after posting</p>
             </div>
           </div>
           <form onSubmit={submitAuction} className="grid gap-4 sm:grid-cols-2">
@@ -827,7 +827,7 @@ export default function AuctionHousePanel() {
               }`}
             >
               {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />}
-              {saving ? 'Posting auction...' : !selectedCatalogItem ? 'Choose an item to post' : !selectedItemRoleIsValid ? 'Set item roles before posting' : 'Post 24-hour auction'}
+              {saving ? 'Posting auction...' : !selectedCatalogItem ? 'Choose an item to post' : !selectedItemRoleIsValid ? 'Set item roles before posting' : 'Post 2-minute auction'}
             </button>
           </form>
         </section>
