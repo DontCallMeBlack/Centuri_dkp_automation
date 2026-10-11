@@ -27,6 +27,7 @@ export interface IAuction extends Document {
   deliveredBy?: string;
   deliveredAt?: Date;
   settlementError?: string;
+  settlementDkpApplied: boolean;
   createdAt: Date;
 }
 
@@ -67,6 +68,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   deliveredBy: { type: String },
   deliveredAt: { type: Date },
   settlementError: { type: String },
+  settlementDkpApplied: { type: Boolean, default: false, required: true },
 }, { timestamps: { createdAt: true, updatedAt: true } });
 
 AuctionSchema.index({ status: 1, endsAt: 1 });
