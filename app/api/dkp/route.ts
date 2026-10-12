@@ -4,7 +4,6 @@ import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
 import User from '@/lib/models/User';
-import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 
 const BOSS_POINTS: Record<string, number> = {
   Base: 1,
@@ -37,13 +36,12 @@ export async function GET() {
         .lean(),
     ]);
     const roster = rosterSnapshot.roster;
-    const rosterWithCycleEarnings = await getRosterWithWeeklyEarned(roster);
-    const recordsByRow = new Map(rosterWithCycleEarnings.map((record) => [record.rowIndex, record]));
+    const recordsByRow = new Map(roster.map((record) => [record.rowIndex, record]));
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
     const clanMembers = activeUsers.map((member) => ({
       nickname: member.nickname,
       role: member.role,
-      toons: getLinkedSheetRecordRows(member, rosterWithCycleEarnings)
+      toons: getLinkedSheetRecordRows(member, roster)
         .flatMap((rowIndex) => {
           const record = recordsByRow.get(rowIndex);
           return record ? [record] : [];
@@ -51,7 +49,7 @@ export async function GET() {
     }));
     return NextResponse.json({
       success: true,
-      roster: rosterWithCycleEarnings,
+      roster,
       rosterSync: {
         fetchedAt: rosterSnapshot.fetchedAt.toISOString(),
         stale: rosterSnapshot.stale,
@@ -113,7 +111,7 @@ export async function POST(req: Request) {
         points,
         owner,
         account,
-      })));
+      })), { mode: 'weekly-earned' });
     } catch (error: unknown) {
       award.status = 'failed';
       award.failureReason = error instanceof Error ? error.message : 'Unable to apply award to Google Sheets';
