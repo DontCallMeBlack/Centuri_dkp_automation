@@ -4,6 +4,7 @@ import BossAward, { type IBossAwardParticipant } from '@/lib/models/BossAward';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster } from '@/lib/googleSheets';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
+import { getPreviousDkpWeekRange } from '@/lib/dkpCycle';
 
 function isRosterRowArray(value: unknown): value is number[] {
   return Array.isArray(value) &&
@@ -125,7 +126,10 @@ export async function PATCH(req: Request) {
       ];
 
       if (adjustments.length > 0) {
-        await adjustPlayersDKP(adjustments);
+        const currentWeekStart = getPreviousDkpWeekRange().end;
+        await adjustPlayersDKP(adjustments, {
+          mode: award.createdAt >= currentWeekStart ? 'weekly-earned' : 'balance',
+        });
         sheetChangesApplied = true;
       }
 
@@ -205,7 +209,10 @@ export async function DELETE(req: Request) {
       }));
 
       if (adjustments.length > 0) {
-        await adjustPlayersDKP(adjustments);
+        const currentWeekStart = getPreviousDkpWeekRange().end;
+        await adjustPlayersDKP(adjustments, {
+          mode: award.createdAt >= currentWeekStart ? 'weekly-earned' : 'balance',
+        });
         sheetChangesApplied = true;
       }
 

@@ -8,6 +8,7 @@ export interface WeeklyRosterRecord {
   account: string;
 }
 
+/** Calculates completed-week DKP for auction activity and eligibility. */
 export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(roster: T[]) {
   const { start, end } = getPreviousDkpWeekRange();
   const weeklyAwards = await BossAward.find({

@@ -289,10 +289,14 @@ export async function adjustPlayersDKP(
     owner?: string;
     account?: string;
   }>,
-  options: { reservedPointsToConsume?: Map<number, number> } = {},
+  options: {
+    reservedPointsToConsume?: Map<number, number>;
+    mode?: 'balance' | 'weekly-earned' | 'auction-spend';
+  } = {},
 ) {
   if (adjustments.length === 0) return;
 
+  const mode = options.mode ?? 'balance';
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = getSpreadsheetId();
   const response = await withGoogleSheetsRetry(
@@ -303,7 +307,7 @@ export async function adjustPlayersDKP(
     true,
   );
   const rows = response.data.values ?? [];
-  const holds = await AuctionHold.find({
+  const holds = mode === 'weekly-earned' ? [] : await AuctionHold.find({
     rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
   }).select('rowIndex heldPoints').lean();
   const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
@@ -336,7 +340,7 @@ export async function adjustPlayersDKP(
       return parsed;
     };
 
-    if (points < 0) {
+    if (points < 0 && mode !== 'weekly-earned') {
       const heldPoints = holdsByRow.get(rowIndex) ?? 0;
       const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
       if (
@@ -348,8 +352,18 @@ export async function adjustPlayersDKP(
       }
     }
 
+    if (mode === 'weekly-earned') {
+      return [{ range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] }];
+    }
+    if (mode === 'auction-spend') {
+      if (points > 0) throw new Error('Auction spending adjustments must not add DKP.');
+      return [
+        { range: `${SHEET_NAME}!E${rowIndex}`, values: [[readValue(4, 'E') - points]] },
+        { range: `${SHEET_NAME}!G${rowIndex}`, values: [[readValue(6, 'G') - points]] },
+        { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
+      ];
+    }
     return [
-      { range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] },
       { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(5, 'F') + points]] },
       { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
     ];
@@ -373,5 +387,5 @@ export async function adjustPlayersDKP(
 }
 
 export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {
-  await adjustPlayersDKP([{ rowIndex, points: pointsToAdd }]);
+  await adjustPlayersDKP([{ rowIndex, points: pointsToAdd }], { mode: 'weekly-earned' });
 }

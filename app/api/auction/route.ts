@@ -78,7 +78,10 @@ async function settleExpiredAuctions() {
             owner: winningBid.owner,
             account: winningBid.account,
           }],
-          { reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]) },
+          {
+            reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]),
+            mode: 'auction-spend',
+          },
         );
         dkpDeductionCompleted = true;
         const markedApplied = await Auction.updateOne(
