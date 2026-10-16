@@ -2,20 +2,63 @@ const DKP_TIME_ZONE = 'America/New_York';
 
 export interface WeeklyDkpRosterRow {
   rowIndex: number;
+  owner: string;
+  account: string;
   weeklyEarned: number;
   earned: number;
   available: number;
+  fiveWeekActivity: number;
 }
 
-export function buildWeeklyDkpResetUpdates(roster: WeeklyDkpRosterRow[], sheetName: string) {
-  return roster.flatMap((record) => [
-    { range: `${sheetName}!D${record.rowIndex}`, values: [[0]] },
-    { range: `${sheetName}!E${record.rowIndex}`, values: [[0]] },
-    ...(record.weeklyEarned === 0 ? [] : [
-      { range: `${sheetName}!F${record.rowIndex}`, values: [[record.earned + record.weeklyEarned]] },
-      { range: `${sheetName}!H${record.rowIndex}`, values: [[record.available + record.weeklyEarned]] },
-    ]),
-  ]);
+export interface WeeklyDkpActivityHistory {
+  rowIndex: number;
+  owner: string;
+  account: string;
+  weeks: number[];
+}
+
+function identityKey(record: { owner: string; account: string }) {
+  return JSON.stringify([record.owner.trim().toLowerCase(), record.account.trim().toLowerCase()]);
+}
+
+export function buildWeeklyDkpResetPlan(
+  roster: WeeklyDkpRosterRow[],
+  sheetName: string,
+  previousHistory: WeeklyDkpActivityHistory[] = [],
+) {
+  const nextHistory = roster.map((record) => {
+    const matches = previousHistory.filter((entry) => identityKey(entry) === identityKey(record));
+    const prior = matches.find((entry) => entry.rowIndex === record.rowIndex)
+      ?? (matches.length === 1 ? matches[0] : undefined);
+    // If I already had a value before history tracking was introduced, keep it
+    // as one legacy bucket. It will age out after five Sunday rollovers.
+    const existingWeeks = prior?.weeks ?? (record.fiveWeekActivity === 0 ? [] : [record.fiveWeekActivity]);
+    const weeks = [...existingWeeks, record.weeklyEarned].slice(-5);
+    return { rowIndex: record.rowIndex, owner: record.owner, account: record.account, weeks };
+  });
+  const historyByRow = new Map(nextHistory.map((entry) => [entry.rowIndex, entry]));
+  const updates = roster.flatMap((record) => {
+    const history = historyByRow.get(record.rowIndex)!;
+    return [
+      { range: `${sheetName}!D${record.rowIndex}`, values: [[0]] },
+      { range: `${sheetName}!E${record.rowIndex}`, values: [[0]] },
+      ...(record.weeklyEarned === 0 ? [] : [
+        { range: `${sheetName}!F${record.rowIndex}`, values: [[record.earned + record.weeklyEarned]] },
+        { range: `${sheetName}!H${record.rowIndex}`, values: [[record.available + record.weeklyEarned]] },
+      ]),
+      { range: `${sheetName}!I${record.rowIndex}`, values: [[history.weeks.reduce((sum, points) => sum + points, 0)]] },
+    ];
+  });
+  return { updates, weeklyActivityHistory: nextHistory };
+}
+
+export function initializeWeeklyDkpActivityHistory(roster: WeeklyDkpRosterRow[]): WeeklyDkpActivityHistory[] {
+  return roster.map((record) => ({
+    rowIndex: record.rowIndex,
+    owner: record.owner,
+    account: record.account,
+    weeks: record.fiveWeekActivity === 0 ? [] : [record.fiveWeekActivity],
+  }));
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {

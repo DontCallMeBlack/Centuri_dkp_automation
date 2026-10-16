@@ -5,7 +5,11 @@ import AuctionHold from '@/lib/models/AuctionHold';
 import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
 import dbConnect from '@/lib/mongodb';
-import { buildWeeklyDkpResetUpdates, getCurrentDkpWeekStart } from '@/lib/dkpCycle';
+import {
+  buildWeeklyDkpResetPlan,
+  getCurrentDkpWeekStart,
+  initializeWeeklyDkpActivityHistory,
+} from '@/lib/dkpCycle';
 import { buildDkpAdjustmentUpdates } from '@/lib/dkpAccounting';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
@@ -89,11 +93,12 @@ async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
   const sheets = google.sheets({ version: 'v4', auth });
   const spreadsheetId = getSpreadsheetId();
 
-  // Owner (A), Account (B), Sub class (C), Earned (D), Spent (E), Earned (F), Spent (G), Available (H)
+  // Owner (A), Account (B), Sub class (C), weekly earned/spent (D/E),
+  // lifetime earned/spent/available (F/G/H), and five-week activity (I).
   const response = await withGoogleSheetsRetry(
     () => sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${SHEET_NAME}!A3:H1000`,
+      range: `${SHEET_NAME}!A3:I1000`,
     }),
     true,
   );
@@ -111,6 +116,7 @@ async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
     earned: readDkpValue(row[5]),
     spent: readDkpValue(row[6]),
     available: readDkpValue(row[7]),
+    fiveWeekActivity: readDkpValue(row[8]),
   })).filter(r => r.owner); // Filter out empty rows
 }
 
@@ -230,6 +236,9 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
             weeklyResetFor: pending.cycleStart,
             fetchedAt: new Date(0),
             refreshLockUntil: new Date(0),
+            ...(pending.weeklyActivityHistory
+              ? { weeklyActivityHistory: pending.weeklyActivityHistory }
+              : {}),
           },
           $inc: { generation: 1 },
           $unset: { weeklyResetPending: 1 },
@@ -251,22 +260,38 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
     // On first activation, keep the current week's points in Weekly Earned.
     // The first transfer happens at the next Sunday boundary.
     if (!cache.weeklyResetFor) {
+      const roster = await fetchSheetRoster();
+      const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
       const initialized = await SheetRosterCache.updateOne(
         { cacheKey, weeklyResetLockId: lockId, weeklyResetFor: { $exists: false } },
-        { $set: { weeklyResetFor: currentWeekStart } },
+        {
+          $set: {
+            weeklyResetFor: currentWeekStart,
+            weeklyActivityHistory: cache.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster),
+          },
+        },
       );
       if (initialized.matchedCount === 0) continue;
       return;
     }
 
     const roster = await fetchSheetRoster();
-    const updates = buildWeeklyDkpResetUpdates(roster, SHEET_NAME);
+    const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
+    const resetPlan = buildWeeklyDkpResetPlan(
+      activityRoster,
+      SHEET_NAME,
+      cache.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster),
+    );
 
     const planned = await SheetRosterCache.updateOne(
       { cacheKey, weeklyResetLockId: lockId },
       {
         $set: {
-          weeklyResetPending: { cycleStart: currentWeekStart, updates },
+          weeklyResetPending: {
+            cycleStart: currentWeekStart,
+            updates: resetPlan.updates,
+            weeklyActivityHistory: resetPlan.weeklyActivityHistory,
+          },
         },
       },
     );

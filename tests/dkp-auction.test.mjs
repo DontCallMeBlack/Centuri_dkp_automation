@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildWeeklyDkpResetUpdates,
+  buildWeeklyDkpResetPlan,
+  initializeWeeklyDkpActivityHistory,
   getCurrentDkpWeekStart,
   getPreviousDkpWeekRange,
 } from '../lib/dkpCycle.ts';
@@ -53,42 +54,78 @@ test('previous completed weekly activity range', async (t) => {
   }
 });
 
-test('weekly rollover clears earned and spent, and carries weekly earned into lifetime totals', async (t) => {
+test('weekly rollover clears weekly totals, carries earned forward, and writes five-week activity', async (t) => {
   const cases = [
-    ['positive weekly points', { rowIndex: 3, weeklyEarned: 12, earned: 100, available: 40 }, [
-      [`${SHEET}!D3`, 0], [`${SHEET}!E3`, 0], [`${SHEET}!F3`, 112], [`${SHEET}!H3`, 52],
+    ['positive weekly points', { rowIndex: 3, owner: 'Ada', account: 'Main', weeklyEarned: 12, earned: 100, available: 40, fiveWeekActivity: 0 }, [
+      [`${SHEET}!D3`, 0], [`${SHEET}!E3`, 0], [`${SHEET}!F3`, 112], [`${SHEET}!H3`, 52], [`${SHEET}!I3`, 12],
     ]],
-    ['zero weekly points', { rowIndex: 4, weeklyEarned: 0, earned: 15, available: 7 }, [
-      [`${SHEET}!D4`, 0], [`${SHEET}!E4`, 0],
+    ['zero weekly points', { rowIndex: 4, owner: 'Ada', account: 'Alt', weeklyEarned: 0, earned: 15, available: 7, fiveWeekActivity: 0 }, [
+      [`${SHEET}!D4`, 0], [`${SHEET}!E4`, 0], [`${SHEET}!I4`, 0],
     ]],
-    ['fractional values', { rowIndex: 5, weeklyEarned: 2.5, earned: 4.25, available: 3.5 }, [
-      [`${SHEET}!D5`, 0], [`${SHEET}!E5`, 0], [`${SHEET}!F5`, 6.75], [`${SHEET}!H5`, 6],
+    ['fractional values', { rowIndex: 5, owner: 'Bea', account: 'Main', weeklyEarned: 2.5, earned: 4.25, available: 3.5, fiveWeekActivity: 0 }, [
+      [`${SHEET}!D5`, 0], [`${SHEET}!E5`, 0], [`${SHEET}!F5`, 6.75], [`${SHEET}!H5`, 6], [`${SHEET}!I5`, 2.5],
     ]],
-    ['negative correction carries through', { rowIndex: 6, weeklyEarned: -3, earned: 20, available: 9 }, [
-      [`${SHEET}!D6`, 0], [`${SHEET}!E6`, 0], [`${SHEET}!F6`, 17], [`${SHEET}!H6`, 6],
+    ['negative correction carries through', { rowIndex: 6, owner: 'Cal', account: 'Main', weeklyEarned: -3, earned: 20, available: 9, fiveWeekActivity: 0 }, [
+      [`${SHEET}!D6`, 0], [`${SHEET}!E6`, 0], [`${SHEET}!F6`, 17], [`${SHEET}!H6`, 6], [`${SHEET}!I6`, -3],
     ]],
-    ['large weekly spent still only clears E', { rowIndex: 7, weeklyEarned: 1, earned: 500, available: 499 }, [
-      [`${SHEET}!D7`, 0], [`${SHEET}!E7`, 0], [`${SHEET}!F7`, 501], [`${SHEET}!H7`, 500],
+    ['large weekly spent still only clears E', { rowIndex: 7, owner: 'Dee', account: 'Main', weeklyEarned: 1, earned: 500, available: 499, fiveWeekActivity: 0 }, [
+      [`${SHEET}!D7`, 0], [`${SHEET}!E7`, 0], [`${SHEET}!F7`, 501], [`${SHEET}!H7`, 500], [`${SHEET}!I7`, 1],
     ]],
   ];
   for (const [label, row, expected] of cases) {
     await t.test(label, () => {
-      const updates = buildWeeklyDkpResetUpdates([row], SHEET);
+      const updates = buildWeeklyDkpResetPlan([row], SHEET).updates;
       assert.deepEqual(updates.map(({ range, values }) => [range, values[0][0]]), expected);
     });
   }
   await t.test('multiple roster rows do not share ranges or values', () => {
-    const updates = buildWeeklyDkpResetUpdates([
-      { rowIndex: 3, weeklyEarned: 5, earned: 10, available: 6 },
-      { rowIndex: 10, weeklyEarned: 0, earned: 20, available: 4 },
-    ], SHEET);
+    const updates = buildWeeklyDkpResetPlan([
+      { rowIndex: 3, owner: 'Ada', account: 'Main', weeklyEarned: 5, earned: 10, available: 6, fiveWeekActivity: 0 },
+      { rowIndex: 10, owner: 'Bea', account: 'Main', weeklyEarned: 0, earned: 20, available: 4, fiveWeekActivity: 0 },
+    ], SHEET).updates;
     assert.deepEqual(updates.map((update) => update.range), [
-      `${SHEET}!D3`, `${SHEET}!E3`, `${SHEET}!F3`, `${SHEET}!H3`, `${SHEET}!D10`, `${SHEET}!E10`,
+      `${SHEET}!D3`, `${SHEET}!E3`, `${SHEET}!F3`, `${SHEET}!H3`, `${SHEET}!I3`, `${SHEET}!D10`, `${SHEET}!E10`, `${SHEET}!I10`,
     ]);
   });
   await t.test('empty roster yields no writes', () => {
-    assert.deepEqual(buildWeeklyDkpResetUpdates([], SHEET), []);
+    assert.deepEqual(buildWeeklyDkpResetPlan([], SHEET).updates, []);
   });
+});
+
+test('five-week activity drops the oldest completed week on each rollover', () => {
+  const weeklyEarned = [2, 3, 4, 5, 6, 7, 8];
+  let history = [];
+  const totals = [];
+  for (const [index, points] of weeklyEarned.entries()) {
+    const plan = buildWeeklyDkpResetPlan([{
+      rowIndex: 3, owner: 'Ada', account: 'Main', weeklyEarned: points,
+      earned: 0, available: 0, fiveWeekActivity: 0,
+    }], SHEET, history);
+    history = plan.weeklyActivityHistory;
+    totals.push(plan.updates.find((update) => update.range === `${SHEET}!I3`).values[0][0]);
+    assert.equal(history[0].weeks.length, Math.min(index + 1, 5));
+  }
+  assert.deepEqual(totals, [2, 5, 9, 14, 20, 25, 30]);
+});
+
+test('five-week activity preserves a preexisting sheet total as a legacy bucket', () => {
+  const rows = [{
+    rowIndex: 3, owner: 'Ada', account: 'Main', weeklyEarned: 4,
+    earned: 100, available: 20, fiveWeekActivity: 25,
+  }];
+  const initialHistory = initializeWeeklyDkpActivityHistory(rows);
+  const plan = buildWeeklyDkpResetPlan(rows, SHEET, initialHistory);
+  assert.deepEqual(plan.weeklyActivityHistory[0].weeks, [25, 4]);
+  assert.equal(plan.updates.find((update) => update.range === `${SHEET}!I3`).values[0][0], 29);
+});
+
+test('five-week history follows a toon when its sheet row moves', () => {
+  const plan = buildWeeklyDkpResetPlan([{
+    rowIndex: 8, owner: 'ADA', account: 'main', weeklyEarned: 7,
+    earned: 0, available: 0, fiveWeekActivity: 10,
+  }], SHEET, [{ rowIndex: 3, owner: 'Ada', account: 'Main', weeks: [4, 6] }]);
+  assert.deepEqual(plan.weeklyActivityHistory[0].weeks, [4, 6, 7]);
+  assert.equal(plan.updates.find((update) => update.range === `${SHEET}!I8`).values[0][0], 17);
 });
 
 test('auction settlement retry and review rules', async (t) => {
