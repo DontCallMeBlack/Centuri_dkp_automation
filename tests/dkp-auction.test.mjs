@@ -10,6 +10,10 @@ import {
   isSettlementLeaseExpired,
   needsSettlementManualReview,
 } from '../lib/auctionSettlement.ts';
+import { buildDkpAdjustmentUpdates, canAffordBid } from '../lib/dkpAccounting.ts';
+import { addWeeklyEarnedFromAwards } from '../lib/weeklyDkpEarned.ts';
+import { getLinkedSheetRecordRows } from '../lib/sheetRecordLinks.ts';
+import { BOSS_DKP_POINTS, isRosterRowArray } from '../lib/bossDkp.ts';
 
 const SHEET = "'DKP_Sheet_automated'";
 
@@ -122,4 +126,152 @@ test('auction settlement retry and review rules', async (t) => {
   await t.test('different auctions receive independent mutation keys', () => {
     assert.notEqual(getAuctionSettlementMutationKey('auction-123'), getAuctionSettlementMutationKey('auction-456'));
   });
+});
+
+test('DKP grant, adjustment, and auction-spend accounting', async (t) => {
+  const sheet = (column, row) => `${SHEET}!${column}${row}`;
+  const rosterRow = ['Ada', 'Account 1', 'Druid', '4', '6', '100', '30', '94'];
+  const cases = [
+    ['weekly award increments D only', { points: 5, mode: 'weekly-earned' }, [[sheet('D', 3), 9]]],
+    ['weekly award correction may subtract earned points', { points: -2, mode: 'weekly-earned' }, [[sheet('D', 3), 2]]],
+    ['lifetime balance grant increments F and H', { points: 10, mode: 'balance' }, [[sheet('F', 3), 110], [sheet('H', 3), 104]]],
+    ['lifetime balance reversal decrements F and H', { points: -10, mode: 'balance' }, [[sheet('F', 3), 90], [sheet('H', 3), 84]]],
+    ['auction spend increments E and G, decrements H', { points: -20, mode: 'auction-spend' }, [[sheet('E', 3), 26], [sheet('G', 3), 50], [sheet('H', 3), 74]]],
+    ['empty cells and dash values count as zero', { row: ['Ada', 'A', 'Druid', '-', '', '-', '-', '-'], points: 2, mode: 'weekly-earned' }, [[sheet('D', 3), 2]]],
+    ['comma formatted cells parse as numbers', { row: ['Ada', 'A', 'Druid', '1,000', '2,000', '3,000', '4,000', '5,000'], points: -5, mode: 'auction-spend' }, [[sheet('E', 3), 2005], [sheet('G', 3), 4005], [sheet('H', 3), 4995]]],
+  ];
+  for (const [label, input, expected] of cases) {
+    await t.test(label, () => {
+      const updates = buildDkpAdjustmentUpdates({
+        rowIndex: 3,
+        row: input.row ?? rosterRow,
+        points: input.points,
+        mode: input.mode,
+        sheetName: SHEET,
+      });
+      assert.deepEqual(updates.map((update) => [update.range, update.values[0][0]]), expected);
+    });
+  }
+
+  const errorCases = [
+    ['reject row below data range', { rowIndex: 2, points: 1, row: rosterRow, mode: 'balance' }, /Invalid Google Sheets roster row/],
+    ['reject row beyond data range', { rowIndex: 1001, points: 1, row: rosterRow, mode: 'balance' }, /Invalid Google Sheets roster row/],
+    ['reject fractional row index', { rowIndex: 3.5, points: 1, row: rosterRow, mode: 'balance' }, /Invalid Google Sheets roster row/],
+    ['reject NaN adjustment', { rowIndex: 3, points: Number.NaN, row: rosterRow, mode: 'balance' }, /finite number/],
+    ['reject missing roster record', { rowIndex: 3, points: 1, row: undefined, mode: 'balance' }, /could not be read/],
+    ['reject owner changed since bid', { rowIndex: 3, points: -2, row: rosterRow, owner: 'Someone Else', mode: 'auction-spend' }, /roster row 3 changed/],
+    ['reject account changed since bid', { rowIndex: 3, points: -2, row: rosterRow, account: 'Other Account', mode: 'auction-spend' }, /roster row 3 changed/],
+    ['reject nonnumeric target cell', { rowIndex: 3, points: 1, row: ['Ada', 'A', 'Druid', 'bad'], mode: 'weekly-earned' }, /D3 is not numeric/],
+    ['reject positive auction spend', { rowIndex: 3, points: 1, row: rosterRow, mode: 'auction-spend' }, /must not add DKP/],
+    ['reject spend below total holds', { rowIndex: 3, points: -90, row: rosterRow, mode: 'balance', heldPoints: 10 }, /below its 10 held auction points/],
+    ['reject spending a hold that does not exist', { rowIndex: 3, points: -1, row: rosterRow, mode: 'balance', heldPoints: 0, reservedPointsToConsume: 1 }, /below its 0 held auction points/],
+    ['reject negative reservation release', { rowIndex: 3, points: -1, row: rosterRow, mode: 'balance', heldPoints: 10, reservedPointsToConsume: -1 }, /below its 10 held auction points/],
+    ['reject release larger than hold', { rowIndex: 3, points: -1, row: rosterRow, mode: 'balance', heldPoints: 10, reservedPointsToConsume: 11 }, /below its 10 held auction points/],
+    ['allow balance reduction exactly to remaining holds', { rowIndex: 3, points: -84, row: rosterRow, mode: 'balance', heldPoints: 10 }, null],
+    ['allow auction settlement to consume its reservation', { rowIndex: 3, points: -94, row: rosterRow, mode: 'auction-spend', heldPoints: 94, reservedPointsToConsume: 94 }, null],
+  ];
+  for (const [label, input, expectedError] of errorCases) {
+    await t.test(label, () => {
+      const run = () => buildDkpAdjustmentUpdates({ ...input, sheetName: SHEET });
+      if (expectedError) assert.throws(run, expectedError);
+      else assert.doesNotThrow(run);
+    });
+  }
+});
+
+test('bid affordability respects available DKP and reservations', async (t) => {
+  const cases = [
+    ['zero balance cannot make positive bid', 1, 0, 0, false],
+    ['zero balance cannot bid zero', 0, 0, 0, false],
+    ['balance covers exact bid', 25, 0, 25, true],
+    ['one point below bid is rejected', 25, 0, 24, false],
+    ['reservations reduce unspent amount', 10, 10, 19, false],
+    ['bid fits after other holds', 10, 10, 20, true],
+    ['no held points leaves full balance', 10, 0, 10, true],
+    ['negative holds are rejected', 10, -1, 10, false],
+    ['negative available is rejected', 1, 0, -1, false],
+    ['fractional bid is rejected', 1.5, 0, 5, false],
+    ['unsafe integer bid is rejected', Number.MAX_SAFE_INTEGER + 1, 0, Infinity, false],
+  ];
+  for (const [label, amount, held, available, expected] of cases) {
+    await t.test(label, () => assert.equal(canAffordBid(amount, held, available), expected));
+  }
+});
+
+test('weekly earned totals map awards to the correct roster entries', async (t) => {
+  const roster = [
+    { rowIndex: 3, owner: 'Ada', account: 'Main' },
+    { rowIndex: 4, owner: 'Ada', account: 'Alt' },
+    { rowIndex: 5, owner: 'Bea', account: 'Main' },
+  ];
+  const cases = [
+    ['adds multiple awards for one toon', [{ points: 2, participants: [roster[0]] }, { points: 5, participants: [roster[0]] }], [7, 0, 0]],
+    ['keeps alt accounts separate', [{ points: 3, participants: [{ owner: 'ada', account: 'ALT' }] }], [0, 3, 0]],
+    ['stale participant row resolves by unique account identity', [{ points: 4, participants: [{ ...roster[0], rowIndex: 99 }] }], [4, 0, 0]],
+    ['ignores ambiguous legacy identity without row', [{ points: 4, participants: [{ owner: 'Ada', account: 'Main' }] }], [4, 0, 0]],
+    ['ignores award for removed record', [{ points: 4, participants: [{ owner: 'Gone', account: 'Old' }] }], [0, 0, 0]],
+    ['negative reversal reduces weekly total', [{ points: 5, participants: [roster[2]] }, { points: -2, participants: [roster[2]] }], [0, 0, 3]],
+    ['empty award list adds zero to all toons', [], [0, 0, 0]],
+  ];
+  for (const [label, awards, expected] of cases) {
+    await t.test(label, () => {
+      assert.deepEqual(addWeeklyEarnedFromAwards(roster, awards).map((record) => record.weeklyEarned), expected);
+    });
+  }
+});
+
+test('account links only resolve to matching roster records', async (t) => {
+  const roster = [
+    { rowIndex: 3, owner: 'Ada', account: 'Main' },
+    { rowIndex: 4, owner: 'Ada', account: 'Alt' },
+    { rowIndex: 5, owner: 'Bea', account: 'Main' },
+  ];
+  const cases = [
+    ['exact account link', { sheetRecords: [{ rowIndex: 3, owner: 'Ada', account: 'Main' }] }, [3]],
+    ['case and whitespace normalized', { sheetRecords: [{ rowIndex: 3, owner: ' ada ', account: ' MAIN ' }] }, [3]],
+    ['stale row falls back to identity', { sheetRecords: [{ rowIndex: 99, owner: 'Ada', account: 'Alt' }] }, [4]],
+    ['row reused by another account does not link', { sheetRecords: [{ rowIndex: 3, owner: 'Ada', account: 'Alt' }] }, [4]],
+    ['legacy owner link includes all matching accounts', { sheetRecordName: 'ADA' }, [3, 4]],
+    ['unknown link resolves to no rows', { sheetRecords: [{ rowIndex: 8, owner: 'Gone', account: 'Old' }] }, []],
+    ['empty legacy link resolves to no rows', { sheetRecordName: '' }, []],
+  ];
+  for (const [label, user, expected] of cases) {
+    await t.test(label, () => assert.deepEqual(getLinkedSheetRecordRows(user, roster), expected));
+  }
+});
+
+test('boss DKP awards validate boss values and roster row selections', async (t) => {
+  const bossCases = [
+    ['Base', 1], ['Prime', 2], ['Bt', 5], ['Gele', 6], ['Dino', 7], ['Crom', 12],
+  ];
+  for (const [boss, points] of bossCases) {
+    await t.test(`${boss} award is ${points} DKP`, () => assert.equal(BOSS_DKP_POINTS[boss], points));
+  }
+
+  const rowCases = [
+    ['one valid row', [3], false, true],
+    ['several distinct rows', [3, 8, 99], false, true],
+    ['empty selection rejected for an award', [], false, false],
+    ['empty selection accepted for history edits', [], true, true],
+    ['duplicate row rejected', [3, 3], false, false],
+    ['fractional row rejected', [3, 3.5], false, false],
+    ['string row rejected', ['3'], false, false],
+    ['null selection rejected', null, true, false],
+    ['object selection rejected', { row: 3 }, false, false],
+  ];
+  for (const [label, value, allowEmpty, expected] of rowCases) {
+    await t.test(label, () => assert.equal(isRosterRowArray(value, allowEmpty), expected));
+  }
+});
+
+test('weekly award identity disambiguates duplicate roster identities by row', () => {
+  const duplicateRoster = [
+    { rowIndex: 3, owner: 'Ada', account: 'Main' },
+    { rowIndex: 4, owner: 'Ada', account: 'Main' },
+  ];
+  const result = addWeeklyEarnedFromAwards(duplicateRoster, [{
+    points: 6,
+    participants: [{ rowIndex: 4, owner: 'Ada', account: 'Main' }],
+  }]);
+  assert.deepEqual(result.map((record) => record.weeklyEarned), [0, 6]);
 });

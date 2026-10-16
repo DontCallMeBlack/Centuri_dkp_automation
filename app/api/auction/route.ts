@@ -9,6 +9,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { getAuctionSettlementMutationKey, needsSettlementManualReview } from '@/lib/auctionSettlement';
+import { canAffordBid } from '@/lib/dkpAccounting';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import {
   AUCTION_ANTI_SNIPE_MS,
@@ -749,7 +750,7 @@ export async function POST(req: Request) {
             if (!holdToon) throw new Error('A toon with a reserved bid is no longer on the roster.');
             const nextHeldPoints = hold.heldPoints + delta;
             if (nextHeldPoints < 0) throw new Error('Auction point reservation is inconsistent; contact a clan manager.');
-            if (nextHeldPoints > holdToon.available) {
+            if (!canAffordBid(nextHeldPoints, 0, holdToon.available)) {
               throw new Error('This toon does not have enough unreserved DKP for that bid.');
             }
             hold.heldPoints = nextHeldPoints;

@@ -4,24 +4,8 @@ import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
 import User from '@/lib/models/User';
+import { BOSS_DKP_POINTS, isRosterRowArray } from '@/lib/bossDkp';
 
-const BOSS_POINTS: Record<string, number> = {
-  Base: 1,
-  Prime: 2,
-  Bt: 5,
-  Gele: 6,
-  Dino: 7,
-  Crom: 12,
-};
-
-function isRosterRowArray(value: unknown, allowEmpty = false): value is number[] {
-  return Array.isArray(value) &&
-    (allowEmpty || value.length > 0) &&
-    value.every((rowIndex): rowIndex is number =>
-      typeof rowIndex === 'number' && Number.isInteger(rowIndex)
-    ) &&
-    new Set(value).size === value.length;
-}
 
 export async function GET() {
   const user = await getSessionUser();
@@ -81,7 +65,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid boss award request' }, { status: 400 });
     }
     const { bossName, selectedRows } = body as { bossName?: unknown; selectedRows?: unknown };
-    if (typeof bossName !== 'string' || !Object.prototype.hasOwnProperty.call(BOSS_POINTS, bossName)) {
+    if (typeof bossName !== 'string' || !Object.prototype.hasOwnProperty.call(BOSS_DKP_POINTS, bossName)) {
       return NextResponse.json({ error: 'Invalid boss selection' }, { status: 400 });
     }
     if (!isRosterRowArray(selectedRows)) {
@@ -96,7 +80,7 @@ export async function POST(req: Request) {
     }
 
     const validParticipants = participants.filter((record) => record !== undefined);
-    const points = BOSS_POINTS[bossName];
+    const points = BOSS_DKP_POINTS[bossName];
     const award = await BossAward.create({
       bossName,
       points,
