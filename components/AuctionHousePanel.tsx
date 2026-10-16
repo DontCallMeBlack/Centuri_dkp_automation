@@ -914,7 +914,6 @@ export default function AuctionHousePanel() {
                 </div>
               )}
             </div>
-            <p className="self-center text-xs text-slate-500">The saved item’s allowed roles and boss type are used automatically for the auction.</p>
             <button
               type="submit"
               disabled={saving || !selectedCatalogItem || !selectedItemRoleIsValid}
