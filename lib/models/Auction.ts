@@ -29,6 +29,9 @@ export interface IAuction extends Document {
   deliveredAt?: Date;
   settlementError?: string;
   settlementDkpApplied: boolean;
+  settlementAttemptId?: string;
+  settlementLeaseUntil?: Date;
+  settlementNeedsReview?: boolean;
   createdAt: Date;
 }
 
@@ -71,6 +74,9 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   deliveredAt: { type: Date },
   settlementError: { type: String },
   settlementDkpApplied: { type: Boolean, default: false, required: true },
+  settlementAttemptId: { type: String },
+  settlementLeaseUntil: { type: Date },
+  settlementNeedsReview: { type: Boolean, default: false },
 }, { timestamps: { createdAt: true, updatedAt: true } });
 
 AuctionSchema.index({ status: 1, endsAt: 1 });

@@ -1,5 +1,23 @@
 const DKP_TIME_ZONE = 'America/New_York';
 
+export interface WeeklyDkpRosterRow {
+  rowIndex: number;
+  weeklyEarned: number;
+  earned: number;
+  available: number;
+}
+
+export function buildWeeklyDkpResetUpdates(roster: WeeklyDkpRosterRow[], sheetName: string) {
+  return roster.flatMap((record) => [
+    { range: `${sheetName}!D${record.rowIndex}`, values: [[0]] },
+    { range: `${sheetName}!E${record.rowIndex}`, values: [[0]] },
+    ...(record.weeklyEarned === 0 ? [] : [
+      { range: `${sheetName}!F${record.rowIndex}`, values: [[record.earned + record.weeklyEarned]] },
+      { range: `${sheetName}!H${record.rowIndex}`, values: [[record.available + record.weeklyEarned]] },
+    ]),
+  ]);
+}
+
 const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: DKP_TIME_ZONE,
   year: 'numeric',
@@ -80,4 +98,26 @@ export function getPreviousDkpWeekRange(now = new Date()) {
       currentWeekStartLocalDate.getUTCDate(),
     ),
   };
+}
+
+export function getCurrentDkpWeekStart(now = new Date()) {
+  const localParts = getZonedParts(now);
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: DKP_TIME_ZONE,
+    weekday: 'short',
+  }).format(now);
+  const weekdayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(weekday);
+  if (weekdayIndex < 0) throw new Error('Unable to determine weekday for DKP activity period');
+
+  const currentWeekStartLocalDate = new Date(Date.UTC(
+    localParts.year,
+    localParts.month - 1,
+    localParts.day - weekdayIndex,
+  ));
+
+  return zonedMidnightToUtc(
+    currentWeekStartLocalDate.getUTCFullYear(),
+    currentWeekStartLocalDate.getUTCMonth() + 1,
+    currentWeekStartLocalDate.getUTCDate(),
+  );
 }

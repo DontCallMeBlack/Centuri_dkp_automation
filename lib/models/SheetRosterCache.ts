@@ -19,6 +19,13 @@ export interface ISheetRosterCache extends mongoose.Document {
   refreshLockUntil: Date;
   generation: number;
   lastRefreshError?: string;
+  weeklyResetFor?: Date;
+  weeklyResetLockUntil: Date;
+  weeklyResetLockId?: string;
+  weeklyResetPending?: {
+    cycleStart: Date;
+    updates: Array<{ range: string; values: number[][] }>;
+  };
 }
 
 const SheetRosterRecordSchema = new Schema<ISheetRosterRecord>({
@@ -40,6 +47,10 @@ const SheetRosterCacheSchema: Schema<ISheetRosterCache> = new Schema({
   refreshLockUntil: { type: Date, required: true, default: () => new Date(0) },
   generation: { type: Number, required: true, default: 0 },
   lastRefreshError: { type: String },
+  weeklyResetFor: { type: Date },
+  weeklyResetLockUntil: { type: Date, required: true, default: () => new Date(0) },
+  weeklyResetLockId: { type: String },
+  weeklyResetPending: { type: Schema.Types.Mixed },
 }, { timestamps: true });
 
 const SheetRosterCache: Model<ISheetRosterCache> = mongoose.models.SheetRosterCache
