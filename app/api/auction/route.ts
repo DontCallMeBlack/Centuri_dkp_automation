@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 import Auction, { type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
@@ -7,6 +8,7 @@ import User from '@/lib/models/User';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
+import { getAuctionSettlementMutationKey, needsSettlementManualReview } from '@/lib/auctionSettlement';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import {
   AUCTION_ANTI_SNIPE_MS,
@@ -36,33 +38,44 @@ function serializeBid(bid: IAuctionBid | undefined, currentUserId: mongoose.Type
 
 async function settleExpiredAuctions() {
   const now = new Date();
+  const recoverable: Record<string, unknown>[] = [
+    { status: 'active' },
+    { status: 'settlement-failed', settlementNeedsReview: { $ne: true } },
+    { status: 'settling', $or: [{ settlementLeaseUntil: { $lte: now } }, { settlementLeaseUntil: { $exists: false } }] },
+  ];
   const expiredAuctions = await Auction.find({
-    $or: [
-      { status: 'active' },
-      { status: 'settlement-failed', settlementDkpApplied: { $exists: true } },
-    ],
+    $or: recoverable,
     endsAt: { $lte: now },
   }).sort({ endsAt: 1 }).limit(25);
 
   for (const expired of expiredAuctions) {
     if (!expired.highBid) {
       await Auction.updateOne(
-        { _id: expired._id, status: 'active', endsAt: { $lte: now } },
-        { $set: { status: 'completed', deliveryStatus: 'not-required' } },
+        { _id: expired._id, status: expired.status, endsAt: { $lte: now } },
+        {
+          $set: { status: 'completed', deliveryStatus: 'not-required' },
+          $unset: { settlementAttemptId: 1, settlementLeaseUntil: 1 },
+        },
       );
       continue;
     }
 
+    const attemptId = randomUUID();
+    const wasLegacyUntrackedSettlement = needsSettlementManualReview(expired);
+    if (wasLegacyUntrackedSettlement) {
+      await Auction.updateOne(
+        { _id: expired._id, status: expired.status, settlementAttemptId: { $exists: false }, settlementDkpApplied: { $ne: true } },
+        { $set: { status: 'settlement-failed', settlementNeedsReview: true, settlementError: 'Interrupted settlement has no replay record. Verify the Sheet balance before retrying.' } },
+      );
+      continue;
+    }
     const claimed = await Auction.findOneAndUpdate(
       {
         _id: expired._id,
         endsAt: { $lte: now },
-        $or: [
-          { status: 'active' },
-          { status: 'settlement-failed', settlementDkpApplied: { $exists: true } },
-        ],
+        $or: recoverable,
       },
-      { $set: { status: 'settling', settlementError: undefined } },
+      { $set: { status: 'settling', settlementError: undefined, settlementAttemptId: attemptId, settlementLeaseUntil: new Date(Date.now() + 5 * 60_000) } },
       { new: true },
     );
     if (!claimed?.highBid) continue;
@@ -81,11 +94,12 @@ async function settleExpiredAuctions() {
           {
             reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]),
             mode: 'auction-spend',
+            idempotencyKey: getAuctionSettlementMutationKey(claimed._id.toString()),
           },
         );
         dkpDeductionCompleted = true;
         const markedApplied = await Auction.updateOne(
-          { _id: claimed._id, status: 'settling', settlementDkpApplied: { $ne: true } },
+          { _id: claimed._id, status: 'settling', settlementAttemptId: attemptId, settlementDkpApplied: { $ne: true } },
           { $set: { settlementDkpApplied: true } },
         );
         if (markedApplied.modifiedCount !== 1) {
@@ -96,7 +110,7 @@ async function settleExpiredAuctions() {
       const session = await mongoose.startSession();
       try {
         await session.withTransaction(async () => {
-          const auction = await Auction.findOne({ _id: claimed._id, status: 'settling' }).session(session);
+          const auction = await Auction.findOne({ _id: claimed._id, status: 'settling', settlementAttemptId: attemptId }).session(session);
           const hold = await AuctionHold.findOne({ rowIndex: winningBid.rowIndex }).session(session);
           if (!auction || !hold || hold.heldPoints < winningBid.amount) {
             throw new Error('Auction settlement records are inconsistent; manual review is required.');
@@ -108,6 +122,8 @@ async function settleExpiredAuctions() {
           auction.winner = winningBid;
           auction.deliveryStatus = 'pending';
           auction.settlementError = undefined;
+          auction.settlementAttemptId = undefined;
+          auction.settlementLeaseUntil = undefined;
           await auction.save({ session });
         });
       } finally {
@@ -116,12 +132,14 @@ async function settleExpiredAuctions() {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown auction settlement failure';
       await Auction.updateOne(
-        { _id: claimed._id, status: 'settling' },
+        { _id: claimed._id, status: 'settling', settlementAttemptId: attemptId },
         {
           $set: {
             status: 'settlement-failed',
             settlementError: message,
             ...(dkpDeductionCompleted ? { settlementDkpApplied: true } : {}),
+            settlementAttemptId: attemptId,
+            settlementLeaseUntil: new Date(0),
           },
         },
       );
@@ -304,16 +322,22 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
 
   try {
     let auctions = await Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed', 'completed'] } })
-      .select('_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError bidVersion')
+      .select('_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError settlementLeaseUntil settlementNeedsReview bidVersion')
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();
     const now = Date.now();
-    if (now - lastLiveExpirySweepAt >= 2_000 && auctions.some((auction) => auction.status === 'active' && auction.endsAt.getTime() <= now)) {
+    if (now - lastLiveExpirySweepAt >= 2_000 && auctions.some((auction) =>
+      auction.endsAt.getTime() <= now && (
+        auction.status === 'active' ||
+        (auction.status === 'settling' && (!auction.settlementLeaseUntil || auction.settlementLeaseUntil.getTime() <= now)) ||
+        (auction.status === 'settlement-failed' && !auction.settlementNeedsReview)
+      ),
+    )) {
       lastLiveExpirySweepAt = now;
       await settleExpiredAuctions();
       auctions = await Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed', 'completed'] } })
-        .select('_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError bidVersion')
+        .select('_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError settlementLeaseUntil settlementNeedsReview bidVersion')
         .sort({ createdAt: -1 })
         .limit(100)
         .lean();

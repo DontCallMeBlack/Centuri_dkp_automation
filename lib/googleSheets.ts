@@ -1,14 +1,21 @@
 // lib/googleSheets.ts
+import { randomUUID } from 'node:crypto';
 import { google } from 'googleapis';
 import AuctionHold from '@/lib/models/AuctionHold';
+import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
 import dbConnect from '@/lib/mongodb';
+import { buildWeeklyDkpResetUpdates, getCurrentDkpWeekStart } from '@/lib/dkpCycle';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
 const ROSTER_REFRESH_LOCK_MS = 20_000;
 const ROSTER_REFRESH_WAIT_MS = 15_000;
 const ROSTER_CACHE_POLL_MS = 250;
+const WEEKLY_RESET_LOCK_MS = 120_000;
+const WEEKLY_RESET_WAIT_MS = 30_000;
+const WEEKLY_RESET_POLL_MS = 250;
+type SheetValueUpdate = { range: string; values: number[][] };
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -106,6 +113,224 @@ async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
   })).filter(r => r.owner); // Filter out empty rows
 }
 
+async function ensureSheetRosterCacheDocument(cacheKey: string) {
+  return SheetRosterCache.findOneAndUpdate(
+    { cacheKey },
+    {
+      $setOnInsert: {
+        cacheKey,
+        roster: [],
+        fetchedAt: new Date(0),
+        refreshLockUntil: new Date(0),
+        generation: 0,
+        weeklyResetLockUntil: new Date(0),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  ).lean().catch(async (error: unknown) => {
+    if (isRecord(error) && error.code === 11000) {
+      const existing = await SheetRosterCache.findOne({ cacheKey }).lean();
+      if (existing) return existing;
+    }
+    throw error;
+  });
+}
+
+async function acquireWeeklyResetLock(cacheKey: string) {
+  const waitUntil = Date.now() + WEEKLY_RESET_WAIT_MS;
+  const lockId = randomUUID();
+  while (Date.now() < waitUntil) {
+    const now = new Date();
+    const acquired = await SheetRosterCache.findOneAndUpdate(
+      {
+        cacheKey,
+        $or: [
+          { weeklyResetLockUntil: { $lte: now } },
+          { weeklyResetLockUntil: { $exists: false } },
+        ],
+      },
+      {
+        $set: {
+          weeklyResetLockUntil: new Date(now.getTime() + WEEKLY_RESET_LOCK_MS),
+          weeklyResetLockId: lockId,
+        },
+      },
+      { new: true },
+    ).lean();
+    if (acquired) return lockId;
+    await new Promise((resolve) => setTimeout(resolve, WEEKLY_RESET_POLL_MS));
+  }
+
+  throw new Error('The weekly DKP sheet update is still in progress. Please retry shortly.');
+}
+
+async function releaseWeeklyResetLock(cacheKey: string, lockId: string) {
+  await SheetRosterCache.updateOne(
+    { cacheKey, weeklyResetLockId: lockId },
+    {
+      $set: { weeklyResetLockUntil: new Date(0) },
+      $unset: { weeklyResetLockId: 1 },
+    },
+  );
+}
+
+async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnType<typeof google.sheets>) {
+  const pending = await DkpSheetMutation.findOne({ spreadsheetId, status: 'pending' }).sort({ createdAt: 1 });
+  if (!pending) return false;
+  await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: 'USER_ENTERED', data: pending.updates },
+  }), false);
+  await DkpSheetMutation.updateOne({ _id: pending._id, status: 'pending' }, { $set: { status: 'applied' } });
+  await invalidateSheetRosterCache();
+  return true;
+}
+
+async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const spreadsheetId = getSpreadsheetId();
+
+  while (true) {
+    const cache = await SheetRosterCache.findOne({ cacheKey }).lean();
+    if (!cache || cache.weeklyResetLockId !== lockId) {
+      throw new Error('The weekly DKP sheet update lost its lock. Please retry.');
+    }
+
+    const pending = cache.weeklyResetPending;
+    if (pending) {
+      // Add weekly-column clears when recovering a pending reset created by an
+      // earlier version that only cleared Weekly Earned.
+      const roster = await fetchSheetRoster();
+      const updates = [
+        ...pending.updates.filter(({ range }) => !/![DE]\d+$/.test(range)),
+        ...roster.flatMap((record) => [
+          { range: `${SHEET_NAME}!D${record.rowIndex}`, values: [[0]] },
+          { range: `${SHEET_NAME}!E${record.rowIndex}`, values: [[0]] },
+        ]),
+      ];
+
+      if (updates.length > 0) {
+        await withGoogleSheetsRetry(
+          () => sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+              valueInputOption: 'USER_ENTERED',
+              data: updates,
+            },
+          }),
+          false,
+        );
+      }
+
+      const completed = await SheetRosterCache.updateOne(
+        { cacheKey, weeklyResetLockId: lockId },
+        {
+          $set: {
+            weeklyResetFor: pending.cycleStart,
+            fetchedAt: new Date(0),
+            refreshLockUntil: new Date(0),
+          },
+          $inc: { generation: 1 },
+          $unset: { weeklyResetPending: 1 },
+        },
+      );
+      if (completed.matchedCount === 0) {
+        throw new Error('The weekly DKP sheet update lost its lock. Please retry.');
+      }
+      continue;
+    }
+
+    if (await replayPendingSheetMutation(spreadsheetId, sheets)) continue;
+
+    const currentWeekStart = getCurrentDkpWeekStart();
+    if (cache.weeklyResetFor && cache.weeklyResetFor.getTime() >= currentWeekStart.getTime()) {
+      return;
+    }
+
+    // On first activation, keep the current week's points in Weekly Earned.
+    // The first transfer happens at the next Sunday boundary.
+    if (!cache.weeklyResetFor) {
+      const initialized = await SheetRosterCache.updateOne(
+        { cacheKey, weeklyResetLockId: lockId, weeklyResetFor: { $exists: false } },
+        { $set: { weeklyResetFor: currentWeekStart } },
+      );
+      if (initialized.matchedCount === 0) continue;
+      return;
+    }
+
+    const roster = await fetchSheetRoster();
+    const updates = buildWeeklyDkpResetUpdates(roster, SHEET_NAME);
+
+    const planned = await SheetRosterCache.updateOne(
+      { cacheKey, weeklyResetLockId: lockId },
+      {
+        $set: {
+          weeklyResetPending: { cycleStart: currentWeekStart, updates },
+        },
+      },
+    );
+    if (planned.matchedCount === 0) {
+      throw new Error('The weekly DKP sheet update lost its lock. Please retry.');
+    }
+  }
+}
+
+async function withWeeklyResetLock<T>(cacheKey: string, operation: () => Promise<T>) {
+  const lockId = await acquireWeeklyResetLock(cacheKey);
+  try {
+    await processWeeklyDkpResetWhileLocked(cacheKey, lockId);
+    return await operation();
+  } finally {
+    await releaseWeeklyResetLock(cacheKey, lockId);
+  }
+}
+
+export async function ensureWeeklyDkpReset() {
+  await dbConnect();
+  const cacheKey = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(cacheKey);
+
+  const currentWeekStart = getCurrentDkpWeekStart();
+  const cache = await SheetRosterCache.findOne({ cacheKey })
+    .select('weeklyResetFor weeklyResetPending')
+    .lean();
+  if (
+    cache &&
+    !cache.weeklyResetPending &&
+    !(await DkpSheetMutation.exists({ spreadsheetId: cacheKey, status: 'pending' })) &&
+    cache.weeklyResetFor &&
+    cache.weeklyResetFor.getTime() >= currentWeekStart.getTime()
+  ) {
+    return;
+  }
+
+  await withWeeklyResetLock(cacheKey, async () => undefined);
+}
+
+export function startDkpWeeklyResetScheduler() {
+  if (
+    !process.env.GOOGLE_SHEET_ID?.trim() ||
+    !process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim() ||
+    !process.env.GOOGLE_PRIVATE_KEY?.trim() ||
+    !process.env.MONGODB_URI
+  ) return;
+
+  const globalWithScheduler = globalThis as typeof globalThis & {
+    __centuriDkpWeeklyResetInterval?: NodeJS.Timeout;
+  };
+  if (globalWithScheduler.__centuriDkpWeeklyResetInterval) return;
+
+  const runReset = () => {
+    void ensureWeeklyDkpReset().catch((error: unknown) => {
+      console.error('Weekly DKP reset did not complete; it will be retried.', error);
+    });
+  };
+  const interval = setInterval(runReset, 60_000);
+  interval.unref();
+  globalWithScheduler.__centuriDkpWeeklyResetInterval = interval;
+  runReset();
+}
+
 function serializeRosterRecord(record: ISheetRosterRecord): ISheetRosterRecord {
   return {
     rowIndex: record.rowIndex,
@@ -127,26 +352,9 @@ function isRosterCacheFresh(fetchedAt: Date | undefined, now: number) {
 export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
   await dbConnect();
   const cacheKey = getSpreadsheetId();
+  await ensureWeeklyDkpReset();
   const now = Date.now();
-  const staleAtRequest = await SheetRosterCache.findOneAndUpdate(
-    { cacheKey },
-    {
-      $setOnInsert: {
-        cacheKey,
-        roster: [],
-        fetchedAt: new Date(0),
-        refreshLockUntil: new Date(0),
-        generation: 0,
-      },
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  ).lean().catch(async (error: unknown) => {
-    if (isRecord(error) && error.code === 11000) {
-      const existing = await SheetRosterCache.findOne({ cacheKey }).lean();
-      if (existing) return existing;
-    }
-    throw error;
-  });
+  const staleAtRequest = await ensureSheetRosterCacheDocument(cacheKey);
 
   const requestStartedAt = new Date(now);
   if (!options.fresh && staleAtRequest && isRosterCacheFresh(staleAtRequest.fetchedAt, now)) {
@@ -292,93 +500,108 @@ export async function adjustPlayersDKP(
   options: {
     reservedPointsToConsume?: Map<number, number>;
     mode?: 'balance' | 'weekly-earned' | 'auction-spend';
+    idempotencyKey?: string;
   } = {},
 ) {
   if (adjustments.length === 0) return;
 
   const mode = options.mode ?? 'balance';
-  const sheets = google.sheets({ version: 'v4', auth });
+  await dbConnect();
   const spreadsheetId = getSpreadsheetId();
-  const response = await withGoogleSheetsRetry(
-    () => sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${SHEET_NAME}!A3:H1000`,
-    }),
-    true,
-  );
-  const rows = response.data.values ?? [];
-  const holds = mode === 'weekly-earned' ? [] : await AuctionHold.find({
-    rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
-  }).select('rowIndex heldPoints').lean();
-  const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
-  const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
-    if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
-      throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
-    }
-    if (!Number.isFinite(points)) {
-      throw new Error('DKP adjustment must be a finite number.');
-    }
+  await ensureSheetRosterCacheDocument(spreadsheetId);
 
-    const row = rows[rowIndex - 3];
-    if (!row || !row[0]) {
-      throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
-    }
-    if (
-      (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
-      (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
-    ) {
-      throw new Error(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
-    }
-
-    const readValue = (columnIndex: number, columnName: string) => {
-      const value = row[columnIndex];
-      if (value === undefined || value === '' || value === '-') return 0;
-      const parsed = Number(String(value).replace(/,/g, '').trim());
-      if (!Number.isFinite(parsed)) {
-        throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
+  await withWeeklyResetLock(spreadsheetId, async () => {
+    const sheets = google.sheets({ version: 'v4', auth });
+    const response = await withGoogleSheetsRetry(
+      () => sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${SHEET_NAME}!A3:H1000`,
+      }),
+      true,
+    );
+    const rows = response.data.values ?? [];
+    const holds = mode === 'weekly-earned' ? [] : await AuctionHold.find({
+      rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
+    }).select('rowIndex heldPoints').lean();
+    const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
+    const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
+      if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
+        throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
       }
-      return parsed;
-    };
+      if (!Number.isFinite(points)) {
+        throw new Error('DKP adjustment must be a finite number.');
+      }
 
-    if (points < 0 && mode !== 'weekly-earned') {
-      const heldPoints = holdsByRow.get(rowIndex) ?? 0;
-      const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
+      const row = rows[rowIndex - 3];
+      if (!row || !row[0]) {
+        throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
+      }
       if (
-        reservedPointsToConsume < 0 ||
-        reservedPointsToConsume > heldPoints ||
-        readValue(7, 'H') + points < heldPoints - reservedPointsToConsume
+        (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
+        (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
       ) {
-        throw new Error(`Cannot reduce DKP for row ${rowIndex} below its ${heldPoints} held auction points.`);
+        throw new Error(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
       }
-    }
 
-    if (mode === 'weekly-earned') {
-      return [{ range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] }];
-    }
-    if (mode === 'auction-spend') {
-      if (points > 0) throw new Error('Auction spending adjustments must not add DKP.');
+      const readValue = (columnIndex: number, columnName: string) => {
+        const value = row[columnIndex];
+        if (value === undefined || value === '' || value === '-') return 0;
+        const parsed = Number(String(value).replace(/,/g, '').trim());
+        if (!Number.isFinite(parsed)) {
+          throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
+        }
+        return parsed;
+      };
+
+      if (points < 0 && mode !== 'weekly-earned') {
+        const heldPoints = holdsByRow.get(rowIndex) ?? 0;
+        const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
+        if (
+          reservedPointsToConsume < 0 ||
+          reservedPointsToConsume > heldPoints ||
+          readValue(7, 'H') + points < heldPoints - reservedPointsToConsume
+        ) {
+          throw new Error(`Cannot reduce DKP for row ${rowIndex} below its ${heldPoints} held auction points.`);
+        }
+      }
+
+      if (mode === 'weekly-earned') {
+        return [{ range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] }];
+      }
+      if (mode === 'auction-spend') {
+        if (points > 0) throw new Error('Auction spending adjustments must not add DKP.');
+        return [
+          { range: `${SHEET_NAME}!E${rowIndex}`, values: [[readValue(4, 'E') - points]] },
+          { range: `${SHEET_NAME}!G${rowIndex}`, values: [[readValue(6, 'G') - points]] },
+          { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
+        ];
+      }
       return [
-        { range: `${SHEET_NAME}!E${rowIndex}`, values: [[readValue(4, 'E') - points]] },
-        { range: `${SHEET_NAME}!G${rowIndex}`, values: [[readValue(6, 'G') - points]] },
+        { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(5, 'F') + points]] },
         { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
       ];
-    }
-    return [
-      { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(5, 'F') + points]] },
-      { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
-    ];
-  });
+    });
 
-  await withGoogleSheetsRetry(
-    () => sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: {
-        valueInputOption: 'USER_ENTERED',
-        data: updates,
-      },
-    }),
-    false,
-  );
+    if (options.idempotencyKey) {
+      const existing = await DkpSheetMutation.findOne({ spreadsheetId, operationKey: options.idempotencyKey });
+      if (existing?.status === 'applied') return;
+      const mutation = existing ?? await DkpSheetMutation.create({
+        spreadsheetId,
+        operationKey: options.idempotencyKey,
+        status: 'pending',
+        updates,
+      });
+      if (mutation.status === 'pending') await replayPendingSheetMutation(spreadsheetId, sheets);
+    } else {
+      await withGoogleSheetsRetry(
+        () => sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: { valueInputOption: 'USER_ENTERED', data: updates },
+        }),
+        false,
+      );
+    }
+  });
   try {
     await invalidateSheetRosterCache();
   } catch (error: unknown) {
