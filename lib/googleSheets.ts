@@ -6,6 +6,7 @@ import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
 import dbConnect from '@/lib/mongodb';
 import { buildWeeklyDkpResetUpdates, getCurrentDkpWeekStart } from '@/lib/dkpCycle';
+import { buildDkpAdjustmentUpdates } from '@/lib/dkpAccounting';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -524,63 +525,17 @@ export async function adjustPlayersDKP(
       rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
     }).select('rowIndex heldPoints').lean();
     const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
-    const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => {
-      if (!Number.isInteger(rowIndex) || rowIndex < 3 || rowIndex > 1000) {
-        throw new Error(`Invalid Google Sheets roster row: ${rowIndex}`);
-      }
-      if (!Number.isFinite(points)) {
-        throw new Error('DKP adjustment must be a finite number.');
-      }
-
-      const row = rows[rowIndex - 3];
-      if (!row || !row[0]) {
-        throw new Error(`Google Sheets roster row ${rowIndex} could not be read.`);
-      }
-      if (
-        (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
-        (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
-      ) {
-        throw new Error(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
-      }
-
-      const readValue = (columnIndex: number, columnName: string) => {
-        const value = row[columnIndex];
-        if (value === undefined || value === '' || value === '-') return 0;
-        const parsed = Number(String(value).replace(/,/g, '').trim());
-        if (!Number.isFinite(parsed)) {
-          throw new Error(`Cannot adjust DKP: ${columnName}${rowIndex} is not numeric.`);
-        }
-        return parsed;
-      };
-
-      if (points < 0 && mode !== 'weekly-earned') {
-        const heldPoints = holdsByRow.get(rowIndex) ?? 0;
-        const reservedPointsToConsume = options.reservedPointsToConsume?.get(rowIndex) ?? 0;
-        if (
-          reservedPointsToConsume < 0 ||
-          reservedPointsToConsume > heldPoints ||
-          readValue(7, 'H') + points < heldPoints - reservedPointsToConsume
-        ) {
-          throw new Error(`Cannot reduce DKP for row ${rowIndex} below its ${heldPoints} held auction points.`);
-        }
-      }
-
-      if (mode === 'weekly-earned') {
-        return [{ range: `${SHEET_NAME}!D${rowIndex}`, values: [[readValue(3, 'D') + points]] }];
-      }
-      if (mode === 'auction-spend') {
-        if (points > 0) throw new Error('Auction spending adjustments must not add DKP.');
-        return [
-          { range: `${SHEET_NAME}!E${rowIndex}`, values: [[readValue(4, 'E') - points]] },
-          { range: `${SHEET_NAME}!G${rowIndex}`, values: [[readValue(6, 'G') - points]] },
-          { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
-        ];
-      }
-      return [
-        { range: `${SHEET_NAME}!F${rowIndex}`, values: [[readValue(5, 'F') + points]] },
-        { range: `${SHEET_NAME}!H${rowIndex}`, values: [[readValue(7, 'H') + points]] },
-      ];
-    });
+    const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => buildDkpAdjustmentUpdates({
+      rowIndex,
+      points,
+      owner,
+      account,
+      row: rows[rowIndex - 3],
+      mode,
+      heldPoints: holdsByRow.get(rowIndex),
+      reservedPointsToConsume: options.reservedPointsToConsume?.get(rowIndex),
+      sheetName: SHEET_NAME,
+    }));
 
     if (options.idempotencyKey) {
       const existing = await DkpSheetMutation.findOne({ spreadsheetId, operationKey: options.idempotencyKey });

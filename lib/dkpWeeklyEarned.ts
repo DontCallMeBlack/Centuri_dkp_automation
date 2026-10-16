@@ -1,12 +1,8 @@
 import BossAward from '@/lib/models/BossAward';
 import { getPreviousDkpWeekRange } from '@/lib/dkpCycle';
-import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
-
-export interface WeeklyRosterRecord {
-  rowIndex: number;
-  owner: string;
-  account: string;
-}
+import { addWeeklyEarnedFromAwards, type WeeklyRosterRecord } from './weeklyDkpEarned';
+export { addWeeklyEarnedFromAwards } from './weeklyDkpEarned';
+export type { WeeklyRosterRecord } from './weeklyDkpEarned';
 
 /** Calculates completed-week DKP for auction activity and eligibility. */
 export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(roster: T[]) {
@@ -16,25 +12,5 @@ export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(ro
     createdAt: { $gte: start, $lt: end },
   }).select('points participants').lean();
 
-  const weeklyEarnedByRow = new Map<number, number>();
-  for (const award of weeklyAwards) {
-    for (const participant of award.participants) {
-      const matches = roster.filter((record) =>
-        getSheetRecordKey(record) === getSheetRecordKey(participant)
-      );
-      const record = matches.find((match) => match.rowIndex === participant.rowIndex)
-        ?? (matches.length === 1 ? matches[0] : undefined);
-      if (!record) continue;
-
-      weeklyEarnedByRow.set(
-        record.rowIndex,
-        (weeklyEarnedByRow.get(record.rowIndex) ?? 0) + award.points,
-      );
-    }
-  }
-
-  return roster.map((record) => ({
-    ...record,
-    weeklyEarned: weeklyEarnedByRow.get(record.rowIndex) ?? 0,
-  }));
+  return addWeeklyEarnedFromAwards(roster, weeklyAwards);
 }

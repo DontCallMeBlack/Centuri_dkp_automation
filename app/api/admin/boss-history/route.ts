@@ -5,14 +5,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster } from '@/lib/googleSheets';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { getPreviousDkpWeekRange } from '@/lib/dkpCycle';
-
-function isRosterRowArray(value: unknown): value is number[] {
-  return Array.isArray(value) &&
-    value.every((rowIndex): rowIndex is number =>
-      typeof rowIndex === 'number' && Number.isInteger(rowIndex)
-    ) &&
-    new Set(value).size === value.length;
-}
+import { isRosterRowArray } from '@/lib/bossDkp';
 
 function canManageBossHistory(role: string) {
   return role === 'chief' || role === 'general' || role === 'guardian';
@@ -82,7 +75,7 @@ export async function PATCH(req: Request) {
     if (typeof awardId !== 'string' || !mongoose.isValidObjectId(awardId)) {
       return NextResponse.json({ error: 'Invalid boss award ID' }, { status: 400 });
     }
-    if (!isRosterRowArray(selectedRows)) {
+    if (!isRosterRowArray(selectedRows, true)) {
       return NextResponse.json({ error: 'Select valid toon rows' }, { status: 400 });
     }
 
