@@ -42,11 +42,11 @@ export function buildWeeklyDkpResetPlan(
     return [
       { range: `${sheetName}!D${record.rowIndex}`, values: [[0]] },
       { range: `${sheetName}!E${record.rowIndex}`, values: [[0]] },
+      { range: `${sheetName}!I${record.rowIndex}`, values: [[history.weeks.reduce((sum, points) => sum + points, 0)]] },
       ...(record.weeklyEarned === 0 ? [] : [
         { range: `${sheetName}!F${record.rowIndex}`, values: [[record.earned + record.weeklyEarned]] },
         { range: `${sheetName}!H${record.rowIndex}`, values: [[record.available + record.weeklyEarned]] },
       ]),
-      { range: `${sheetName}!I${record.rowIndex}`, values: [[history.weeks.reduce((sum, points) => sum + points, 0)]] },
     ];
   });
   return { updates, weeklyActivityHistory: nextHistory };
