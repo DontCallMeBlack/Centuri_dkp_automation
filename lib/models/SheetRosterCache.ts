@@ -10,6 +10,7 @@ export interface ISheetRosterRecord {
   earned: number;
   spent: number;
   available: number;
+  fiveWeekActivity?: number;
 }
 
 export interface ISheetRosterCache extends mongoose.Document {
@@ -25,7 +26,9 @@ export interface ISheetRosterCache extends mongoose.Document {
   weeklyResetPending?: {
     cycleStart: Date;
     updates: Array<{ range: string; values: number[][] }>;
+    weeklyActivityHistory?: Array<{ rowIndex: number; owner: string; account: string; weeks: number[] }>;
   };
+  weeklyActivityHistory?: Array<{ rowIndex: number; owner: string; account: string; weeks: number[] }>;
 }
 
 const SheetRosterRecordSchema = new Schema<ISheetRosterRecord>({
@@ -38,6 +41,7 @@ const SheetRosterRecordSchema = new Schema<ISheetRosterRecord>({
   earned: { type: Number, required: true },
   spent: { type: Number, required: true },
   available: { type: Number, required: true },
+  fiveWeekActivity: { type: Number, required: true, default: 0 },
 }, { _id: false });
 
 const SheetRosterCacheSchema: Schema<ISheetRosterCache> = new Schema({
@@ -51,6 +55,7 @@ const SheetRosterCacheSchema: Schema<ISheetRosterCache> = new Schema({
   weeklyResetLockUntil: { type: Date, required: true, default: () => new Date(0) },
   weeklyResetLockId: { type: String },
   weeklyResetPending: { type: Schema.Types.Mixed },
+  weeklyActivityHistory: { type: Schema.Types.Mixed },
 }, { timestamps: true });
 
 const SheetRosterCache: Model<ISheetRosterCache> = mongoose.models.SheetRosterCache
