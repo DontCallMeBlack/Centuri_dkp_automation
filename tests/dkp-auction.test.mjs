@@ -57,19 +57,19 @@ test('previous completed weekly activity range', async (t) => {
 test('weekly rollover clears weekly totals, carries earned forward, and writes five-week activity', async (t) => {
   const cases = [
     ['positive weekly points', { rowIndex: 3, owner: 'Ada', account: 'Main', weeklyEarned: 12, earned: 100, available: 40, fiveWeekActivity: 0 }, [
-      [`${SHEET}!D3`, 0], [`${SHEET}!E3`, 0], [`${SHEET}!F3`, 112], [`${SHEET}!H3`, 52], [`${SHEET}!I3`, 12],
+      [`${SHEET}!D3`, 0], [`${SHEET}!E3`, 0], [`${SHEET}!I3`, 12], [`${SHEET}!F3`, 112], [`${SHEET}!H3`, 52],
     ]],
     ['zero weekly points', { rowIndex: 4, owner: 'Ada', account: 'Alt', weeklyEarned: 0, earned: 15, available: 7, fiveWeekActivity: 0 }, [
       [`${SHEET}!D4`, 0], [`${SHEET}!E4`, 0], [`${SHEET}!I4`, 0],
     ]],
     ['fractional values', { rowIndex: 5, owner: 'Bea', account: 'Main', weeklyEarned: 2.5, earned: 4.25, available: 3.5, fiveWeekActivity: 0 }, [
-      [`${SHEET}!D5`, 0], [`${SHEET}!E5`, 0], [`${SHEET}!F5`, 6.75], [`${SHEET}!H5`, 6], [`${SHEET}!I5`, 2.5],
+      [`${SHEET}!D5`, 0], [`${SHEET}!E5`, 0], [`${SHEET}!I5`, 2.5], [`${SHEET}!F5`, 6.75], [`${SHEET}!H5`, 6],
     ]],
     ['negative correction carries through', { rowIndex: 6, owner: 'Cal', account: 'Main', weeklyEarned: -3, earned: 20, available: 9, fiveWeekActivity: 0 }, [
-      [`${SHEET}!D6`, 0], [`${SHEET}!E6`, 0], [`${SHEET}!F6`, 17], [`${SHEET}!H6`, 6], [`${SHEET}!I6`, -3],
+      [`${SHEET}!D6`, 0], [`${SHEET}!E6`, 0], [`${SHEET}!I6`, -3], [`${SHEET}!F6`, 17], [`${SHEET}!H6`, 6],
     ]],
     ['large weekly spent still only clears E', { rowIndex: 7, owner: 'Dee', account: 'Main', weeklyEarned: 1, earned: 500, available: 499, fiveWeekActivity: 0 }, [
-      [`${SHEET}!D7`, 0], [`${SHEET}!E7`, 0], [`${SHEET}!F7`, 501], [`${SHEET}!H7`, 500], [`${SHEET}!I7`, 1],
+      [`${SHEET}!D7`, 0], [`${SHEET}!E7`, 0], [`${SHEET}!I7`, 1], [`${SHEET}!F7`, 501], [`${SHEET}!H7`, 500],
     ]],
   ];
   for (const [label, row, expected] of cases) {
@@ -84,7 +84,7 @@ test('weekly rollover clears weekly totals, carries earned forward, and writes f
       { rowIndex: 10, owner: 'Bea', account: 'Main', weeklyEarned: 0, earned: 20, available: 4, fiveWeekActivity: 0 },
     ], SHEET).updates;
     assert.deepEqual(updates.map((update) => update.range), [
-      `${SHEET}!D3`, `${SHEET}!E3`, `${SHEET}!F3`, `${SHEET}!H3`, `${SHEET}!I3`, `${SHEET}!D10`, `${SHEET}!E10`, `${SHEET}!I10`,
+      `${SHEET}!D3`, `${SHEET}!E3`, `${SHEET}!I3`, `${SHEET}!F3`, `${SHEET}!H3`, `${SHEET}!D10`, `${SHEET}!E10`, `${SHEET}!I10`,
     ]);
   });
   await t.test('empty roster yields no writes', () => {
@@ -169,12 +169,12 @@ test('DKP grant, adjustment, and auction-spend accounting', async (t) => {
   const sheet = (column, row) => `${SHEET}!${column}${row}`;
   const rosterRow = ['Ada', 'Account 1', 'Druid', '4', '6', '100', '30', '94'];
   const cases = [
-    ['weekly award increments D only', { points: 5, mode: 'weekly-earned' }, [[sheet('D', 3), 9]]],
-    ['weekly award correction may subtract earned points', { points: -2, mode: 'weekly-earned' }, [[sheet('D', 3), 2]]],
+    ['weekly award increments D and current five-week activity', { points: 5, mode: 'weekly-earned' }, [[sheet('D', 3), 9], [sheet('I', 3), 5]]],
+    ['weekly award correction adjusts current activity', { points: -2, mode: 'weekly-earned' }, [[sheet('D', 3), 2], [sheet('I', 3), -2]]],
     ['lifetime balance grant increments F and H', { points: 10, mode: 'balance' }, [[sheet('F', 3), 110], [sheet('H', 3), 104]]],
     ['lifetime balance reversal decrements F and H', { points: -10, mode: 'balance' }, [[sheet('F', 3), 90], [sheet('H', 3), 84]]],
     ['auction spend increments E and G, decrements H', { points: -20, mode: 'auction-spend' }, [[sheet('E', 3), 26], [sheet('G', 3), 50], [sheet('H', 3), 74]]],
-    ['empty cells and dash values count as zero', { row: ['Ada', 'A', 'Druid', '-', '', '-', '-', '-'], points: 2, mode: 'weekly-earned' }, [[sheet('D', 3), 2]]],
+    ['empty cells and dash values count as zero', { row: ['Ada', 'A', 'Druid', '-', '', '-', '-', '-', '-'], points: 2, mode: 'weekly-earned' }, [[sheet('D', 3), 2], [sheet('I', 3), 2]]],
     ['comma formatted cells parse as numbers', { row: ['Ada', 'A', 'Druid', '1,000', '2,000', '3,000', '4,000', '5,000'], points: -5, mode: 'auction-spend' }, [[sheet('E', 3), 2005], [sheet('G', 3), 4005], [sheet('H', 3), 4995]]],
   ];
   for (const [label, input, expected] of cases) {

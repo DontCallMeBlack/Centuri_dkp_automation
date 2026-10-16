@@ -541,7 +541,7 @@ export async function adjustPlayersDKP(
     const response = await withGoogleSheetsRetry(
       () => sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `${SHEET_NAME}!A3:H1000`,
+        range: `${SHEET_NAME}!A3:I1000`,
       }),
       true,
     );

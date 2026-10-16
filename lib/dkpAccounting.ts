@@ -47,7 +47,10 @@ export function buildDkpAdjustmentUpdates(input: DkpAdjustmentInput) {
   }
 
   if (mode === 'weekly-earned') {
-    return [{ range: `${sheetName}!D${rowIndex}`, values: [[readCell(row, 3, 'D', rowIndex) + points]] }];
+    return [
+      { range: `${sheetName}!D${rowIndex}`, values: [[readCell(row, 3, 'D', rowIndex) + points]] },
+      { range: `${sheetName}!I${rowIndex}`, values: [[readCell(row, 8, 'I', rowIndex) + points]] },
+    ];
   }
   if (mode === 'auction-spend') {
     if (points > 0) throw new Error('Auction spending adjustments must not add DKP.');
