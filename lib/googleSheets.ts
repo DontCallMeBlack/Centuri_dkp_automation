@@ -17,6 +17,7 @@ import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import User from '@/lib/models/User';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
+import { parseSheetRoster } from '@/lib/sheetRoster';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -40,7 +41,7 @@ const auth = new google.auth.GoogleAuth({
 function getSpreadsheetId() {
   const spreadsheetId = process.env.GOOGLE_SHEET_ID?.trim();
   if (!spreadsheetId) {
-    throw new Error('Google Sheets is not configured: set GOOGLE_SHEET_ID in the deployment environment.');
+    throw new RequestValidationError('Google Sheets is not configured. The site owner must set GOOGLE_SHEET_ID in the server environment.', 503);
   }
   return spreadsheetId;
 }
@@ -90,15 +91,6 @@ async function withGoogleSheetsRetry<T>(operation: () => Promise<T>, retryTransi
   }
 }
 
-function readDkpValue(value: string | undefined) {
-  if (!value || value.trim() === '-') return 0;
-  const parsed = Number(value.replace(/,/g, '').trim());
-  if (!Number.isFinite(parsed) || Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
-    throw new DkpIntegrityError('The roster contains an invalid DKP value. A manager must correct it in Google Sheets.');
-  }
-  return parsed;
-}
-
 function createSheetsClient() {
   return google.sheets({ version: 'v4', auth, timeout: 20_000 });
 }
@@ -114,13 +106,7 @@ async function readSheetRows(sheets = createSheetsClient()) {
 }
 
 function rosterFromRows(rows: string[][]): ISheetRosterRecord[] {
-  return rows.map((row, index) => ({
-    rowIndex: index + 3,
-    owner: String(row[0] || '').trim(), account: String(row[1] || '').trim(), subClass: String(row[2] || ''),
-    weeklyEarned: readDkpValue(row[3]), weeklySpent: readDkpValue(row[4]),
-    earned: readDkpValue(row[5]), spent: readDkpValue(row[6]), available: readDkpValue(row[7]),
-    fiveWeekActivity: readDkpValue(row[8]),
-  })).filter((record) => record.owner);
+  return parseSheetRoster(rows);
 }
 
 async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {

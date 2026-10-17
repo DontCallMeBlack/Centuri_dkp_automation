@@ -15,9 +15,10 @@ import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, is
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import {
-  AUCTION_ANTI_SNIPE_MS,
   AUCTION_DURATION_MS,
   AUCTION_WEEKLY_MINIMUM,
+  getAuctionBidEndTime,
+  normalizeAuctionBossType,
   normalizeAuctionRole,
 } from '@/lib/auctionRules';
 
@@ -493,6 +494,8 @@ export async function POST(req: Request) {
       ]);
       if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
       if (item.isListed === false) return NextResponse.json({ error: 'That item is no longer in the catalog' }, { status: 404 });
+      const bossType = normalizeAuctionBossType(item.bossType);
+      if (!bossType) throw new RequestValidationError('Update this item’s boss type in the item catalog before posting it.');
       const itemRoles = item.requiredRoles?.length ? item.requiredRoles : item.requiredRole ? [item.requiredRole] : [];
       if (!itemRoles.length) {
         return NextResponse.json({ error: 'Set this item’s auction role in the Items tab before posting it' }, { status: 400 });
@@ -511,7 +514,7 @@ export async function POST(req: Request) {
         const [created] = await Auction.create([{
           itemId: item._id,
           itemName: item.name,
-          bossType: item.bossType,
+          bossType,
           requiredRoles: selectedRoles,
           requiredRole: selectedRoles[0],
           createdBy: actor.nickname,
@@ -581,10 +584,12 @@ export async function POST(req: Request) {
           }
 
           if (resolution === 'repost') {
+            const bossType = normalizeAuctionBossType(resolvedAuction.bossType);
+            if (!bossType) throw new RequestValidationError('Update this item’s boss type before reposting it.');
             const [newAuction] = await Auction.create([{
               itemId: resolvedAuction.itemId,
               itemName: resolvedAuction.itemName,
-              bossType: resolvedAuction.bossType,
+              bossType,
               requiredRoles: resolvedAuction.requiredRoles?.length ? resolvedAuction.requiredRoles : [resolvedAuction.requiredRole ?? ''],
               requiredRole: resolvedAuction.requiredRole ?? '',
               createdBy: actor.nickname,
@@ -601,7 +606,7 @@ export async function POST(req: Request) {
           success: true,
           message: resolution === 'banked'
             ? 'Item marked as mailed to the bank.'
-            : 'Auction reposted for another 2 minutes.',
+            : 'Auction reposted for another 24 hours.',
           auctionId: repostedAuctionId || auctionId,
         });
       } catch (error: unknown) {
@@ -755,8 +760,7 @@ export async function POST(req: Request) {
             hold.heldPoints = nextHeldPoints;
             await hold.save({ session });
           }
-          const endsAt = currentAuction.endsAt.getTime() - bidAt.getTime() <= AUCTION_ANTI_SNIPE_MS
-            ? new Date(bidAt.getTime() + AUCTION_ANTI_SNIPE_MS) : currentAuction.endsAt;
+          const endsAt = getAuctionBidEndTime(currentAuction.endsAt, bidAt);
           currentAuction.highBid = {
             userId: actor._id, nickname: actor.nickname, rowIndex,
             owner: toon.owner, account: toon.account, amount, placedAt: bidAt,
@@ -821,6 +825,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ error: 'Unknown auction action' }, { status: 400 });
   } catch (error: unknown) {
+    if (error instanceof DkpIntegrityError) return NextResponse.json({ error: error.message }, { status: 409 });
     return requestErrorResponse(error, 'Unable to process auction request. Please refresh and retry.');
   }
 }

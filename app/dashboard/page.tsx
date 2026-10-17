@@ -7,9 +7,12 @@ import dynamic from 'next/dynamic';
 import RoleBadge from '@/components/RoleBadge';
 import Dialog from '@/components/Dialog';
 import LoadingSurface from '@/components/LoadingSurface';
+import { useSessionUser } from '@/components/AppShell';
+import ToonDkpCards from '@/components/ToonDkpCards';
+import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Users, Zap, X, Package, Wallet, Coins, Swords, RefreshCw, LayoutGrid, Gavel, History } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Users, Zap, X, Wallet, Swords } from 'lucide-react';
 const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface /> });
 const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface /> });
 const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface /> });
@@ -89,12 +92,14 @@ export default function DashboardPage() { return <Suspense fallback={<LoadingSur
 
 function Dashboard() {
   const searchParams = useSearchParams();
-  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['dkp']));
+  const sessionUser = useSessionUser();
+  const requestedView = searchParams.get('view');
+  const activeView = requestedView === 'auction' || requestedView === 'items' || requestedView === 'boss-history' ? requestedView : 'dkp';
+  const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [refreshing, setRefreshing] = useState(false);
   const [awardError, setAwardError] = useState('');
   const requestIds = useRef(new Map<string, string>());
   const activeRef = useRef(true);
-  const [activeTab, setActiveTab] = useState<'dkp' | 'auction' | 'boss-history' | 'items'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
   const [userSession, setUserSession] = useState<UserSession | null>(null);
@@ -115,25 +120,12 @@ function Dashboard() {
     activeRef.current = true;
     const cached = peekData<any>('/api/dkp');
     if (cached) { setRoster(cached.roster); setClanMembers(cached.clanMembers); setUserSession(cached.user); setRosterSync(cached.rosterSync); setLoading(false); }
-    void fetchData();
-    const update = () => { if (document.visibilityState === 'visible') void fetchData(); };
-    window.addEventListener('centuri:dkp-changed', update);
-    document.addEventListener('visibilitychange', update);
-    const timer = window.setInterval(update, 120_000);
-    return () => { activeRef.current = false; window.clearInterval(timer); window.removeEventListener('centuri:dkp-changed', update); document.removeEventListener('visibilitychange', update); };
+    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setRosterSync(null); setSelectedMembers([]); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
+    window.addEventListener('centuri:clear-data', clear);
+    return () => { activeRef.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
 
-  useEffect(() => {
-    const view = searchParams.get('view');
-    if (view === 'auction' || view === 'items' || view === 'boss-history') setActiveTab(view);
-    else setActiveTab('dkp');
-  }, [searchParams]);
-  useEffect(() => { setVisitedTabs((current) => new Set([...current, activeTab])); }, [activeTab]);
-  const changeTab = (tab: 'dkp' | 'auction' | 'boss-history' | 'items') => {
-    setActiveTab(tab);
-    window.history.replaceState(null, '', tab === 'dkp' ? '/dashboard' : `/dashboard?view=${tab}`);
-    window.dispatchEvent(new Event('centuri:view-changed'));
-  };
+  useEffect(() => { setVisitedViews((current) => current.has(activeView) ? current : new Set([...current, activeView])); }, [activeView]);
 
 
   const fetchData = async () => {
@@ -147,10 +139,12 @@ function Dashboard() {
       if (!activeRef.current) return;
       if (err instanceof ApiError && err.status === 401) { clearClientData(); router.replace('/login'); }
       else if (activeRef.current) setRosterSyncError(err instanceof Error ? err.message : 'Unable to load clan data');
+      return false;
     } finally {
       if (activeRef.current) { setLoading(false); setRefreshing(false); }
     }
   };
+  useAutoRefresh(fetchData, { active: activeView === 'dkp' });
 
   const toggleMemberSelection = (rowIndex: number) => {
     setSelectedMembers((prev) =>
@@ -241,35 +235,27 @@ function Dashboard() {
       .toLowerCase()
       .includes(pickerQuery.toLowerCase())
   );
-  const canSubmitDkp = ['chief', 'general', 'guardian'].includes(userSession?.role ?? '');
+  const canSubmitDkp = ['chief', 'general', 'guardian'].includes(sessionUser?.role ?? userSession?.role ?? '');
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
   const ownAvailable = ownToons.reduce((sum,toon) => sum+toon.available,0);
-  const ownWeekly = ownToons.reduce((sum,toon) => sum+toon.weeklyEarned,0);
-  const tabOptions = [
-    ['dkp','Overview',LayoutGrid], ['auction','Auction house',Gavel], ['boss-history','Kill history',History],
-    ...(canSubmitDkp ? [['items','Item catalog',Package]] : []),
-  ] as const;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      {activeView === 'dkp' && <><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div><p className="page-kicker">Your clan. In sync.</p><h1 className="page-title">Welcome back{userSession?.nickname ? `, ${userSession.nickname}` : ''}<span className="text-indigo-400">.</span></h1><p className="page-description">Your raids, rewards, and next upgrade. All in one place.</p></div>
-        <div className="flex items-center gap-2"><button type="button" disabled={refreshing} onClick={() => void fetchData()} className="secondary-button"><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh</button>{canSubmitDkp && <button className="primary-button" onClick={() => { setAwardError(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}</div>
+        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => { setAwardError(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}
       </div>
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan'],[Wallet,'My available DKP',ownAvailable,'Before active auction holds'],[Coins,'My weekly earned',ownWeekly,'Across your linked toons']].map(([Icon,label,value,caption]) => {
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan'],[Wallet,'My available DKP',ownAvailable,'Before active auction holds']].map(([Icon,label,value,caption]) => {
           const I = Icon as typeof Users;
-          return <div key={String(label)} className="surface stat-card"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
+          return <div key={String(label)} className="surface stat-card last:col-span-2 sm:last:col-span-1"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
         })}
-      </div>
-      <nav aria-label="Workspace sections" className="section-tabs" role="tablist">
-        {tabOptions.map(([key,label,Icon],index) => <button key={String(key)} type="button" role="tab" id={`tab-${key}`} aria-controls={`panel-${key}`} aria-selected={activeTab === key} tabIndex={activeTab === key ? 0 : -1} onClick={() => changeTab(key as typeof activeTab)} onKeyDown={(event) => { if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return; event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabOptions.length-1 : (index+(event.key === 'ArrowRight' ? 1 : -1)+tabOptions.length)%tabOptions.length; changeTab(tabOptions[next][0] as typeof activeTab); document.getElementById(`tab-${tabOptions[next][0]}`)?.focus(); }} className="section-tab"><Icon size={15} strokeWidth={1.7} />{String(label)}</button>)}
-      </nav>
+      </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
       <main>
-        <section id="panel-dkp" role="tabpanel" aria-labelledby="tab-dkp" hidden={activeTab !== 'dkp'}>
+        <section id="panel-dkp" aria-label="Roster" hidden={activeView !== 'dkp'}>
           <div className="space-y-8">
             {canSubmitDkp && (
               <section className="surface relative overflow-hidden !border-indigo-400/10 !bg-indigo-400/[.025] px-5 py-5">
@@ -384,10 +370,10 @@ function Dashboard() {
             <div role="status" className="flex items-center justify-end gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'animate-pulse bg-indigo-400' : rosterSyncError || rosterSync?.stale ? 'bg-amber-300' : rosterSync ? 'bg-emerald-400' : 'bg-slate-600'}`} />{refreshing ? 'Refreshing roster' : rosterSyncError || rosterSync?.stale ? 'Cached roster - refresh needed' : rosterSync ? `Updated ${new Date(rosterSync.fetchedAt).toLocaleTimeString()}` : 'Roster not loaded'}</div>
           </div>
         </section>
-        {visitedTabs.has('auction') && <section id="panel-auction" role="tabpanel" aria-labelledby="tab-auction" hidden={activeTab !== 'auction'}><AuctionHousePanel active={activeTab === 'auction'} /></section>}
-        {canSubmitDkp && visitedTabs.has('items') && <section id="panel-items" role="tabpanel" aria-labelledby="tab-items" hidden={activeTab !== 'items'}><AuctionItemsPanel /></section>}
-        {visitedTabs.has('boss-history') && <section id="panel-boss-history" role="tabpanel" aria-labelledby="tab-boss-history" hidden={activeTab !== 'boss-history'}><BossHistoryPanel embedded /></section>}
-        {activeTab === 'items' && !loading && !canSubmitDkp && <p role="alert" className="surface p-6 text-sm text-slate-400">Item management requires a Chief, General, or Guardian account.</p>}
+        {(activeView === 'auction' || visitedViews.has('auction')) && <section id="panel-auction" aria-label="Auction house" hidden={activeView !== 'auction'}><AuctionHousePanel active={activeView === 'auction'} /></section>}
+        {canSubmitDkp && (activeView === 'items' || visitedViews.has('items')) && <section id="panel-items" aria-label="Item catalog" hidden={activeView !== 'items'}><AuctionItemsPanel active={activeView === 'items'} /></section>}
+        {(activeView === 'boss-history' || visitedViews.has('boss-history')) && <section id="panel-boss-history" aria-label="Kill history" hidden={activeView !== 'boss-history'}><BossHistoryPanel embedded active={activeView === 'boss-history'} /></section>}
+        {activeView === 'items' && (sessionUser || !loading) && !canSubmitDkp && <p role="alert" className="surface p-6 text-sm text-slate-400">Item management requires a Chief, General, or Guardian account.</p>}
       </main>
 
       {pickerOpen && (

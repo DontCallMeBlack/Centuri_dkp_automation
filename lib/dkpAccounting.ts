@@ -20,14 +20,19 @@ export class DkpIntegrityError extends Error {
   }
 }
 
-function readCell(row: string[], index: number, column: string, rowIndex: number) {
-  const value = row[index];
-  if (value === undefined || value === '' || value === '-') return 0;
-  const parsed = Number(String(value).replace(/,/g, '').trim());
+export function readDkpCell(value: unknown, column: string, rowIndex: number) {
+  const text = String(value ?? '').trim().replace(/^\u2212/, '-');
+  if (text === '' || /^[-\u2013\u2014]$/.test(text)) return 0;
+  const normalized = /^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(text) ? text.replace(/,/g, '') : text;
+  const parsed = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(normalized) ? Number(normalized) : Number.NaN;
   if (!Number.isFinite(parsed) || Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
-    throw new DkpIntegrityError(`Cannot adjust DKP: ${column}${rowIndex} is not numeric or exceeds the safe numeric range.`);
+    throw new DkpIntegrityError(`DKP cell ${column}${rowIndex} is not numeric or exceeds the safe numeric range. Correct this cell in Google Sheets before retrying.`);
   }
   return parsed;
+}
+
+function readCell(row: string[], index: number, column: string, rowIndex: number) {
+  return readDkpCell(row[index], column, rowIndex);
 }
 
 function adjustedCell(row: string[], index: number, column: string, rowIndex: number, points: number) {

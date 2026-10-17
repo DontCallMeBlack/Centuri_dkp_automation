@@ -7,6 +7,7 @@ import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
+import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 
 interface AuctionToon {
   rowIndex: number;
@@ -186,6 +187,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   activeRef.current = active;
   const [data, setData] = useState<AuctionData | null>(null);
   const dataRef = useRef<AuctionData | null>(data);
+  const fullRefreshCount = useRef(0);
+  const liveEpoch = useRef(0);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number>(0);
@@ -233,34 +236,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
-      const version = clientDataVersion();
-      try {
-        const result = await getData<AuctionData>('/api/auction');
-        if (mounted && version === clientDataVersion()) {
-          setError('');
-          setData(result);
-          rememberAuctionData(result);
-          setLastSyncedAt(Date.now());
-          setSyncing(false);
-        }
-      } catch (loadError) {
-        if (loadError instanceof ApiError && loadError.status === 401) { clearClientData(); router.replace('/login'); return; }
-        if (mounted) {
-          setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
-          setSyncing(false);
-        }
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-
-    void load();
     let pollInFlight = false;
+    let pollFailures = 0;
+    let nextPollAt = 0;
     let lastIdlePollAt = 0;
     const pollLiveAuctions = async () => {
       const current = dataRef.current;
-      if (!current || pollInFlight || !activeRef.current || document.visibilityState !== 'visible') return;
+      if (!current || pollInFlight || fullRefreshCount.current > 0 || !activeRef.current || document.visibilityState !== 'visible' || navigator.onLine === false || Date.now() < nextPollAt) return;
       const hasLiveAuctions = current.auctions.some((auction) =>
         ['active','settling','settlement-failed'].includes(auction.status),
       );
@@ -268,15 +250,18 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (!hasLiveAuctions) lastIdlePollAt = Date.now();
       pollInFlight = true;
       const pollGeneration = clientDataVersion();
+      const epoch = liveEpoch.current;
       try {
         const versions = [...current.auctions]
           .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
           .slice(0, 100)
           .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}`]);
         const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}`, { cache: 'no-store' });
-        if (!response.ok) throw new Error('Live bids could not be checked. Refresh before bidding.');
+        if (!response.ok) throw new Error('Live bid updates are delayed. Retrying automatically.');
         const result = await response.json();
-        if (!mounted || pollGeneration !== clientDataVersion()) return;
+        if (!mounted || pollGeneration !== clientDataVersion() || epoch !== liveEpoch.current) return;
+        pollFailures = 0; nextPollAt = 0;
+        setError('');
         setLastSyncedAt(Date.now());
         if (!result.changed || !Array.isArray(result.auctions)) return;
         const personalBalanceChanged = (result.auctions as Auction[]).some((live) => { const old=current.auctions.find((entry) => entry.id === live.id); return Boolean(old?.highBid?.isMine || live.highBid?.isMine || old?.winner?.isMine) && (old?.bidVersion !== live.bidVersion || old?.status !== live.status || old?.highBid?.amount !== live.highBid?.amount); });
@@ -298,66 +283,46 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         setLastSyncedAt(Date.now());
         if (personalBalanceChanged) await refresh();
       } catch (cause) {
-        if (mounted) setError(cause instanceof Error ? cause.message : 'Live updates are delayed. Refresh to check current bids.');
+        pollFailures += 1;
+        nextPollAt = Date.now() + Math.min(300_000, 30_000 * 2 ** Math.min(pollFailures - 1, 4));
+        if (mounted) setError(cause instanceof Error ? cause.message : 'Live updates are delayed. Retrying automatically.');
       } finally {
         pollInFlight = false;
       }
     };
     // Poll only compact auction state frequently; reload roster/catalog less often.
-    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 30_000);
-    const fullRefreshTimer = window.setInterval(() => {
-      if (activeRef.current && document.visibilityState === 'visible') void load();
-    }, 15 * 60_000);
+    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 30_000 + Math.floor(Math.random() * 5_000));
     const clockTimer = window.setInterval(() => { if (activeRef.current && document.visibilityState === 'visible') setNow(Date.now()); }, 1000);
     return () => {
       mounted = false;
       window.clearInterval(refreshTimer);
-      window.clearInterval(fullRefreshTimer);
       window.clearInterval(clockTimer);
     };
   }, [router]);
 
   const refresh = async () => {
+    fullRefreshCount.current += 1; liveEpoch.current += 1;
     setSyncing(true);
     const version = clientDataVersion();
     try {
       const result = await getData<AuctionData>('/api/auction');
       if (version !== clientDataVersion()) return;
       setError('');
+      dataRef.current = result;
       setData(result);
       rememberAuctionData(result);
       setLastSyncedAt(Date.now());
       setSyncing(false);
     } catch (refreshError) {
       setSyncing(false);
+      if (refreshError instanceof ApiError && refreshError.status === 401) { clearClientData(); router.replace('/login'); return false; }
       throw refreshError;
+    } finally {
+      fullRefreshCount.current = Math.max(0, fullRefreshCount.current - 1);
+      if (version === clientDataVersion()) setLoading(false);
     }
   };
-
-  useEffect(() => {
-    let lastReturnRefreshAt = 0;
-    const refreshOnReturn = () => {
-      const now = Date.now();
-      if (!activeRef.current || document.visibilityState !== 'visible' || now - lastReturnRefreshAt < 5_000) return;
-      lastReturnRefreshAt = now;
-      void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed. Displayed bids may have changed.'));
-    };
-    document.addEventListener('visibilitychange', refreshOnReturn);
-    window.addEventListener('focus', refreshOnReturn);
-    return () => {
-      document.removeEventListener('visibilitychange', refreshOnReturn);
-      window.removeEventListener('focus', refreshOnReturn);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (active) { setNow(Date.now()); void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Unable to refresh auctions.')); }
-  }, [active]);
-  useEffect(() => {
-    const update=() => { if (activeRef.current) void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.')); };
-    window.addEventListener('centuri:dkp-changed',update);
-    return () => window.removeEventListener('centuri:dkp-changed',update);
-  }, []);
+  useAutoRefresh(refresh, { active, intervalMs: 180_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
   useEffect(() => {
     const clear = () => { setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setPostFormOpen(false); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
@@ -401,7 +366,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to post auction');
-      setNotice('Auction posted. It will close in 2 minutes; bids in the final 2 minutes extend the timer.');
+      setNotice('Auction posted for 24 hours. Bids in the final 5 minutes leave 5 minutes on the clock.');
       setPostFormOpen(false);
       await refresh();
     } catch (submitError) {
@@ -546,7 +511,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const resolveNoBidAuction = async (auction: Auction, resolution: 'banked' | 'repost') => {
     const description = resolution === 'banked'
       ? `Mark ${auction.itemName} as mailed to the bank?`
-      : `Repost ${auction.itemName} for another 2 minutes?`;
+      : `Repost ${auction.itemName} for another 24 hours?`;
     if (!window.confirm(description)) return;
 
     setSaving(true);
@@ -659,7 +624,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/25"><Gavel className="h-5 w-5" /></div>
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-300">Centuri loot</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-white">Find your next upgrade.</h2>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">Find your next upgrade.</h1>
               <p className="mt-1 text-sm text-slate-400">Browse live items, check the lead, and place a bid.</p>
             </div>
           </div>
@@ -708,7 +673,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></div>
             <div>
               <h3 className="font-bold text-white">Post an auction</h3>
-              <p className="text-xs text-slate-400">Chief, General, and Guardian access · closes 2 minutes after posting</p>
+              <p className="text-xs text-slate-400">24-hour auction · bids in the final 5 minutes extend the clock to 5 minutes</p>
             </div>
           </div>
           <form onSubmit={submitAuction} className="grid gap-4 sm:grid-cols-2">
@@ -814,7 +779,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               }`}
             >
               {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />}
-              {saving ? 'Posting auction...' : !selectedCatalogItem ? 'Choose an item to post' : !selectedItemRoleIsValid ? 'Set item roles before posting' : 'Post 2-minute auction'}
+              {saving ? 'Posting auction...' : !selectedCatalogItem ? 'Choose an item to post' : !selectedItemRoleIsValid ? 'Set item roles before posting' : 'Post 24-hour auction'}
             </button>
           </form>
         </section>
@@ -940,14 +905,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p><p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${syncing ? 'animate-pulse bg-indigo-300' : error || !lastSyncedAt ? 'bg-amber-300' : 'bg-emerald-400'}`} />{syncing ? 'Refreshing live bids' : error || !lastSyncedAt ? 'Updates delayed - refresh needed' : `Last checked ${new Date(lastSyncedAt).toLocaleTimeString()}`}</p></div>
+            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p><p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${syncing ? 'animate-pulse bg-indigo-300' : error || !lastSyncedAt ? 'bg-amber-300' : 'bg-emerald-400'}`} />{syncing ? 'Syncing automatically' : error || !lastSyncedAt ? 'Updates delayed — retrying automatically' : `Last checked ${new Date(lastSyncedAt).toLocaleTimeString()}`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="tablist" aria-label="Auction views">
               <button type="button" role="tab" aria-selected={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" role="tab" aria-selected={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
             </div>
           </div>
           <div className="flex min-w-0 gap-2">
-          <button type="button" disabled={syncing} className="icon-button" aria-label="Refresh auctions" onClick={() => void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.'))}><RefreshCw size={15} className={syncing ? 'animate-spin' : ''} /></button>
           <label className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <input

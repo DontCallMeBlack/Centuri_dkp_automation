@@ -46,7 +46,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }).catch((cause) => {
         if (!active) return;
         if (cause?.status === 401) { clearClientData(); userRef.current=null; setUser(null); router.replace('/login'); }
-        else setError('Your session could not be checked. Refresh to try again.');
+        else setError('Session checks are delayed. Retrying automatically.');
       });
     };
     check();
@@ -78,15 +78,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   if (publicPage) return <>{children}</>;
   const canManage = ['chief', 'general', 'guardian'].includes(user?.role ?? '');
   const canAdmin = ['chief', 'general'].includes(user?.role ?? '');
-  const currentLabel = pathname.startsWith('/admin/requests') ? 'Clan administration' : pathname.startsWith('/admin/boss-history') ? 'Kill history' : 'Clan workspace';
-  const navClick = (event: React.MouseEvent) => { const link=(event.target as HTMLElement).closest('a'); if (link) { const url=new URL(link.href); setCurrentView(url.searchParams.get('view') ?? ''); setMenuOpen(false); } };
+  const isRoster = pathname === '/dashboard' && !['auction', 'items', 'boss-history'].includes(currentView);
+  const isAuction = pathname === '/dashboard' && currentView === 'auction';
+  const isHistory = pathname === '/admin/boss-history' || pathname === '/dashboard' && currentView === 'boss-history';
+  const isCatalog = pathname === '/dashboard' && currentView === 'items';
+  const isAdministration = pathname.startsWith('/admin/requests');
+  const currentLabel = isAdministration ? 'Clan administration' : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : 'Roster';
+  const navClick = (event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    const link=(event.target as HTMLElement).closest('a');
+    if (link) { const url=new URL(link.href); setCurrentView(url.searchParams.get('view') ?? ''); setMenuOpen(false); }
+  };
   const nav = <>
     <p className="nav-group-label">Workspace</p>
-    <Link className={`shell-nav-link ${pathname === '/dashboard' && !currentView ? 'is-active' : ''}`} href="/dashboard"><LayoutDashboard /><span>Overview</span></Link>
-    <Link className={`shell-nav-link ${pathname === '/dashboard' && currentView === 'auction' ? 'is-active' : ''}`} href="/dashboard?view=auction"><Gavel /><span>Auction house</span><ArrowUpRight className="nav-end" /></Link>
-    <Link className={`shell-nav-link ${pathname === '/admin/boss-history' ? 'is-active' : ''}`} href="/admin/boss-history"><History /><span>Kill history</span></Link>
-    {canManage && <><p className="nav-group-label mt-7">Management</p><Link className={`shell-nav-link ${pathname === '/dashboard' && currentView === 'items' ? 'is-active' : ''}`} href="/dashboard?view=items"><Package /><span>Item catalog</span></Link></>}
-    {canAdmin && <Link className={`shell-nav-link ${pathname === '/admin/requests' ? 'is-active' : ''}`} href="/admin/requests"><UsersRound /><span>Members & access</span></Link>}
+    <Link className={`shell-nav-link ${isRoster ? 'is-active' : ''}`} aria-current={isRoster ? 'page' : undefined} href="/dashboard"><LayoutDashboard /><span>Roster</span></Link>
+    <Link className={`shell-nav-link ${isAuction ? 'is-active' : ''}`} aria-current={isAuction ? 'page' : undefined} href="/dashboard?view=auction"><Gavel /><span>Auction house</span><ArrowUpRight className="nav-end" /></Link>
+    <Link className={`shell-nav-link ${isHistory ? 'is-active' : ''}`} aria-current={isHistory ? 'page' : undefined} href="/dashboard?view=boss-history"><History /><span>Kill history</span></Link>
+    {canManage && <><p className="nav-group-label mt-7">Management</p><Link className={`shell-nav-link ${isCatalog ? 'is-active' : ''}`} aria-current={isCatalog ? 'page' : undefined} href="/dashboard?view=items"><Package /><span>Item catalog</span></Link></>}
+    {canAdmin && <Link className={`shell-nav-link ${isAdministration ? 'is-active' : ''}`} aria-current={isAdministration ? 'page' : undefined} href="/admin/requests"><UsersRound /><span>Members & access</span></Link>}
   </>;
   return <SessionContext.Provider value={user}><div className="workspace">
     <a className="skip-link" href="#main-content">Skip to content</a>

@@ -42,7 +42,7 @@ Accounts have one of two statuses: **pending** or **approved**. Only approved ac
 | `/admin/requests` | Clan administration page; Chief and General only. |
 | `/admin/boss-history` | Standalone boss history page; any approved clan account can view it, while Chief, General, and Guardian can edit/delete awards. |
 
-The dashboard contains **Overview**, **Auction house**, **Kill history**, and a conditional **Item catalog** tab. A persistent sidebar links to Overview, Auction house, Kill history, Item catalog for staff, and Members & access for Chiefs/Generals. A mobile drawer exposes the same permitted links. Tab state uses `/dashboard?view=auction|items|boss-history`; Overview uses `/dashboard`.
+The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, **Auction house**, **Kill history**, **Item catalog** for staff, and **Members & access** for Chiefs/Generals. The duplicate horizontal workspace button bar is removed. The header names the current section and the active link exposes `aria-current`. Views use `/dashboard?view=auction|items|boss-history`; Roster uses `/dashboard`. The older `/admin/boss-history` address remains supported. Sidebar history uses the embedded view so switching sections preserves visited views and drafts.
 
 ### 3.2 HTTP API routes
 
@@ -102,7 +102,7 @@ The roster is read from the Google Sheets tab `DKP_Sheet_automated`, range `A3:I
 | H | Available | DKP available to the toon; used in the leaderboard and bidding limits. |
 | I | Five-week activity | Rolling activity total maintained by the weekly reset process. |
 
-Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreadsheet locale cannot change the balances used for accounting. Returned values are normalized to strings at the integration boundary. Blank and dash cells count as zero; nonnumeric, nonfinite, or numerically unsafe values reject the roster read or mutation instead of silently becoming zero. Numeric calculations must remain within JavaScript's safe numeric range. Existing fractional DKP values remain supported.
+Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreadsheet locale cannot change the balances used for accounting. Returned values are normalized to strings at the integration boundary. Rows without a nonblank owner are excluded before numeric parsing, so formula errors in unused template rows cannot block awards or posting. Physical Sheet row numbers are retained. Blank cells and standalone hyphen/en-dash/em-dash placeholders count as zero. Numeric text permits decimals, scientific notation, valid thousands separators, and a leading Unicode minus. Nonnumeric, nonfinite, malformed or unsafe balances on real toon rows reject the operation and identify the exact cell, such as `H15`; they never silently become zero. Existing fractional DKP values remain supported.
 
 ### 5.2 Toon/account links
 
@@ -133,10 +133,11 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 ### 6.1 Shared dashboard shell
 
 - The persistent shell has desktop sidebar, mobile navigation drawer, breadcrumb header, profile, role icon, permitted management links, Sign Out, skip-to-content link, and a clan-help footer.
-- Four statistics show approved clan accounts, active linked toons, the signed-in user’s aggregate available DKP before auction holds, and their Sheet weekly-earned total. This current-week statistic is distinct from the previous-completed-week auction eligibility value.
-- Overview contains the leaderboard and staff Record a kill/Distribute DKP controls. Tabs support arrow/Home/End keyboard navigation, expose tab panels, and retain visited views, search/filter state and drafts while switching.
+- The Roster page shows three summary statistics: approved clan accounts, active linked toons, and the signed-in user’s aggregate available DKP before auction holds. These statistics and the welcome header appear only on Roster.
+- A **My toon DKP** section replaces the aggregate My weekly earned card. Every linked toon has its own responsive rounded card showing its name, class/icon, available DKP before auction holds, and its individual earned-this-week value. Loading and no-linked-toon states are explicit.
+- Roster contains the leaderboard and staff Record a kill/Distribute DKP controls. Keyboard-operable sidebar/drawer links select the workspace view. Visited views, search/filter state and drafts remain mounted while switching; their hidden sections have descriptive accessible names instead of obsolete tab relationships.
 - URL query state supports direct links to auctions, catalog, and embedded history. Feature panels load on demand rather than all shipping in the initial dashboard chunk.
-- Scoped in-memory snapshots render returning views immediately while deduplicated requests revalidate. The dashboard refreshes on entry, visible return, every two minutes while visible, explicit Refresh, and DKP change events. Old in-flight responses are discarded after a mutation or session change.
+- Scoped in-memory snapshots render returning views immediately while deduplicated requests revalidate. Refresh buttons are removed. Roster, history and member administration update automatically about every two minutes; catalog and full auction snapshots about every three minutes, with up to 15% jitter. Returning to a section, visibility/focus, reconnecting, and relevant mutation events trigger revalidation. Hidden views/offline tabs pause requests. Wake events have a 15-second cooldown, per-view requests cannot overlap, and failures retry after 15 seconds with exponential backoff capped at ten minutes. Existing content and drafts remain visible. Old in-flight responses are discarded after a mutation or session change.
 - A separate fast session endpoint populates the shell without waiting for Google Sheets; session identity is refreshed on return and periodically. Server authorization remains authoritative.
 
 ### 6.2 Active toon leaderboard
@@ -152,7 +153,7 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 
 ### 6.3 Boss attendance DKP distribution
 
-- Chiefs, Generals, and Guardians can open the distribution picker from Overview. Other roles see an explanation that the operation is restricted.
+- Chiefs, Generals, and Guardians can open the distribution picker from Roster. Other roles see an explanation that the operation is restricted.
 - The boss list and award values are fixed:
 
 | Boss | Tier shown | Award per selected toon |
@@ -177,7 +178,7 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 
 ## 7. Boss history and attendance correction
 
-- The Kill history dashboard tab and `/admin/boss-history` show boss awards newest first. All approved roles can read the history; only Chief, General, and Guardian can edit it.
+- The Kill history workspace view and `/admin/boss-history` show boss awards newest first. All approved roles can read the history; only Chief, General, and Guardian can edit it.
 - Each entry shows boss name, points per toon, status, recorded time, creator, optional last editor, participant count, and participant names (account, falling back to owner).
 - Pending, failed, and updating records remain visible. Safe recovery messages are shown; raw legacy provider errors are suppressed. Applied records offer edit and delete controls. Recoverable pending/updating records offer Resume controls, using the stored original request and target selection.
 - A manager can edit an applied award’s attendance by selecting any currently existing roster rows, including clearing all attendees. The page displays the roster as checkboxes and a selected count.
@@ -208,7 +209,7 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 - Chiefs, Generals, and Guardians can post an auction. Clansmen see a restricted-access notice.
 - Posting selects a previously saved catalog item. New items must first be created from the Items section.
 - The item must have one or two saved eligible roles, and each role must still be present in the live roster. The UI disables posting if the role is missing or invalid; the server checks again against a fresh roster.
-- Posting snapshots the item name, boss type, and role(s) onto a new auction record, records the poster, and sets the initial end time to two minutes after posting.
+- Posting snapshots the item name, boss type, and role(s) onto a new auction record, records the poster, and sets the initial end time to **24 hours** after posting. Existing active records keep their stored deadlines. Legacy Base/Prime catalog boss labels normalize to Prot when posting; unknown labels produce a specific catalog correction error.
 - The item selector searches catalog item names and initially displays 40 matches, with a Show more control adding 40 at a time. The selected item and its roles/type are shown before submission.
 - Successful posting closes the form, shows a confirmation, and refreshes auction data.
 
@@ -221,13 +222,13 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 - A bid reserves points in a MongoDB hold record. It does not deduct the sheet balance immediately. The leading reservation is released when outbid; a new reservation is added to the new leading toon. Existing reservations across other auctions reduce that toon’s maximum bid.
 - The server rechecks auction status, bid order, toon ownership, role, current roster, available balance, and holds inside a MongoDB transaction. Concurrent higher bids cause the stale bid to fail and ask the user to refresh.
 - The only bid persisted on the auction is the current leading bid (and ultimately the winner); a full outbid history is not stored by this model.
-- If the bid arrives with two minutes or less remaining, the end time is extended to two minutes after that bid. Since the initial auction is also two minutes, each accepted bid made before expiry resets the remaining period to two minutes.
+- A bid arriving in the final **five minutes** leaves five minutes on the clock from that accepted bid. Earlier bids preserve the existing deadline. Repeated late bids can extend the auction repeatedly; expired auctions cannot accept bids.
 - After a successful bid, the user sees a confirmation; the bid box clears and the auction data refreshes. If a bid fails, an error is shown and a refresh is attempted.
 
 ### 8.4 Auction closing, settlement, and delivery
 
 - Auction API requests schedule expiry settlement using Next `after()`, allowing a read to return before Google Sheets settlement completes. Sweeps process at most 25 expiries, have a 45-second work deadline and a two-second per-process scheduling throttle. Transient failures retry after a 30-second delay; deterministic integrity failures pause for verified review. There is no independent settlement worker when the application receives no requests.
-- An expired auction with no leading bid becomes completed with no delivery requirement. Its poster can mark the item as mailed to the bank or repost it for a new two-minute auction. A repost creates a new auction record; the old record remains in history.
+- An expired auction with no leading bid becomes completed with no delivery requirement. Its poster can mark the item as mailed to the bank or repost it for a new **24-hour** auction. A repost creates a new auction record; the old record remains in history.
 - An expired auction with a leading bid deducts the winning amount from Weekly Spent, Lifetime Spent, and Available (Sheet E, G, H), consumes the matching hold, marks the winning bid as winner, and creates a pending delivery task.
 - DKP settlement uses an idempotent mutation key per auction and stored settlement attempt/lease state to support recovery from interrupted updates. A legacy/interrupted settlement lacking a replay marker can be flagged for manual review rather than automatically replayed.
 - The poster or a Chief, General, or Guardian can mark a pending winner delivery as done. The record stores who confirmed it and when. DKP is deducted at auction settlement, not at mail confirmation.
@@ -240,8 +241,8 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 ### 8.5 Auction live refresh and cache
 
 - The client ticks the displayed countdown once per second.
-- While the page is visible, lightweight bid/state polling occurs every 30 seconds. When there are no active, settling or failed auctions, idle polls are throttled to once per five minutes.
-- The complete roster/catalog/auction refresh occurs on first load, every 15 minutes while visible, after window focus/return (with a five-second cooldown), and after actions that mutate an auction.
+- While the view is visible, lightweight bid/state polling occurs every 30–35 seconds with jitter. When there are no active, settling or failed auctions, idle compact polls are throttled to once per five minutes. Compact polls do not overlap.
+- Complete roster/catalog/auction snapshots refresh automatically on entry, about every three minutes while visible, on focus/return/reconnect with a 15-second cooldown, and after relevant mutations. Errors trigger bounded retry backoff; initial failures recover automatically. There is no manual Refresh auctions button.
 - Poll responses carry per-auction version tokens; unchanged data can return without a full response. Poll failures leave the last known state visible and are retried on subsequent polling.
 - Private snapshots remain in tab memory for up to five minutes and are revalidated on entry. No personal auction cache is persisted to session storage; legacy cache entries are cleared at logout. Session-generation guards discard results from a previous account. Returning to a visited tab preserves content during its refresh.
 - Compact updates refresh the current user’s full holds/balances when their leading bid, bid version or auction status changes. Pending/expired/settling auctions continue polling; hidden tabs stop their frequent work. Bidding is disabled until the view has a confirmed refresh and while syncing; server balance checks still decide acceptance.
@@ -288,7 +289,7 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 
 - Only Chief and General can load `/admin/requests` data or execute its API actions.
 - The page has Sign-up requests, Members, and Activity log sections. Badge counts display pending requests, approved members, and audit events loaded (up to 100).
-- The shared sidebar Overview link returns to the dashboard. A non-manager sees a manager-access-required message and a dashboard button; an unauthenticated user is sent to login.
+- The shared sidebar Roster link returns to the dashboard. A non-manager sees a manager-access-required message and a dashboard button; an unauthenticated user is sent to login. Member data revalidates automatically; its former Refresh members button is removed.
 
 ### 10.2 Pending requests
 
