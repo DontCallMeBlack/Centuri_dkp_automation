@@ -32,16 +32,18 @@ export interface IAuction extends Document {
   settlementAttemptId?: string;
   settlementLeaseUntil?: Date;
   settlementNeedsReview?: boolean;
+  settlementRetryAt?: Date;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 const BidSchema = new Schema<IAuctionBid>({
   userId: { type: Schema.Types.ObjectId, required: true },
   nickname: { type: String, required: true },
-  rowIndex: { type: Number, required: true },
+  rowIndex: { type: Number, required: true, min: 3, max: 1000, validate: Number.isInteger },
   owner: { type: String, required: true },
   account: { type: String, default: '' },
-  amount: { type: Number, required: true },
+  amount: { type: Number, required: true, min: 1, max: Number.MAX_SAFE_INTEGER, validate: Number.isSafeInteger },
   placedAt: { type: Date, required: true },
 }, { _id: false });
 
@@ -63,7 +65,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   },
   highBid: { type: BidSchema },
   winner: { type: BidSchema },
-  bidVersion: { type: Number, default: 0 },
+  bidVersion: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
   deliveryStatus: {
     type: String,
     enum: ['pending', 'done', 'not-required', 'banked', 'reposted'],
@@ -77,6 +79,7 @@ const AuctionSchema: Schema<IAuction> = new Schema({
   settlementAttemptId: { type: String },
   settlementLeaseUntil: { type: Date },
   settlementNeedsReview: { type: Boolean, default: false },
+  settlementRetryAt: { type: Date },
 }, { timestamps: { createdAt: true, updatedAt: true } });
 
 AuctionSchema.index({ status: 1, endsAt: 1 });

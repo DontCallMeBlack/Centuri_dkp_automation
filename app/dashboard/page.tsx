@@ -1,12 +1,18 @@
 // app/dashboard/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef, useDeferredValue } from 'react';
+import { useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
+import RoleBadge from '@/components/RoleBadge';
+import Dialog from '@/components/Dialog';
+import LoadingSurface from '@/components/LoadingSurface';
+import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Shield, LogOut, Users, Zap, UserCheck, X, Package } from 'lucide-react';
-import BossHistoryPanel from '@/components/BossHistoryPanel';
-import AuctionHousePanel from '@/components/AuctionHousePanel';
-import AuctionItemsPanel from '@/components/AuctionItemsPanel';
+import { Search, Plus, CheckCircle2, Users, Zap, X, Package, Wallet, Coins, Swords, RefreshCw, LayoutGrid, Gavel, History } from 'lucide-react';
+const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface /> });
+const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface /> });
+const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface /> });
 
 interface RosterMember {
   rowIndex: number;
@@ -79,7 +85,15 @@ const ROLE_STYLES: Record<string, string> = {
   tank: 'border-pink-400/30 bg-pink-400/10 text-pink-300',
 };
 
-export default function DashboardPage() {
+export default function DashboardPage() { return <Suspense fallback={<LoadingSurface />}><Dashboard /></Suspense>; }
+
+function Dashboard() {
+  const searchParams = useSearchParams();
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['dkp']));
+  const [refreshing, setRefreshing] = useState(false);
+  const [awardError, setAwardError] = useState('');
+  const requestIds = useRef(new Map<string, string>());
+  const activeRef = useRef(true);
   const [activeTab, setActiveTab] = useState<'dkp' | 'auction' | 'boss-history' | 'items'>('dkp');
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
@@ -92,34 +106,49 @@ export default function DashboardPage() {
   const [pickerQuery, setPickerQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
+  const deferredMemberQuery = useDeferredValue(memberQuery);
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const router = useRouter();
 
   useEffect(() => {
-    fetchData();
+    activeRef.current = true;
+    const cached = peekData<any>('/api/dkp');
+    if (cached) { setRoster(cached.roster); setClanMembers(cached.clanMembers); setUserSession(cached.user); setRosterSync(cached.rosterSync); setLoading(false); }
+    void fetchData();
+    const update = () => { if (document.visibilityState === 'visible') void fetchData(); };
+    window.addEventListener('centuri:dkp-changed', update);
+    document.addEventListener('visibilitychange', update);
+    const timer = window.setInterval(update, 120_000);
+    return () => { activeRef.current = false; window.clearInterval(timer); window.removeEventListener('centuri:dkp-changed', update); document.removeEventListener('visibilitychange', update); };
   }, []);
 
+  useEffect(() => {
+    const view = searchParams.get('view');
+    if (view === 'auction' || view === 'items' || view === 'boss-history') setActiveTab(view);
+    else setActiveTab('dkp');
+  }, [searchParams]);
+  useEffect(() => { setVisitedTabs((current) => new Set([...current, activeTab])); }, [activeTab]);
+  const changeTab = (tab: 'dkp' | 'auction' | 'boss-history' | 'items') => {
+    setActiveTab(tab);
+    window.history.replaceState(null, '', tab === 'dkp' ? '/dashboard' : `/dashboard?view=${tab}`);
+    window.dispatchEvent(new Event('centuri:view-changed'));
+  };
+
+
   const fetchData = async () => {
+    setRefreshing(true);
     try {
-      const res = await fetch('/api/dkp');
-      if (res.status === 401) {
-        router.push('/login');
-        return;
-      }
-      const data = await res.json();
-      if (data.success) {
-        setRoster(data.roster);
-        setClanMembers(data.clanMembers);
-        setUserSession(data.user);
-        setRosterSync(data.rosterSync);
-        setRosterSyncError('');
-      }
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; rosterSync: RosterSyncStatus}>('/api/dkp');
+      if (!data.success) throw new Error('The roster could not be refreshed.');
+      if (!activeRef.current) return;
+      setRoster(data.roster); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSync(data.rosterSync); setRosterSyncError('');
     } catch (err) {
-      console.error('Failed to load dashboard data', err);
-      setRosterSyncError(err instanceof Error ? err.message : 'Unable to load Google Sheets data');
+      if (!activeRef.current) return;
+      if (err instanceof ApiError && err.status === 401) { clearClientData(); router.replace('/login'); }
+      else if (activeRef.current) setRosterSyncError(err instanceof Error ? err.message : 'Unable to load clan data');
     } finally {
-      setLoading(false);
+      if (activeRef.current) { setLoading(false); setRefreshing(false); }
     }
   };
 
@@ -131,19 +160,24 @@ export default function DashboardPage() {
 
   const handleDkpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedMembers.length === 0) {
-      alert('Please select at least one member.');
+    if (selectedMembers.length === 0 || submitting) {
+      setAwardError('Please select at least one member.');
       return;
     }
 
     setSubmitting(true);
+    setAwardError('');
     setStatusMessage('');
+    const payloadKey = JSON.stringify({ bossName: selectedBoss, selectedRows: [...selectedMembers].sort((a,b) => a-b) });
+    const requestId = requestIds.current.get(payloadKey) ?? crypto.randomUUID();
+    requestIds.current.set(payloadKey, requestId);
 
     try {
       const res = await fetch('/api/dkp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          requestId,
           bossName: selectedBoss,
           selectedRows: selectedMembers,
         }),
@@ -152,13 +186,15 @@ export default function DashboardPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
+      requestIds.current.delete(payloadKey);
       setStatusMessage(data.message);
+      notifyDkpChanged();
       setSelectedMembers([]);
       setPickerOpen(false);
       setPickerQuery('');
       await fetchData();
-    } catch (err: any) {
-      alert(err.message || 'Error submitting DKP');
+    } catch (err: unknown) {
+      setAwardError(err instanceof Error ? err.message : 'The award could not be confirmed. Retry with these same participants.');
     } finally {
       setSubmitting(false);
     }
@@ -197,7 +233,7 @@ export default function DashboardPage() {
     .filter((toon) =>
       `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`
         .toLowerCase()
-        .includes(memberQuery.toLowerCase())
+        .includes(deferredMemberQuery.toLowerCase())
     );
 
   const filteredRoster = roster.filter((member) =>
@@ -207,162 +243,41 @@ export default function DashboardPage() {
   );
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(userSession?.role ?? '');
 
+  const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
+  const ownAvailable = ownToons.reduce((sum,toon) => sum+toon.available,0);
+  const ownWeekly = ownToons.reduce((sum,toon) => sum+toon.weeklyEarned,0);
+  const tabOptions = [
+    ['dkp','Overview',LayoutGrid], ['auction','Auction house',Gavel], ['boss-history','Kill history',History],
+    ...(canSubmitDkp ? [['items','Item catalog',Package]] : []),
+  ] as const;
+
   return (
-    <div className="min-h-screen bg-[#07090e] text-slate-100 flex flex-col">
-      {/* Top Navigation Bar */}
-      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md px-4 sm:px-6 py-4 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center sticky top-0 z-30">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center">
-            <Shield className="w-5 h-5 text-indigo-400" />
-          </div>
-          <div>
-            <h1 className="font-bold tracking-tight text-white text-base">Centuri Clan</h1>
-            <p className="text-xs text-slate-400">
-              Welcome, <span className="text-indigo-400 font-semibold">{userSession?.nickname}</span>
-              {userSession?.role && <span className="capitalize"> ({userSession.role})</span>}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            onClick={() => router.push('/admin/requests')}
-            className="flex items-center space-x-2 text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 px-3.5 py-2 rounded-xl border border-indigo-500/40 transition-all"
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            <span>Member Requests</span>
-          </button>
-
-          {['chief', 'general', 'guardian'].includes(userSession?.role ?? '') && (
-            <button
-              onClick={() => setActiveTab('items')}
-              className={`flex items-center space-x-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-all ${
-                activeTab === 'items'
-                  ? 'border-emerald-500/40 bg-emerald-600/20 text-emerald-300'
-                  : 'border-emerald-500/30 bg-emerald-600/10 text-emerald-300 hover:bg-emerald-600/20'
-              }`}
-            >
-              <Package className="h-3.5 w-3.5" />
-              <span>Items</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => {
-              document.cookie = 'token=; Max-Age=0; path=/;';
-              router.push('/login');
-            }}
-            className="flex items-center space-x-2 text-xs font-semibold bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white px-3.5 py-2 rounded-xl border border-slate-700/50 transition-all"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Sub-header / Stats Bar */}
-      <div className="bg-slate-900/30 border-b border-slate-800/60 px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-6xl w-full mx-auto mt-4 rounded-2xl">
-        <div className="flex items-center space-x-3 bg-slate-900/60 border border-slate-800 p-3.5 rounded-xl">
-          <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400">
-            <Users className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400 uppercase font-medium">Active clan accounts</p>
-            <p className="text-lg font-bold text-white">{clanMembers.length}</p>
-            <p className="text-[10px] text-slate-500">Approved members and their linked toons</p>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-3 bg-slate-900/60 border border-slate-800 p-3.5 rounded-xl">
-          <div className="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-400">
-            <Zap className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-xs text-slate-400 uppercase font-medium">Sync Status</p>
-            <p className={`mt-0.5 flex items-center gap-1.5 text-sm font-semibold ${
-              rosterSyncError
-                ? 'text-rose-300'
-                : rosterSync?.stale ? 'text-amber-300' : 'text-emerald-400'
-            }`}>
-              <span className={`h-2 w-2 rounded-full ${
-                rosterSyncError
-                  ? 'bg-rose-300'
-                  : rosterSync?.stale ? 'bg-amber-300' : 'animate-pulse bg-emerald-400'
-              }`} />
-              {rosterSyncError
-                ? 'Google Sheets unavailable'
-                : rosterSync ? rosterSync.stale ? 'Cached roster' : 'Google Sheets synced' : 'Checking roster...'}
-            </p>
-            {rosterSyncError && (
-              <p className="mt-1 break-words text-[10px] text-rose-300">{rosterSyncError}</p>
-            )}
-            {rosterSync && (
-              <p className="mt-1 text-[10px] text-slate-500">
-                {rosterSync.refreshDelayed ? 'Refresh delayed; using cached data · ' : 'Last updated · '}
-                {new Date(rosterSync.fetchedAt).toLocaleTimeString()}
-              </p>
-            )}
-          </div>
-        </div>
+    <div className="space-y-6">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div><p className="page-kicker">Your clan. In sync.</p><h1 className="page-title">Welcome back{userSession?.nickname ? `, ${userSession.nickname}` : ''}<span className="text-indigo-400">.</span></h1><p className="page-description">Your raids, rewards, and next upgrade. All in one place.</p></div>
+        <div className="flex items-center gap-2"><button type="button" disabled={refreshing} onClick={() => void fetchData()} className="secondary-button"><RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh</button>{canSubmitDkp && <button className="primary-button" onClick={() => { setAwardError(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}</div>
       </div>
-
-      <nav aria-label="Dashboard sections" className="mx-auto mt-5 w-full max-w-6xl px-4 sm:px-6">
-        <div role="tablist" className="flex w-fit max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60 p-1">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'dkp'}
-          onClick={() => setActiveTab('dkp')}
-          className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:px-4 ${
-            activeTab === 'dkp'
-              ? 'bg-indigo-500/15 text-indigo-300 shadow-sm'
-              : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-          }`}
-        >
-          DKP History
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'auction'}
-          onClick={() => setActiveTab('auction')}
-          className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:px-4 ${
-            activeTab === 'auction'
-              ? 'bg-indigo-500/15 text-indigo-300 shadow-sm'
-              : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-          }`}
-        >
-          Auction House
-        </button>
-        {['chief', 'general', 'guardian', 'clansman'].includes(userSession?.role ?? '') && (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'boss-history'}
-            onClick={() => setActiveTab('boss-history')}
-            className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:px-4 ${
-              activeTab === 'boss-history'
-                ? 'bg-indigo-500/15 text-indigo-300 shadow-sm'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            Kill Logs
-          </button>
-        )}
-        </div>
+      {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan'],[Wallet,'My available DKP',ownAvailable,'Before active auction holds'],[Coins,'My weekly earned',ownWeekly,'Across your linked toons']].map(([Icon,label,value,caption]) => {
+          const I = Icon as typeof Users;
+          return <div key={String(label)} className="surface stat-card"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
+        })}
+      </div>
+      <nav aria-label="Workspace sections" className="section-tabs" role="tablist">
+        {tabOptions.map(([key,label,Icon],index) => <button key={String(key)} type="button" role="tab" id={`tab-${key}`} aria-controls={`panel-${key}`} aria-selected={activeTab === key} tabIndex={activeTab === key ? 0 : -1} onClick={() => changeTab(key as typeof activeTab)} onKeyDown={(event) => { if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return; event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabOptions.length-1 : (index+(event.key === 'ArrowRight' ? 1 : -1)+tabOptions.length)%tabOptions.length; changeTab(tabOptions[next][0] as typeof activeTab); document.getElementById(`tab-${tabOptions[next][0]}`)?.focus(); }} className="section-tab"><Icon size={15} strokeWidth={1.7} />{String(label)}</button>)}
       </nav>
-
       {/* Main Content Area */}
-      <main className="flex-1 p-6 max-w-6xl w-full mx-auto">
-        {activeTab === 'dkp' ? (
+      <main>
+        <section id="panel-dkp" role="tabpanel" aria-labelledby="tab-dkp" hidden={activeTab !== 'dkp'}>
           <div className="space-y-8">
             {canSubmitDkp && (
-              <section className="relative overflow-hidden rounded-2xl border border-indigo-400/25 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 px-4 py-4 shadow-xl shadow-indigo-950/25 sm:px-5">
+              <section className="surface relative overflow-hidden !border-indigo-400/10 !bg-indigo-400/[.025] px-5 py-5">
                 <div className="pointer-events-none absolute -right-10 -top-20 h-48 w-48 rounded-full bg-indigo-400/15 blur-3xl" />
                 <div className="relative flex flex-row items-center justify-between gap-3">
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-300">Raid operations</p>
-                    <h2 className="mt-0.5 text-lg font-black tracking-tight text-white sm:text-xl">Distribute boss DKP</h2>
+                    <h2 className="mt-1 text-base font-semibold tracking-tight text-white">Another boss down?</h2><p className="mt-2 text-xs text-slate-500">Record the kill and reward everyone who was there.</p>
                   </div>
                   <button
                     type="button"
@@ -370,9 +285,9 @@ export default function DashboardPage() {
                       setPickerQuery('');
                       setPickerOpen(true);
                     }}
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-3.5 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 sm:px-4 sm:text-sm"
+                    className="secondary-button shrink-0"
                   >
-                    <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Submit &amp; distribute</span><span className="sm:hidden">Distribute</span>
+                    <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Distribute DKP</span><span className="sm:hidden">Distribute</span>
                   </button>
                 </div>
                 {statusMessage && (
@@ -384,23 +299,24 @@ export default function DashboardPage() {
               </section>
             )}
             {!canSubmitDkp && (
-              <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
-                Boss DKP distribution is available to Chiefs, Generals, and Guardians.
+              <p className="surface px-4 py-3 text-xs text-slate-400">
+                Your DKP and clan activity are shown below. Clan leadership records boss awards.
               </p>
             )}
 
-            <section className="rounded-3xl border border-slate-800 bg-slate-900/50 p-5 shadow-xl sm:p-6">
+            <section className="surface overflow-hidden p-5 sm:p-6">
               <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-300">The roster</p>
-                  <h2 className="mt-1 text-xl font-bold text-white">Active toon leaderboard</h2>
-                  <p className="mt-1 text-sm text-slate-400">Linked toons grouped by role, then ranked by available DKP.</p>
+                  <p className="page-kicker">The roster</p>
+                  <h2 className="mt-1 text-lg font-semibold text-white">Clan leaderboard</h2>
+                  <p className="mt-2 text-xs text-slate-500">Ranked within each class by available DKP.</p>
                 </div>
                 <label className="relative w-full sm:max-w-sm">
                   <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
                   <input
                     type="search"
-                    placeholder="Find a clan member, owner, or toon..."
+                    aria-label="Search clan member, owner, toon, or class"
+                    placeholder="Search clan members..."
                     value={memberQuery}
                     onChange={(event) => setMemberQuery(event.target.value)}
                     className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
@@ -409,14 +325,14 @@ export default function DashboardPage() {
               </div>
 
               {loading ? (
-                <div className="animate-pulse py-12 text-center text-sm text-slate-500">Syncing active clan roster...</div>
+                <LoadingSurface rows={6} label="Preparing clan roster" />
               ) : rankedActiveToons.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-800 py-12 text-center text-sm text-slate-500">
                   No active toons match that search.
                 </div>
               ) : (
-                <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/50 shadow-xl shadow-black/10">
-                  <table className="w-full table-fixed border-collapse text-left">
+                <div className="min-w-0 overflow-x-auto rounded-xl border border-white/5">
+                  <table className="roster-table">
                     <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] uppercase tracking-[0.16em] text-slate-500">
                       <tr>
                         <th scope="col" className="hidden w-14 px-3 py-3 text-center md:table-cell">Rank</th>
@@ -449,16 +365,14 @@ export default function DashboardPage() {
                               </span>
                             </td>
                             <td className="overflow-hidden px-2 py-2.5 sm:px-3">
-                              <span className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-1 text-[9px] font-bold uppercase tracking-wide sm:px-2 sm:text-[10px] ${roleStyle}`}>
-                                {toon.subClass || 'Unassigned'}
-                              </span>
+                              <RoleBadge role={toon.subClass} gameClass />
                             </td>
                             <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-300 lg:table-cell">
                               <span className="block truncate" title={toon.owner}>{toon.owner}</span>
                             </td>
                             <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.earned.toLocaleString()}</td>
                             <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.spent.toLocaleString()}</td>
-                            <td className="overflow-hidden px-2 py-2.5 text-right text-xs font-black tabular-nums text-emerald-300 sm:px-3 sm:text-sm">{toon.available.toLocaleString()}</td>
+                            <td className={`overflow-hidden px-2 py-2.5 text-right text-xs font-semibold tabular-nums sm:px-3 sm:text-sm ${toon.available < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{toon.available.toLocaleString()}</td>
                           </tr>
                         );
                       })}
@@ -467,28 +381,17 @@ export default function DashboardPage() {
                 </div>
               )}
             </section>
+            <div role="status" className="flex items-center justify-end gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'animate-pulse bg-indigo-400' : rosterSyncError || rosterSync?.stale ? 'bg-amber-300' : rosterSync ? 'bg-emerald-400' : 'bg-slate-600'}`} />{refreshing ? 'Refreshing roster' : rosterSyncError || rosterSync?.stale ? 'Cached roster - refresh needed' : rosterSync ? `Updated ${new Date(rosterSync.fetchedAt).toLocaleTimeString()}` : 'Roster not loaded'}</div>
           </div>
-        ) : activeTab === 'auction' ? (
-          <AuctionHousePanel />
-        ) : activeTab === 'items' ? (
-          <AuctionItemsPanel />
-        ) : (
-          <BossHistoryPanel embedded />
-        )}
+        </section>
+        {visitedTabs.has('auction') && <section id="panel-auction" role="tabpanel" aria-labelledby="tab-auction" hidden={activeTab !== 'auction'}><AuctionHousePanel active={activeTab === 'auction'} /></section>}
+        {canSubmitDkp && visitedTabs.has('items') && <section id="panel-items" role="tabpanel" aria-labelledby="tab-items" hidden={activeTab !== 'items'}><AuctionItemsPanel /></section>}
+        {visitedTabs.has('boss-history') && <section id="panel-boss-history" role="tabpanel" aria-labelledby="tab-boss-history" hidden={activeTab !== 'boss-history'}><BossHistoryPanel embedded /></section>}
+        {activeTab === 'items' && !loading && !canSubmitDkp && <p role="alert" className="surface p-6 text-sm text-slate-400">Item management requires a Chief, General, or Guardian account.</p>}
       </main>
 
       {pickerOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 p-0 backdrop-blur-sm sm:items-center sm:p-5"
-          onClick={() => !submitting && setPickerOpen(false)}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="award-picker-title"
-            className="flex max-h-[95vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-slate-700 bg-[#0b1020] shadow-2xl shadow-black/60 sm:rounded-3xl"
-            onClick={(event) => event.stopPropagation()}
-          >
+        <Dialog labelledBy="award-picker-title" busy={submitting} onClose={() => setPickerOpen(false)}>
             <div className="relative shrink-0 overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 p-5 sm:p-6">
               <div className="pointer-events-none absolute -right-8 -top-16 h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl" />
               <div className="relative flex min-w-0 items-start justify-between gap-3">
@@ -509,7 +412,8 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <form onSubmit={handleDkpSubmit} className="flex min-h-0 flex-1 flex-col">
+            <form onSubmit={handleDkpSubmit} className="flex min-h-0 flex-1 flex-col"><fieldset disabled={submitting} className="contents"><legend className="sr-only">Boss and participants</legend>
+              {awardError && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-200">{awardError}</p>}
               <div className="grid gap-4 border-b border-slate-800 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:p-6">
                 <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Boss defeated
@@ -551,6 +455,7 @@ export default function DashboardPage() {
                   <input
                     autoFocus
                     type="search"
+                    aria-label="Search all sheet toons"
                     placeholder="Search owner, toon, or class..."
                     value={pickerQuery}
                     onChange={(event) => setPickerQuery(event.target.value)}
@@ -568,7 +473,7 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                <div className="grid max-h-[35dvh] min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                   {filteredRoster.map((toon) => {
                     const selected = selectedMembers.includes(toon.rowIndex);
                     return (
@@ -619,9 +524,8 @@ export default function DashboardPage() {
                   {submitting ? 'Applying award...' : `Distribute to ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
                 </button>
               </div>
-            </form>
-          </section>
-        </div>
+            </fieldset></form>
+        </Dialog>
       )}
     </div>
   );

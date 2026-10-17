@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ImagePlus, LoaderCircle, Package, Save, Search, Trash2 } from 'lucide-react';
+import Dialog from '@/components/Dialog';
+import RoleBadge from '@/components/RoleBadge';
+import LoadingSurface from '@/components/LoadingSurface';
+import { ImagePlus, LoaderCircle, Package, Save, Search, Trash2, Pencil, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { optimizeImageForUpload } from '@/lib/auctionImageClient';
 
 interface CatalogItem {
@@ -111,7 +114,7 @@ function SquareImageCropStep({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="square-crop-title">
+    <Dialog labelledBy="square-crop-title" busy={processing} onClose={onCancel} className="!max-w-lg">
       <div className="w-full max-w-lg rounded-3xl border border-indigo-300/20 bg-slate-950 p-4 shadow-2xl shadow-black/50 sm:p-6">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -124,6 +127,15 @@ function SquareImageCropStep({
 
         <div
           ref={frameRef}
+          role="img"
+          aria-label="Image crop. Use arrow keys to move the image; adjust zoom with the slider below."
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (!dimensions || !['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+            event.preventDefault();
+            const step = cropSide * (event.shiftKey ? 0.1 : 0.02);
+            setCrop((current) => ({...current,x:clamp(current.x+(event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0),dimensions.width-cropSide),y:clamp(current.y+(event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0),dimensions.height-cropSide)}));
+          }}
           className="relative mx-auto aspect-square w-[min(80vw,320px)] touch-none cursor-grab overflow-hidden rounded-2xl border-2 border-indigo-300/70 bg-slate-900 shadow-[0_0_35px_rgba(99,102,241,0.15)] active:cursor-grabbing"
           onPointerDown={(event) => {
             if (!dimensions) return;
@@ -168,7 +180,7 @@ function SquareImageCropStep({
           </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -268,6 +280,7 @@ function ItemEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [imageVersion, setImageVersion] = useState(0);
+  const [expanded, setExpanded] = useState(false);
 
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -289,11 +302,14 @@ function ItemEditor({
     }
   };
 
+  if (!expanded) return <article className="surface flex items-center gap-4 p-4"><div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/5 bg-slate-950/60"><img loading="lazy" decoding="async" width={64} height={64} src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`} alt={item.name} className="h-full w-full object-contain" /></div><div className="min-w-0 flex-1"><h4 className="truncate text-sm font-semibold text-slate-200" title={item.name}>{item.name}</h4><div className="mt-2 flex flex-wrap gap-1.5">{item.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="self-center text-[10px] text-slate-500">{item.bossType} / {item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span></div></div><button type="button" className="secondary-button shrink-0" onClick={() => setExpanded(true)} aria-label={`Edit ${item.name}`}><Pencil size={13} /><span className="hidden sm:inline">Edit item</span></button></article>;
+
   return (
-    <form onSubmit={save} className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/50 p-4 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:items-center">
+    <form onSubmit={save} className="surface grid gap-4 p-5 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:items-center"><div className="flex items-center justify-between gap-3 border-b border-white/5 pb-3 sm:col-span-3"><p className="text-xs font-semibold text-slate-300">Editing {item.name}</p><button type="button" className="secondary-button" disabled={saving} onClick={() => setExpanded(false)}>Done</button></div>
       <div className="relative h-20 w-20 overflow-hidden rounded-xl bg-slate-900">
         <img
           src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`}
+          loading="lazy" decoding="async" width={80} height={80}
           key={imageVersion}
           alt={item.name}
           className="h-full w-full object-contain"
@@ -393,6 +409,7 @@ export default function AuctionItemsPanel() {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [requiredRoles, setRequiredRoles] = useState<string[]>([]);
   const [bossType, setBossType] = useState('Prot');
@@ -463,6 +480,7 @@ export default function AuctionItemsPanel() {
       setRequiredRoles([]);
       setBossType('Prot');
       setFiles([]);
+      setCreateOpen(false);
       setNotice('Item added to the auction catalog.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to add saved item.');
@@ -508,33 +526,23 @@ export default function AuctionItemsPanel() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-3xl border border-indigo-400/20 bg-gradient-to-br from-indigo-950/70 via-slate-900 to-slate-950 p-5 shadow-xl sm:p-7">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-indigo-400/30 bg-indigo-400/10 text-indigo-300">
-            <Package className="h-5 w-5" />
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Auction House</p>
-            <h2 className="mt-1 text-xl font-black text-white sm:text-2xl">Saved Items</h2>
-            <p className="mt-1 text-sm text-slate-300">Chiefs, Generals, and Guardians can maintain each item’s image, role, and boss type here.</p>
-          </div>
-        </div>
-      </section>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h2 className="page-title">Great loot starts here.</h2><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
 
-      <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 sm:p-6">
+      {createOpen && <section id="create-catalog-form" className="surface space-y-4 p-5 sm:p-6">
         <div>
           <h3 className="font-bold text-white">Add catalog item</h3>
           <p className="mt-1 text-xs text-slate-400">Save the role and boss type with each item; Base and Prime are grouped as Prot. Images are optimized to WebP.</p>
         </div>
-        <form onSubmit={createItem} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+        <form onSubmit={createItem} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2">
           <input
             required
             maxLength={120}
             value={name}
             onChange={(event) => setName(event.target.value)}
+            aria-label="New catalog item name"
             placeholder="Item name"
             className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-indigo-400/60"
           />
@@ -583,7 +591,7 @@ export default function AuctionItemsPanel() {
             Add item
           </button>
         </form>
-      </section>
+      </section>}
 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -597,15 +605,14 @@ export default function AuctionItemsPanel() {
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
+              aria-label="Search catalog items"
               placeholder="Search items..."
               className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-indigo-400/60"
             />
           </label>
         </div>
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
-            <LoaderCircle className="h-4 w-4 animate-spin" /> Loading saved items...
-          </div>
+          <LoadingSurface label="Preparing item catalog" />
         ) : filteredItems.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-slate-800 py-10 text-center text-sm text-slate-500">
             {items.length ? 'No items match your search.' : 'No saved items yet.'}

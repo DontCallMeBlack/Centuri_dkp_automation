@@ -6,11 +6,17 @@ import { getSheetRoster } from '@/lib/googleSheets';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 import {
   MAX_AUCTION_ITEM_IMAGE_BYTES,
+  MAX_AUCTION_UPLOAD_IMAGE_BYTES,
+  AuctionImageError,
+  verifyAuctionImageType,
   optimizeAuctionImage,
 } from '@/lib/auctionImage';
+import { guardMutationRequest, readJsonObject, readFormDataLimited, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
+import { withClanAdministrationTransaction } from '@/lib/auth/administration';
+import User from '@/lib/models/User';
 
-const MAX_UPLOAD_IMAGE_BYTES = 1024 * 1024;
 const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_MULTIPART_BYTES = MAX_TOTAL_UPLOAD_BYTES + 128 * 1024;
 const BOSS_TYPES = ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Unassigned'] as const;
 type BossType = (typeof BOSS_TYPES)[number];
 
@@ -22,7 +28,17 @@ function canManageItems(role: string) {
   return role === 'chief' || role === 'general' || role === 'guardian';
 }
 
+async function withItemManager<T>(userId: mongoose.Types.ObjectId, operation: (session: mongoose.ClientSession, nickname: string) => Promise<T>) {
+  return withClanAdministrationTransaction(async (session) => {
+    const actor = await User.findById(userId).select('nickname role status').session(session);
+    if (!actor || actor.status !== 'approved') throw new RequestValidationError('Your session is no longer authorized.', 401);
+    if (!canManageItems(actor.role)) throw new RequestValidationError('Permission denied.', 403);
+    return operation(session, actor.nickname);
+  });
+}
+
 async function getValidRoles(value: FormDataEntryValue[]) {
+  if (value.length > 4 || value.some((entry) => typeof entry !== 'string' || entry.length > 512)) return null;
   const requested = value.filter((entry): entry is string => typeof entry === 'string')
     .flatMap((entry) => entry.split(','))
     .map((role) => role.trim())
@@ -37,53 +53,36 @@ async function getValidRoles(value: FormDataEntryValue[]) {
 
 export const dynamic = 'force-dynamic';
 
-function verifyImageType(bytes: Uint8Array) {
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
-    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
-  ) return 'image/png';
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return 'image/jpeg';
-  }
-  if (
-    bytes.length >= 12 &&
-    String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
-    String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
-  ) return 'image/webp';
-  return null;
-}
-
 async function readOptimizedImages(form: FormData) {
   const files = form.getAll('images');
   if (files.some((file) => !(file instanceof File))) {
-    throw new Error('Every uploaded item image must be a file.');
+    throw new RequestValidationError('Every uploaded item image must be a file.');
   }
   if (files.length === 0) return null;
-  if (files.length > 8) throw new Error('Upload no more than 8 images per item.');
+  if (files.length > 8) throw new RequestValidationError('Upload no more than 8 images per item.');
 
   const totalUploadBytes = files.reduce(
     (total, file) => total + (file instanceof File ? file.size : 0),
     0,
   );
   if (totalUploadBytes > MAX_TOTAL_UPLOAD_BYTES) {
-    throw new Error('The optimized images must total no more than 2 MB per item.');
+    throw new RequestValidationError('The optimized images must total no more than 2 MB per item.');
   }
 
   const images: Array<{ data: Buffer; contentType: 'image/webp' }> = [];
   let totalStoredBytes = 0;
   for (const file of files) {
-    if (!(file instanceof File) || file.size <= 0 || file.size > MAX_UPLOAD_IMAGE_BYTES) {
-      throw new Error('Each optimized upload must be no larger than 1 MB.');
+    if (!(file instanceof File) || file.size <= 0 || file.size > MAX_AUCTION_UPLOAD_IMAGE_BYTES) {
+      throw new RequestValidationError('Each optimized upload must be no larger than 1 MB.');
     }
     const imageBytes = new Uint8Array(await file.arrayBuffer());
-    if (verifyImageType(imageBytes) !== file.type) {
-      throw new Error('An uploaded image is invalid or does not match its file type.');
+    if (verifyAuctionImageType(imageBytes) !== file.type) {
+      throw new RequestValidationError('An uploaded image is invalid or does not match its file type.');
     }
     const optimizedImage = await optimizeAuctionImage(imageBytes);
     totalStoredBytes += optimizedImage.byteLength;
     if (totalStoredBytes > MAX_AUCTION_ITEM_IMAGE_BYTES) {
-      throw new Error('The optimized images exceed 150 KB total for this item.');
+      throw new RequestValidationError('The optimized images exceed 150 KB total for this item.');
     }
     images.push({ data: optimizedImage, contentType: 'image/webp' });
   }
@@ -95,11 +94,10 @@ function isDuplicateKeyError(error: unknown) {
 }
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-
   try {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
     const [items, roster] = await Promise.all([
       AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRoles requiredRole bossType imageCount').sort({ name: 1 }).lean(),
       getSheetRoster(),
@@ -119,18 +117,18 @@ export async function GET() {
       })),
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unable to load saved items';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return requestErrorResponse(error, 'Unable to load saved items. Please retry shortly.');
   }
 }
 
 export async function POST(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-
+  const rejected = guardMutationRequest(request);
+  if (rejected) return rejected;
   try {
-    const form = await request.formData();
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    const form = await readFormDataLimited(request, MAX_MULTIPART_BYTES);
     const name = form.get('name');
     const bossType = form.get('bossType');
     const requiredRolesInput = form.getAll('requiredRoles');
@@ -149,32 +147,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'A new catalog item needs at least one image.' }, { status: 400 });
     }
 
-    const item = await AuctionItem.create({
-      name: name.trim(),
-      requiredRoles: selectedRoles,
-      bossType,
-      images,
-      imageCount: images.length,
-      createdBy: user.nickname,
+    const item = await withItemManager(user._id, async (session, nickname) => {
+      const [created] = await AuctionItem.create([{
+        name: name.trim(),
+        requiredRoles: selectedRoles,
+        bossType,
+        images,
+        imageCount: images.length,
+        createdBy: nickname,
+      }], { session });
+      return created;
     });
     return NextResponse.json({ success: true, id: item._id.toString() });
   } catch (error: unknown) {
     if (error instanceof mongoose.Error.ValidationError || isDuplicateKeyError(error)) {
       return NextResponse.json({ error: 'An item with that name already exists.' }, { status: 409 });
     }
-    const message = error instanceof Error ? error.message : 'Unable to create catalog item';
-    const isClientError = /image|upload|file/i.test(message);
-    return NextResponse.json({ error: message }, { status: isClientError ? 400 : 500 });
+    if (error instanceof AuctionImageError) return NextResponse.json({ error: error.message }, { status: 400 });
+    return requestErrorResponse(error, 'Unable to create catalog item. Please retry shortly.');
   }
 }
 
 export async function PATCH(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-
+  const rejected = guardMutationRequest(request);
+  if (rejected) return rejected;
   try {
-    const form = await request.formData();
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    const form = await readFormDataLimited(request, MAX_MULTIPART_BYTES);
     const itemId = form.get('itemId');
     const name = form.get('name');
     const bossType = form.get('bossType');
@@ -193,39 +194,40 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Choose one or two roles currently listed in the Google Sheets roster.' }, { status: 400 });
     }
     const images = await readOptimizedImages(form);
-    const item = await AuctionItem.findById(itemId);
-    if (!item) return NextResponse.json({ error: 'Catalog item not found.' }, { status: 404 });
-    if (item.isListed === false) return NextResponse.json({ error: 'This item is no longer in the catalog.' }, { status: 404 });
+    await withItemManager(user._id, async (session) => {
+      const item = await AuctionItem.findById(itemId).session(session);
+      if (!item || item.isListed === false) throw new RequestValidationError('Catalog item not found.', 404);
 
-    item.name = name.trim();
-    item.requiredRoles = selectedRoles;
-    item.requiredRole = selectedRoles[0];
-    item.bossType = bossType;
-    if (images) {
-      item.images = images;
-      item.imageCount = images.length;
-      item.image = undefined;
-      item.imageType = undefined;
-    }
-    await item.save();
+      item.name = name.trim();
+      item.requiredRoles = selectedRoles;
+      item.requiredRole = selectedRoles[0];
+      item.bossType = bossType;
+      if (images) {
+        item.images = images;
+        item.imageCount = images.length;
+        item.image = undefined;
+        item.imageType = undefined;
+      }
+      await item.save({ session });
+    });
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     if (error instanceof mongoose.Error.ValidationError || isDuplicateKeyError(error)) {
       return NextResponse.json({ error: 'An item with that name already exists.' }, { status: 409 });
     }
-    const message = error instanceof Error ? error.message : 'Unable to update catalog item';
-    const isClientError = /image|upload|file/i.test(message);
-    return NextResponse.json({ error: message }, { status: isClientError ? 400 : 500 });
+    if (error instanceof AuctionImageError) return NextResponse.json({ error: error.message }, { status: 400 });
+    return requestErrorResponse(error, 'Unable to update catalog item. Please retry shortly.');
   }
 }
 
 export async function DELETE(request: Request) {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-
+  const rejected = guardMutationRequest(request);
+  if (rejected) return rejected;
   try {
-    const body: unknown = await request.json();
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    const body = await readJsonObject(request);
     if (
       typeof body !== 'object' ||
       body === null ||
@@ -236,16 +238,16 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Invalid catalog item ID.' }, { status: 400 });
     }
 
-    const item = await AuctionItem.findOneAndUpdate(
-      { _id: body.itemId, isListed: { $ne: false } },
+    const itemId = body.itemId;
+    const item = await withItemManager(user._id, async (session) => AuctionItem.findOneAndUpdate(
+      { _id: itemId, isListed: { $ne: false } },
       { $set: { isListed: false } },
-      { new: true },
-    );
+      { new: true, session },
+    ));
     if (!item) return NextResponse.json({ error: 'Catalog item not found.' }, { status: 404 });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unable to remove catalog item';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return requestErrorResponse(error, 'Unable to remove catalog item. Please retry shortly.');
   }
 }

@@ -35,7 +35,7 @@ const AuctionItemSchema: Schema<IAuctionItem> = new Schema({
   images: { type: [AuctionItemImageSchema], default: [] },
   image: { type: Buffer },
   imageType: { type: String, enum: ['image/png', 'image/jpeg', 'image/webp'] },
-  imageCount: { type: Number, required: true, default: 1, min: 1 },
+  imageCount: { type: Number, required: true, default: 1, min: 1, max: 8, validate: Number.isInteger },
   isListed: { type: Boolean, required: true, default: true },
   createdBy: { type: String, required: true },
 }, { timestamps: { createdAt: true, updatedAt: false } });

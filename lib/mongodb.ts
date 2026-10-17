@@ -1,43 +1,22 @@
-// lib/mongodb.ts
 import mongoose from 'mongoose';
 
-const MONGODB_URI = process.env.MONGODB_URI;
+interface MongoCache { conn: typeof mongoose | null; promise: Promise<typeof mongoose> | null }
+const globalWithMongo = globalThis as typeof globalThis & { centuriMongo?: MongoCache };
+const cached = globalWithMongo.centuriMongo ??= { conn: null, promise: null };
 
-if (!MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable inside .env.local');
+export default async function dbConnect() {
+  if (cached.conn?.connection.readyState === 1) return cached.conn;
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error('MongoDB is not configured.');
+  if (cached.conn && cached.conn.connection.readyState === 0) {
+    cached.conn = null;
+    cached.promise = null;
   }
-
-  let cached = (global as any).mongoose;
-
-  if (!cached) {
-    cached = (global as any).mongoose = { conn: null, promise: null };
-    }
-
-    async function dbConnect() {
-      if (cached.conn) {
-          return cached.conn;
-            }
-
-              if (!cached.promise) {
-                  const opts = {
-                        bufferCommands: false,
-                              family: 4, // Forces IPv4 to bypass Windows/Node network lookup issues
-                                  };
-
-                                      cached.promise = mongoose.connect(MONGODB_URI as string, opts).then((mongoose) => {
-                                            return mongoose;
-                                                });
-                                                  }
-
-                                                    try {
-                                                        cached.conn = await cached.promise;
-                                                          } catch (e) {
-                                                              cached.promise = null;
-                                                                  throw e;
-                                                                    }
-
-                                                                      return cached.conn;
-                                                                      }
-
-                                                                      export default dbConnect;
-                                                                      
+  cached.promise ??= mongoose.connect(uri, {
+    bufferCommands: false, family: 4,
+    serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000, socketTimeoutMS: 25_000,
+    maxPoolSize: 10, minPoolSize: 0, maxIdleTimeMS: 60_000,
+  });
+  try { cached.conn = await cached.promise; return cached.conn; }
+  catch (error) { cached.promise = null; throw error; }
+}

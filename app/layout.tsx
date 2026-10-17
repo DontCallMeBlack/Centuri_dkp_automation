@@ -1,6 +1,7 @@
 // app/layout.tsx
 import './globals.css';
 import type { Metadata } from 'next';
+import AppShell from '@/components/AppShell';
 
 export const metadata: Metadata = {
   title: 'Centuri DKP — Celtic Heroes',
@@ -14,8 +15,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="bg-[#07090e] text-slate-100 antialiased min-h-screen selection:bg-indigo-500 selection:text-white">
-        {children}
+      <body className="bg-[#090b12] text-slate-100 antialiased min-h-screen selection:bg-indigo-500 selection:text-white">
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

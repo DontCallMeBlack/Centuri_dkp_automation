@@ -1,7 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/lib/client/api';
+import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
+import LoadingSurface from '@/components/LoadingSurface';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, History, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
@@ -32,8 +35,12 @@ interface ClanAuditEntry {
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
 
 type AdminSection = 'requests' | 'members' | 'activity';
+interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]}
 
 export default function AdminRequestsPage() {
+  const mountedRef = useRef(true);
+  const loadSequence = useRef(0);
+  const dirtyMappings = useRef(new Set<string>());
   const [section, setSection] = useState<AdminSection>('requests');
   const [pendingUsers, setPendingUsers] = useState<ClanUser[]>([]);
   const [members, setMembers] = useState<ClanUser[]>([]);
@@ -49,42 +56,45 @@ export default function AdminRequestsPage() {
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [memberQuery, setMemberQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
 
-  const loadData = async () => {
-    try {
-      const res = await fetch('/api/admin/requests');
-      const data = await res.json();
-      if (res.status === 401) {
-        router.push('/login');
-        return;
-      }
-      if (res.status === 403) {
-        setAccessRole(data.role || 'member');
-        return;
-      }
-      if (!res.ok) throw new Error(data.error || 'Failed to load clan administration data');
-      setManagerRole(data.managerRole ?? '');
-      setManagerId(data.managerId ?? '');
-      setPendingUsers(data.pendingUsers);
-      setMembers(data.members);
-      setAuditEvents(data.auditEvents);
-      setRoster(data.roster);
-      setSelectedMappings(Object.fromEntries(
-        [...data.pendingUsers, ...data.members].map((member: ClanUser) => [
-          member._id,
-          member.sheetRecordRows ?? [],
-        ]),
-      ));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load clan administration data');
-    } finally {
-      setLoading(false);
-    }
+  const applyData = (data:AdminData) => {
+    setManagerRole(data.managerRole ?? ''); setManagerId(data.managerId ?? '');
+    setPendingUsers(data.pendingUsers); setMembers(data.members); setAuditEvents(data.auditEvents); setRoster(data.roster);
+    setSelectedMappings((current) => Object.fromEntries([...data.pendingUsers,...data.members].map((member) => [member._id,dirtyMappings.current.has(member._id) ? current[member._id] ?? member.sheetRecordRows ?? [] : member.sheetRecordRows ?? []])));
   };
-
+  const loadData = async () => {
+    if (!mountedRef.current) return;
+    const sequence = ++loadSequence.current;
+    setRefreshing(true);
+    try { const data=await getData<AdminData>('/api/admin/requests'); if (mountedRef.current && sequence === loadSequence.current) { applyData(data); setAccessRole(''); setError(''); } }
+    catch (cause) {
+      if (!mountedRef.current || sequence !== loadSequence.current) return;
+      if (cause instanceof ApiError && cause.status === 499) return;
+      if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
+      else if (cause instanceof ApiError && cause.status === 403) setAccessRole(typeof cause.details?.role === 'string' ? cause.details.role : 'member');
+      else setError(cause instanceof Error ? cause.message : 'Clan administration could not be refreshed. Showing the last known data.');
+    } finally { if (mountedRef.current && sequence === loadSequence.current) { setLoading(false); setRefreshing(false); } }
+  };
   useEffect(() => {
+    mountedRef.current=true;
+    const cached=peekData<AdminData>('/api/admin/requests');
+    if (cached) { applyData(cached); setLoading(false); }
     void loadData();
+    const update=() => { if (document.visibilityState === 'visible') void loadData(); };
+    const clear = () => {
+      loadSequence.current += 1; dirtyMappings.current.clear();
+      setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
+      setSelectedMappings({}); setMappingQueries({}); setEditingToonsFor('');
+      setManagerRole(''); setManagerId(''); setAccessRole(''); setBusyId('');
+      setError(''); setNotice(''); setLoading(true); setRefreshing(false);
+    };
+    document.addEventListener('visibilitychange',update);
+    window.addEventListener('centuri:dkp-changed',update);
+    window.addEventListener('centuri:clear-data',clear);
+    return () => { mountedRef.current=false; loadSequence.current += 1; document.removeEventListener('visibilitychange',update); window.removeEventListener('centuri:dkp-changed',update); window.removeEventListener('centuri:clear-data',clear); };
   }, []);
 
   const sendAdminAction = async (
@@ -105,6 +115,8 @@ export default function AdminRequestsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'The request could not be completed');
       setNotice(data.message);
+      dirtyMappings.current.delete(userId);
+      invalidateData('/api/admin/requests');
       await loadData();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'The request could not be completed');
@@ -133,6 +145,7 @@ export default function AdminRequestsPage() {
   };
 
   const toggleMapping = (userId: string, rowIndex: number) => {
+    dirtyMappings.current.add(userId);
     setSelectedMappings((current) => {
       const rows = current[userId] ?? [];
       return {
@@ -238,12 +251,12 @@ export default function AdminRequestsPage() {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-[#07090e] p-8 text-sm text-slate-400">Loading clan administration...</div>;
+    return <LoadingSurface label="Preparing clan administration" />;
   }
 
   if (accessRole) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#07090e] px-5 text-slate-100">
+      <main className="surface flex min-h-80 items-center justify-center px-5 text-slate-100">
         <section className="w-full max-w-md border-y border-slate-800 py-8 text-center">
           <Shield className="mx-auto h-8 w-8 text-amber-300" />
           <h1 className="mt-4 text-lg font-bold text-white">Manager access required</h1>
@@ -255,26 +268,11 @@ export default function AdminRequestsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#07090e] text-slate-100">
-      <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-slate-950/90 px-5 py-4 backdrop-blur sm:px-8">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
-              <Shield className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-white">Clan administration</h1>
-              <p className="text-xs text-slate-400">Sign-up requests and member access</p>
-            </div>
-          </div>
-          <button onClick={() => router.push('/dashboard')} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800">
-            <ArrowLeft className="h-4 w-4" /> <span className="hidden sm:inline">Dashboard</span>
-          </button>
-        </div>
-      </header>
-
-      <div className="mx-auto max-w-6xl px-5 py-6 sm:px-8">
-        <nav aria-label="Administration sections" className="flex overflow-x-auto border-b border-slate-800">
+    <main className="space-y-6 text-slate-100">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Good people. Stronger clan.</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div><button type="button" className="secondary-button" disabled={refreshing || Boolean(busyId)} onClick={() => void loadData()}><History size={14} />{refreshing ? 'Refreshing...' : 'Refresh members'}</button></div>
+      <div className="grid grid-cols-3 gap-3">{[[UserCheck,'Awaiting approval',pendingUsers.length],[Users,'Clan members',members.length],[ClipboardList,'Recorded actions',auditEvents.length]].map(([Icon,label,count]) => { const I=Icon as typeof Users; return <div key={String(label)} className="surface stat-card"><span className="stat-icon hidden sm:block"><I size={17} /></span><div><p className="stat-label">{String(label)}</p><p className="stat-value">{Number(count)}</p></div></div>; })}</div>
+      <div className="surface p-5 sm:p-6">
+        <nav aria-label="Administration sections" className="section-tabs !mt-0">
           {([
             ['requests', 'Sign-up requests', UserCheck, pendingUsers.length],
             ['members', 'Members', Users, members.length],
@@ -283,7 +281,8 @@ export default function AdminRequestsPage() {
             <button
               key={key}
               onClick={() => setSection(key)}
-              className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold ${section === key ? 'border-indigo-400 text-indigo-300' : 'border-transparent text-slate-400 hover:text-white'}`}
+              aria-pressed={section === key}
+              className={`section-tab ${section === key ? '!border-indigo-400 !text-indigo-300' : ''}`}
             >
               <Icon className="h-4 w-4" /> {label}
               {count !== undefined && <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{count}</span>}
@@ -312,7 +311,7 @@ export default function AdminRequestsPage() {
                   <p className="mt-1 text-xs text-slate-500">Awaiting approval and roster mapping</p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-                  <div className="min-w-56 flex-1">
+                  <div className="min-w-0 flex-1 sm:min-w-56">
                     {renderMappingSelector(user._id, `Toon rows for ${user.nickname}`)}
                     <p className="mt-1 text-xs text-slate-500">{(selectedMappings[user._id] ?? []).length} toon(s) selected</p>
                   </div>
@@ -330,11 +329,11 @@ export default function AdminRequestsPage() {
 
         {section === 'members' && (
           <section className="mt-6">
-            <h2 className="text-lg font-bold text-white">Approved accounts</h2>
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><h2 className="text-lg font-semibold text-white">Approved accounts</h2><label className="search-field sm:w-64"><Search /><input aria-label="Search approved accounts" type="search" placeholder="Find a clan member..." value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} /></label></div>
             <p className="mb-4 mt-1 text-sm text-slate-400">Toons linked to another account are hidden. Unlink a toon to make it available for reassignment.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
               <div className="divide-y divide-slate-800 border-y border-slate-800">
-                {members.map((member) => {
+                {members.filter((member) => member.nickname.toLowerCase().includes(memberQuery.trim().toLowerCase())).map((member) => {
                   const promotedRole = getAdjacentRole(member.role, 'promote');
                   const demotedRole = getAdjacentRole(member.role, 'demote');
                   const canManageRole = member._id !== managerId &&
@@ -349,8 +348,7 @@ export default function AdminRequestsPage() {
                   return (
                   <article key={member._id} className="grid min-w-0 gap-3 py-4 md:grid-cols-[minmax(10rem,0.8fr)_minmax(14rem,1.2fr)] md:items-start">
                     <div>
-                      <h3 className="font-semibold text-white">{member.nickname}</h3>
-                      <p className="mt-1 text-xs capitalize text-slate-500">{member.role} · {(member.sheetRecordRows ?? []).length} toon(s) linked</p>
+                      <div className="flex items-center gap-3"><span className="profile-avatar text-indigo-300"><RoleIcon role={member.role} className="h-4 w-4" /></span><h3 className="text-sm font-semibold text-white">{member.nickname}</h3></div><div className="mt-3 flex flex-wrap items-center gap-2"><RoleBadge role={member.role} /><span className="text-[10px] text-slate-500">{(member.sheetRecordRows ?? []).length} toon(s) linked</span></div>
                     </div>
                     <div className="min-w-0">
                       {(member.sheetRecordRows ?? []).length > 0 && (
@@ -432,7 +430,7 @@ export default function AdminRequestsPage() {
                         </div>
                       )}
                       {(member.role === 'clansman' || member.role === 'guardian') && (
-                        <button disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} className="inline-flex items-center justify-center rounded-lg border border-red-500/40 px-3 py-2 text-red-300 hover:bg-red-500/10 disabled:opacity-50">
+                        <button disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} aria-label={`Remove ${member.nickname} from the clan`} className="inline-flex items-center justify-center rounded-lg border border-red-500/40 px-3 py-2 text-red-300 hover:bg-red-500/10 disabled:opacity-50">
                           <Trash2 className="h-4 w-4" />
                         </button>
                       )}

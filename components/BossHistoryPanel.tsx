@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
+import LoadingSurface from '@/components/LoadingSurface';
+import { useSessionUser } from '@/components/AppShell';
+import { ApiError, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
+import { Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
 
 interface RosterMember {
   rowIndex: number;
@@ -12,6 +15,9 @@ interface RosterMember {
 
 interface BossAward {
   id: string;
+  requestId?: string;
+  originalSelectedRows: number[];
+  pendingChange?: {requestId: string; kind: 'edit' | 'delete'; selectedRows: number[]};
   bossName: string;
   points: number;
   participants: RosterMember[];
@@ -23,11 +29,19 @@ interface BossAward {
   createdAt: string;
 }
 
+interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMember[]}
+
 export default function BossHistoryPanel({ embedded = false }: { embedded?: boolean }) {
+  const user = useSessionUser();
+  const mountedRef = useRef(true);
+  const requestIds = useRef(new Map<string, string>());
+  const [refreshing, setRefreshing] = useState(false);
   const [awards, setAwards] = useState<BossAward[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [selectedRows, setSelectedRows] = useState<Record<string, number[]>>({});
   const [editingId, setEditingId] = useState('');
+  const editingRef = useRef('');
+  editingRef.current = editingId;
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
@@ -36,37 +50,30 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
   const [canManage, setCanManage] = useState(false);
   const router = useRouter();
 
-  const loadHistory = async () => {
-    try {
-      const response = await fetch('/api/admin/boss-history');
-      const data = await response.json();
-      if (response.status === 401) {
-        router.push('/login');
-        return;
-      }
-      if (response.status === 403) {
-        setAccessDenied(true);
-        return;
-      }
-      if (!response.ok) throw new Error(data.error || 'Unable to load boss history');
-      setCanManage(data.canManage === true);
-      setAwards(data.awards);
-      setRoster(data.roster);
-      setSelectedRows(Object.fromEntries(
-        data.awards.map((award: BossAward) => [
-          award.id,
-          award.selectedRows,
-        ]),
-      ));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load boss history');
-    } finally {
-      setLoading(false);
-    }
+  const applyData = (data:HistoryData) => {
+    setCanManage(data.canManage === true); setAwards(data.awards); setRoster(data.roster);
+    setSelectedRows((previous) => ({...Object.fromEntries(data.awards.map((award) => [award.id,award.selectedRows])),...(editingRef.current ? {[editingRef.current]:previous[editingRef.current]} : {})}));
   };
-
+  const loadHistory = async () => {
+    if (!mountedRef.current) return;
+    setRefreshing(true);
+    try { const data=await getData<HistoryData>('/api/admin/boss-history'); if (mountedRef.current) { applyData(data); setAccessDenied(false); } }
+    catch (cause) {
+      if (!mountedRef.current) return;
+      if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
+      else if (cause instanceof ApiError && cause.status === 403) setAccessDenied(true);
+      else setError(cause instanceof Error ? cause.message : 'Boss history could not be refreshed. Showing the last known data.');
+    } finally { if (mountedRef.current) { setLoading(false); setRefreshing(false); } }
+  };
   useEffect(() => {
+    mountedRef.current=true;
+    const cached=peekData<HistoryData>('/api/admin/boss-history');
+    if (cached) { applyData(cached); setLoading(false); }
     void loadHistory();
+    const update=() => { if (document.visibilityState === 'visible') void loadHistory(); };
+    window.addEventListener('centuri:dkp-changed',update);
+    document.addEventListener('visibilitychange',update);
+    return () => { mountedRef.current=false; window.removeEventListener('centuri:dkp-changed',update); document.removeEventListener('visibilitychange',update); };
   }, []);
 
   const toggleRow = (awardId: string, rowIndex: number) => {
@@ -88,11 +95,14 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
     const removals = [...currentRows].filter((rowIndex) => !nextRows.includes(rowIndex)).length;
     if (
       removals > 0 &&
-      !window.confirm(`This will remove ${award?.points ?? 0} DKP per removed toon from Weekly Earned, All-time Earned, and Available. Available may become negative. Continue?`)
+      !window.confirm(`This reverses ${award?.points ?? 0} DKP per removed toon in the award's original week. Continue?`)
     ) {
       return;
     }
 
+    const payloadKey = JSON.stringify({kind:'edit',awardId,selectedRows:[...(selectedRows[awardId] ?? [])].sort((a,b) => a-b)});
+    const requestId = requestIds.current.get(payloadKey) ?? crypto.randomUUID();
+    requestIds.current.set(payloadKey, requestId);
     setBusyId(awardId);
     setError('');
     setNotice('');
@@ -100,15 +110,17 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       const response = await fetch('/api/admin/boss-history', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ awardId, selectedRows: selectedRows[awardId] ?? [] }),
+        body: JSON.stringify({ awardId, requestId, selectedRows: selectedRows[awardId] ?? [] }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update boss attendance');
+      requestIds.current.delete(payloadKey);
       setNotice(data.message);
-      setEditingId('');
-      await loadHistory();
+      setEditingId(''); editingRef.current='';
+      notifyDkpChanged();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to update boss attendance');
+      await loadHistory();
     } finally {
       setBusyId('');
     }
@@ -121,6 +133,9 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       return;
     }
 
+    const payloadKey = JSON.stringify({kind:'delete',awardId:award.id});
+    const requestId = requestIds.current.get(payloadKey) ?? crypto.randomUUID();
+    requestIds.current.set(payloadKey, requestId);
     setBusyId(award.id);
     setError('');
     setNotice('');
@@ -128,27 +143,40 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       const response = await fetch('/api/admin/boss-history', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ awardId: award.id }),
+        body: JSON.stringify({ awardId: award.id, requestId }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to delete boss kill');
+      requestIds.current.delete(payloadKey);
       setNotice(data.message);
-      setEditingId('');
-      await loadHistory();
+      setEditingId(''); editingRef.current='';
+      notifyDkpChanged();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete boss kill');
+      await loadHistory();
     } finally {
       setBusyId('');
     }
   };
 
-  if (loading) {
-    return <div className="min-h-screen bg-[#07090e] p-8 text-sm text-slate-400">Loading boss history...</div>;
-  }
+  const resumeAward = async (award: BossAward) => {
+    setBusyId(award.id); setError(''); setNotice('');
+    const change = award.pendingChange;
+    try {
+      const result = await readResponse<{message:string}>(await fetch(change ? '/api/admin/boss-history' : '/api/dkp', {
+        method: change ? change.kind === 'delete' ? 'DELETE' : 'PATCH' : 'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(change ? {awardId:award.id,requestId:change.requestId,selectedRows:change.selectedRows} : {requestId:award.requestId,bossName:award.bossName,selectedRows:award.originalSelectedRows}),
+      }));
+      setNotice(result.message); notifyDkpChanged();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed.'); await loadHistory(); }
+    finally { setBusyId(''); }
+  };
+
+  if (loading) return <LoadingSurface label="Preparing boss history" />;
 
   if (accessDenied) {
     return (
-      <section className="flex min-h-screen items-center justify-center bg-[#07090e] px-5 text-slate-100">
+      <section className="surface flex min-h-80 items-center justify-center px-5 text-slate-100">
         <section className="w-full max-w-md border-y border-slate-800 py-8 text-center">
           <Shield className="mx-auto h-8 w-8 text-amber-300" />
           <h1 className="mt-4 text-lg font-bold text-white">Clan member access required</h1>
@@ -161,25 +189,9 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
   }
 
   return (
-    <section className={embedded ? 'space-y-4' : 'min-h-screen bg-[#07090e] text-slate-100'}>
-      {!embedded && <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-slate-950/90 px-5 py-4 backdrop-blur sm:px-8">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300">
-              <History className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-white">Boss history</h1>
-              <p className="text-xs text-slate-400">{canManage ? 'Review awards and correct toon attendance' : 'View recorded boss kills and attendance'}</p>
-            </div>
-          </div>
-          <button onClick={() => router.push('/admin/requests')} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800">
-            <ArrowLeft className="h-4 w-4" /> Clan administration
-          </button>
-        </div>
-      </header>}
-
-      <div className="mx-auto max-w-5xl space-y-4 px-5 py-6 sm:px-8">
+    <section className="space-y-5 text-slate-100">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Review boss rewards and keep attendance accurate.' : 'Explore your clan boss kills and attendance.'}</p></div><button type="button" className="secondary-button" disabled={refreshing || Boolean(busyId)} onClick={() => void loadHistory()}><History size={14} />{refreshing ? 'Refreshing...' : 'Refresh history'}</button></div>
+      <div className="space-y-4">
         <p className="text-sm text-slate-400">
           {canManage
             ? 'Add or remove attendees to adjust the award. Deleting a kill reverses its DKP for every attendee.'
@@ -197,7 +209,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
           const isEditing = editingId === award.id;
           const selectedCount = selectedRows[award.id]?.length ?? 0;
           return (
-            <article key={award.id} className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 sm:p-5">
+            <article key={award.id} className="surface p-5 sm:p-6">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -234,6 +246,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
                 )}
               </div>
 
+              {canManage && ((award.status === 'updating' && award.pendingChange) || (award.status === 'pending' && award.requestId && (award.createdBy === user?.nickname || ['chief','general'].includes(user?.role ?? '')))) && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3"><p className="text-xs text-amber-200">This operation needs to finish before this record can be changed.</p><button type="button" disabled={Boolean(busyId)} onClick={() => void resumeAward(award)} className="secondary-button">{busyId === award.id ? <LoaderCircle size={14} className="animate-spin" /> : <History size={14} />}Resume {award.pendingChange?.kind || 'award'}</button></div>}
               {award.status !== 'applied' && award.failureReason && (
                 <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{award.failureReason}</p>
               )}
