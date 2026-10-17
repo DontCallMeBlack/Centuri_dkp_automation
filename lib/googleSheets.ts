@@ -1,5 +1,5 @@
 // lib/googleSheets.ts
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { google } from 'googleapis';
 import AuctionHold from '@/lib/models/AuctionHold';
 import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
@@ -9,8 +9,14 @@ import {
   buildWeeklyDkpResetPlan,
   getCurrentDkpWeekStart,
   initializeWeeklyDkpActivityHistory,
+  buildHistoricalDkpActivityCorrection,
+  getDkpElapsedWeeks,
 } from '@/lib/dkpCycle';
-import { buildDkpAdjustmentUpdates } from '@/lib/dkpAccounting';
+import { buildDkpAdjustmentUpdates, DkpIntegrityError, getDkpReplayState, snapshotDkpCells } from '@/lib/dkpAccounting';
+import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
+import User from '@/lib/models/User';
+import { withClanAdministrationTransaction } from '@/lib/auth/administration';
+import { RequestValidationError } from '@/lib/security/request';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -21,6 +27,7 @@ const WEEKLY_RESET_LOCK_MS = 120_000;
 const WEEKLY_RESET_WAIT_MS = 30_000;
 const WEEKLY_RESET_POLL_MS = 250;
 type SheetValueUpdate = { range: string; values: number[][] };
+type SheetIdentity = { rowIndex: number; owner: string; account: string };
 
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -86,38 +93,38 @@ async function withGoogleSheetsRetry<T>(operation: () => Promise<T>, retryTransi
 function readDkpValue(value: string | undefined) {
   if (!value || value.trim() === '-') return 0;
   const parsed = Number(value.replace(/,/g, '').trim());
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!Number.isFinite(parsed) || Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
+    throw new DkpIntegrityError('The roster contains an invalid DKP value. A manager must correct it in Google Sheets.');
+  }
+  return parsed;
+}
+
+function createSheetsClient() {
+  return google.sheets({ version: 'v4', auth, timeout: 20_000 });
+}
+
+async function readSheetRows(sheets = createSheetsClient()) {
+  const response = await withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({
+    spreadsheetId: getSpreadsheetId(), range: `${SHEET_NAME}!A3:I1000`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  }), true);
+  // Display rounding and spreadsheet locale must never change the amounts used
+  // for debits. Normalize unformatted numeric values at this one boundary.
+  return (response.data.values ?? []).map((row) => row.map((value) => String(value ?? '')));
+}
+
+function rosterFromRows(rows: string[][]): ISheetRosterRecord[] {
+  return rows.map((row, index) => ({
+    rowIndex: index + 3,
+    owner: String(row[0] || '').trim(), account: String(row[1] || '').trim(), subClass: String(row[2] || ''),
+    weeklyEarned: readDkpValue(row[3]), weeklySpent: readDkpValue(row[4]),
+    earned: readDkpValue(row[5]), spent: readDkpValue(row[6]), available: readDkpValue(row[7]),
+    fiveWeekActivity: readDkpValue(row[8]),
+  })).filter((record) => record.owner);
 }
 
 async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
-  const sheets = google.sheets({ version: 'v4', auth });
-  const spreadsheetId = getSpreadsheetId();
-
-  // Owner (A), Account (B), Sub class (C), weekly earned/spent (D/E),
-  // lifetime earned/spent/available (F/G/H), and five-week activity (I).
-  const response = await withGoogleSheetsRetry(
-    () => sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `${SHEET_NAME}!A3:I1000`,
-    }),
-    true,
-  );
-
-  const rows = response.data.values;
-  if (!rows) return [];
-
-  return rows.map((row, index) => ({
-    rowIndex: index + 3,
-    owner: row[0] || '',
-    account: row[1] || '',
-    subClass: row[2] || '',
-    weeklyEarned: readDkpValue(row[3]),
-    weeklySpent: readDkpValue(row[4]),
-    earned: readDkpValue(row[5]),
-    spent: readDkpValue(row[6]),
-    available: readDkpValue(row[7]),
-    fiveWeekActivity: readDkpValue(row[8]),
-  })).filter(r => r.owner); // Filter out empty rows
+  return rosterFromRows(await readSheetRows());
 }
 
 async function ensureSheetRosterCacheDocument(cacheKey: string) {
@@ -168,7 +175,7 @@ async function acquireWeeklyResetLock(cacheKey: string) {
     await new Promise((resolve) => setTimeout(resolve, WEEKLY_RESET_POLL_MS));
   }
 
-  throw new Error('The weekly DKP sheet update is still in progress. Please retry shortly.');
+  throw new DkpIntegrityError('The DKP ledger is busy. Retry the same request shortly.');
 }
 
 async function releaseWeeklyResetLock(cacheKey: string, lockId: string) {
@@ -181,53 +188,82 @@ async function releaseWeeklyResetLock(cacheKey: string, lockId: string) {
   );
 }
 
-async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnType<typeof google.sheets>) {
+async function assertLedgerLock(cacheKey: string, lockId: string) {
+  const renewed = await SheetRosterCache.updateOne(
+    { cacheKey, weeklyResetLockId: lockId, weeklyResetLockUntil: { $gt: new Date() } },
+    { $set: { weeklyResetLockUntil: new Date(Date.now() + WEEKLY_RESET_LOCK_MS) } },
+  );
+  if (renewed.matchedCount === 0) throw new DkpIntegrityError('The DKP ledger lock expired. Retry the same request to recover safely.');
+}
+
+function assertRecoveryIdentities(identities: SheetIdentity[] | undefined, rows: string[][]) {
+  if (!identities) throw new DkpIntegrityError('An older interrupted DKP operation has no identity snapshot. A manager must reconcile it before further changes.');
+  for (const identity of identities) {
+    const row = rows[identity.rowIndex - 3];
+    if (!row || getSheetRecordKey({ owner: row[0] ?? '', account: row[1] ?? '' }) !== getSheetRecordKey(identity)) {
+      throw new DkpIntegrityError('A roster row moved during an interrupted DKP operation. A manager must reconcile it before further changes.');
+    }
+  }
+}
+
+async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnType<typeof google.sheets>, lockId: string) {
   const pending = await DkpSheetMutation.findOne({ spreadsheetId, status: 'pending' }).sort({ createdAt: 1 });
   if (!pending) return false;
-  await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId,
-    requestBody: { valueInputOption: 'USER_ENTERED', data: pending.updates },
-  }), false);
+  const rows = await readSheetRows(sheets);
+  assertRecoveryIdentities(pending.identities, rows);
+  if (!pending.previousValues) throw new DkpIntegrityError('An older interrupted DKP operation needs manager review before it can be retried.');
+  const state = getDkpReplayState(pending.previousValues, pending.updates, rows);
+  await assertLedgerLock(spreadsheetId, lockId);
+  if (state === 'pending' && pending.updates.length > 0) {
+    await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data: pending.updates },
+    }), false);
+  }
+  await assertLedgerLock(spreadsheetId, lockId);
+  if (pending.weeklyActivityHistory) {
+    await SheetRosterCache.updateOne({ cacheKey: spreadsheetId, weeklyResetLockId: lockId }, {
+      $set: { weeklyActivityHistory: pending.weeklyActivityHistory },
+    });
+  }
   await DkpSheetMutation.updateOne({ _id: pending._id, status: 'pending' }, { $set: { status: 'applied' } });
   await invalidateSheetRosterCache();
   return true;
 }
 
 async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string) {
-  const sheets = google.sheets({ version: 'v4', auth });
+  const sheets = createSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
   while (true) {
     const cache = await SheetRosterCache.findOne({ cacheKey }).lean();
     if (!cache || cache.weeklyResetLockId !== lockId) {
-      throw new Error('The weekly DKP sheet update lost its lock. Please retry.');
+      throw new DkpIntegrityError('The DKP ledger lost its lock. Retry the same request.');
     }
 
     const pending = cache.weeklyResetPending;
     if (pending) {
-      // Add weekly-column clears when recovering a pending reset created by an
-      // earlier version that only cleared Weekly Earned.
-      const roster = await fetchSheetRoster();
-      const updates = [
-        ...pending.updates.filter(({ range }) => !/![DE]\d+$/.test(range)),
-        ...roster.flatMap((record) => [
-          { range: `${SHEET_NAME}!D${record.rowIndex}`, values: [[0]] },
-          { range: `${SHEET_NAME}!E${record.rowIndex}`, values: [[0]] },
-        ]),
-      ];
+      const rows = await readSheetRows(sheets);
+      assertRecoveryIdentities(pending.identities, rows);
+      if (!pending.previousValues) throw new DkpIntegrityError('An older interrupted weekly reset needs manager review before it can be retried.');
+      const updates = pending.updates;
+      const state = getDkpReplayState(pending.previousValues, updates, rows);
+      await assertLedgerLock(cacheKey, lockId);
 
-      if (updates.length > 0) {
+      if (updates.length > 0 && state === 'pending') {
         await withGoogleSheetsRetry(
           () => sheets.spreadsheets.values.batchUpdate({
             spreadsheetId,
             requestBody: {
-              valueInputOption: 'USER_ENTERED',
+              valueInputOption: 'RAW',
               data: updates,
             },
           }),
           false,
         );
       }
+
+      await assertLedgerLock(cacheKey, lockId);
 
       const completed = await SheetRosterCache.updateOne(
         { cacheKey, weeklyResetLockId: lockId },
@@ -245,12 +281,12 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
         },
       );
       if (completed.matchedCount === 0) {
-        throw new Error('The weekly DKP sheet update lost its lock. Please retry.');
+        throw new DkpIntegrityError('The DKP ledger lost its lock. Retry the same request.');
       }
       continue;
     }
 
-    if (await replayPendingSheetMutation(spreadsheetId, sheets)) continue;
+    if (await replayPendingSheetMutation(spreadsheetId, sheets, lockId)) continue;
 
     const currentWeekStart = getCurrentDkpWeekStart();
     if (cache.weeklyResetFor && cache.weeklyResetFor.getTime() >= currentWeekStart.getTime()) {
@@ -275,13 +311,29 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
       return;
     }
 
-    const roster = await fetchSheetRoster();
+    const rows = await readSheetRows(sheets);
+    const roster = rosterFromRows(rows);
     const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
     const resetPlan = buildWeeklyDkpResetPlan(
       activityRoster,
       SHEET_NAME,
       cache.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster),
+      getDkpElapsedWeeks(cache.weeklyResetFor, currentWeekStart),
     );
+
+    const before = snapshotDkpCells(resetPlan.updates, rows);
+    getDkpReplayState(before, resetPlan.updates, rows); // Validate every planned value before persisting recovery state.
+    const holds = await AuctionHold.find({ heldPoints: { $ne: 0 } }).select('rowIndex owner account heldPoints').lean();
+    for (const hold of holds) {
+      const record = roster.find((entry) => entry.rowIndex === hold.rowIndex);
+      if (!record || !Number.isFinite(hold.heldPoints) || hold.heldPoints < 0 ||
+        (hold.owner !== undefined && getSheetRecordKey(record) !== getSheetRecordKey({ owner: hold.owner, account: hold.account ?? '' })) ||
+        record.available + record.weeklyEarned < hold.heldPoints) {
+        throw new DkpIntegrityError('Weekly rollover would invalidate an auction reservation. A manager must reconcile the roster and holds first.');
+      }
+    }
+
+    await assertLedgerLock(cacheKey, lockId);
 
     const planned = await SheetRosterCache.updateOne(
       { cacheKey, weeklyResetLockId: lockId },
@@ -290,25 +342,51 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
           weeklyResetPending: {
             cycleStart: currentWeekStart,
             updates: resetPlan.updates,
+            previousValues: before,
+            identities: roster.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })),
             weeklyActivityHistory: resetPlan.weeklyActivityHistory,
           },
         },
       },
     );
     if (planned.matchedCount === 0) {
-      throw new Error('The weekly DKP sheet update lost its lock. Please retry.');
+      throw new DkpIntegrityError('The DKP ledger lost its lock. Retry the same request.');
     }
   }
 }
 
-async function withWeeklyResetLock<T>(cacheKey: string, operation: () => Promise<T>) {
+async function withWeeklyResetLock<T>(cacheKey: string, operation: (lockId: string) => Promise<T>) {
   const lockId = await acquireWeeklyResetLock(cacheKey);
+  let heartbeat: Promise<unknown> = Promise.resolve();
+  let heartbeatError: unknown;
+  const interval = setInterval(() => {
+    heartbeat = heartbeat.then(() => assertLedgerLock(cacheKey, lockId)).catch((error: unknown) => { heartbeatError = error; });
+  }, WEEKLY_RESET_LOCK_MS / 4);
+  interval.unref();
   try {
     await processWeeklyDkpResetWhileLocked(cacheKey, lockId);
-    return await operation();
+    if (heartbeatError) throw heartbeatError;
+    await assertLedgerLock(cacheKey, lockId);
+    const result = await operation(lockId);
+    await assertLedgerLock(cacheKey, lockId);
+    return result;
   } finally {
+    clearInterval(interval);
+    await heartbeat;
     await releaseWeeklyResetLock(cacheKey, lockId);
   }
+}
+
+/** Serialize reservations with debits and weekly rollover using a fresh ledger. */
+export async function withDkpLedgerLock<T>(operation: (roster: ISheetRosterRecord[]) => Promise<T>) {
+  await dbConnect();
+  const cacheKey = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(cacheKey);
+  return withWeeklyResetLock(cacheKey, async (lockId) => {
+    const roster = await fetchSheetRoster();
+    await assertLedgerLock(cacheKey, lockId);
+    return operation(roster);
+  });
 }
 
 export async function ensureWeeklyDkpReset() {
@@ -348,7 +426,7 @@ export function startDkpWeeklyResetScheduler() {
 
   const runReset = () => {
     void ensureWeeklyDkpReset().catch((error: unknown) => {
-      console.error('Weekly DKP reset did not complete; it will be retried.', error);
+      console.error('Weekly DKP reset did not complete; it will be retried.', error instanceof Error ? error.name : 'UnknownError');
     });
   };
   const interval = setInterval(runReset, 60_000);
@@ -368,6 +446,7 @@ function serializeRosterRecord(record: ISheetRosterRecord): ISheetRosterRecord {
     earned: record.earned,
     spent: record.spent,
     available: record.available,
+    fiveWeekActivity: record.fiveWeekActivity ?? 0,
   };
 }
 
@@ -527,30 +606,73 @@ export async function adjustPlayersDKP(
     reservedPointsToConsume?: Map<number, number>;
     mode?: 'balance' | 'weekly-earned' | 'auction-spend';
     idempotencyKey?: string;
+    /** Award occurrence time: determines the credited week inside the ledger lock. */
+    earnedAt?: Date;
+    /** For staff awards, authorize the durable plan atomically with role edits. */
+    actorUserId?: string;
   } = {},
 ) {
   if (adjustments.length === 0) return;
 
-  const mode = options.mode ?? 'balance';
+  const requestedMode = options.mode ?? 'balance';
+  if (options.earnedAt && !Number.isFinite(options.earnedAt.getTime())) throw new DkpIntegrityError('Invalid award occurrence time.');
+  const combined = new Map<number, typeof adjustments[number]>();
+  for (const adjustment of adjustments) {
+    const previous = combined.get(adjustment.rowIndex);
+    if (previous && (previous.owner !== adjustment.owner || previous.account !== adjustment.account)) {
+      throw new DkpIntegrityError('Conflicting roster identities in a DKP operation.');
+    }
+    combined.set(adjustment.rowIndex, {
+      rowIndex: adjustment.rowIndex, owner: adjustment.owner, account: adjustment.account,
+      points: (previous?.points ?? 0) + adjustment.points,
+    });
+  }
+  const targets = [...combined.values()].sort((a, b) => a.rowIndex - b.rowIndex);
+  const operationKey = options.idempotencyKey ?? `internal:${randomUUID()}`;
+  const requestFingerprint = createHash('sha256').update(JSON.stringify({
+    targets, mode: requestedMode, earnedAt: options.earnedAt?.toISOString(),
+    reserved: [...(options.reservedPointsToConsume ?? new Map()).entries()].sort(([a], [b]) => a - b),
+  })).digest('hex');
   await dbConnect();
   const spreadsheetId = getSpreadsheetId();
   await ensureSheetRosterCacheDocument(spreadsheetId);
 
-  await withWeeklyResetLock(spreadsheetId, async () => {
-    const sheets = google.sheets({ version: 'v4', auth });
-    const response = await withGoogleSheetsRetry(
-      () => sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range: `${SHEET_NAME}!A3:I1000`,
-      }),
-      true,
-    );
-    const rows = response.data.values ?? [];
-    const holds = mode === 'weekly-earned' ? [] : await AuctionHold.find({
-      rowIndex: { $in: adjustments.filter(({ points }) => points < 0).map(({ rowIndex }) => rowIndex) },
-    }).select('rowIndex heldPoints').lean();
-    const holdsByRow = new Map(holds.map((hold) => [hold.rowIndex, hold.heldPoints]));
-    const updates = adjustments.flatMap(({ rowIndex, points, owner, account }) => buildDkpAdjustmentUpdates({
+  await withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    // Check the durable key before inspecting balances: a completed retry must
+    // never be rejected merely because the original operation changed them.
+    const existing = await DkpSheetMutation.findOne({ spreadsheetId, operationKey });
+    if (existing) {
+      if (existing.requestFingerprint && existing.requestFingerprint !== requestFingerprint) {
+        throw new DkpIntegrityError('This request ID was already used for a different DKP operation.');
+      }
+      if (existing.status === 'applied') return;
+      throw new DkpIntegrityError('The previous DKP operation is awaiting recovery. Retry the same request.');
+    }
+    const sheets = createSheetsClient();
+    const rows = await readSheetRows(sheets);
+    const roster = rosterFromRows(rows);
+    const now = new Date();
+    const historical = requestedMode === 'weekly-earned' && options.earnedAt &&
+      options.earnedAt < getCurrentDkpWeekStart(now);
+    const mode = historical ? 'balance' : requestedMode;
+    const holds = mode === 'weekly-earned' ? [] : await AuctionHold.find({ heldPoints: { $ne: 0 } })
+      .select('rowIndex owner account heldPoints').lean();
+    const holdsByRow = new Map<number, number>();
+    for (const target of targets.filter(({ points }) => points < 0)) {
+      const row = rows[target.rowIndex - 3];
+      if (!row) continue; // The accounting validator below reports the missing row.
+      const identity = { owner: row[0] ?? '', account: row[1] ?? '' };
+      for (const hold of holds) {
+        const matchesIdentity = typeof hold.owner === 'string' &&
+          getSheetRecordKey({ owner: hold.owner, account: hold.account ?? '' }) === getSheetRecordKey(identity);
+        if (hold.rowIndex !== target.rowIndex && !matchesIdentity) continue;
+        if (!matchesIdentity || hold.rowIndex !== target.rowIndex) {
+          throw new DkpIntegrityError('A held auction reservation belongs to a moved or unverified roster row. A manager must reconcile it before changing its DKP.');
+        }
+        holdsByRow.set(target.rowIndex, (holdsByRow.get(target.rowIndex) ?? 0) + hold.heldPoints);
+      }
+    }
+    const updates = targets.flatMap(({ rowIndex, points, owner, account }) => buildDkpAdjustmentUpdates({
       rowIndex,
       points,
       owner,
@@ -561,34 +683,55 @@ export async function adjustPlayersDKP(
       reservedPointsToConsume: options.reservedPointsToConsume?.get(rowIndex),
       sheetName: SHEET_NAME,
     }));
-
-    if (options.idempotencyKey) {
-      const existing = await DkpSheetMutation.findOne({ spreadsheetId, operationKey: options.idempotencyKey });
-      if (existing?.status === 'applied') return;
-      const mutation = existing ?? await DkpSheetMutation.create({
-        spreadsheetId,
-        operationKey: options.idempotencyKey,
-        status: 'pending',
-        updates,
-      });
-      if (mutation.status === 'pending') await replayPendingSheetMutation(spreadsheetId, sheets);
-    } else {
-      await withGoogleSheetsRetry(
-        () => sheets.spreadsheets.values.batchUpdate({
-          spreadsheetId,
-          requestBody: { valueInputOption: 'USER_ENTERED', data: updates },
-        }),
-        false,
+    let weeklyActivityHistory;
+    if (historical && options.earnedAt) {
+      const cache = await SheetRosterCache.findOne({ cacheKey: spreadsheetId }).lean();
+      const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
+      const correction = buildHistoricalDkpActivityCorrection(
+        activityRoster, cache?.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster),
+        targets, options.earnedAt, now, SHEET_NAME,
       );
+      updates.push(...correction.updates);
+      weeklyActivityHistory = correction.weeklyActivityHistory;
     }
+    const identities = targets.map(({ rowIndex }) => {
+      const record = roster.find((entry) => entry.rowIndex === rowIndex)!;
+      return { rowIndex, owner: record.owner, account: record.account };
+    });
+    const before = snapshotDkpCells(updates, rows);
+    getDkpReplayState(before, updates, rows);
+    await assertLedgerLock(spreadsheetId, lockId);
+    const mutation = {
+      spreadsheetId, operationKey, requestFingerprint, status: 'pending' as const, updates,
+      actorUserId: options.actorUserId,
+      previousValues: before, identities, weeklyActivityHistory,
+    };
+    if (options.actorUserId) {
+      await withClanAdministrationTransaction(async (session) => {
+        const actor = await User.findOne({
+          _id: options.actorUserId, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] },
+        }).select('_id').session(session).lean();
+        if (!actor) throw new RequestValidationError('Your role no longer permits DKP changes.', 403);
+        await assertLedgerLock(spreadsheetId, lockId);
+        await DkpSheetMutation.create([mutation], { session });
+      });
+    } else {
+      await DkpSheetMutation.create(mutation);
+    }
+    await replayPendingSheetMutation(spreadsheetId, sheets, lockId);
   });
   try {
     await invalidateSheetRosterCache();
   } catch (error: unknown) {
-    console.error('DKP was updated in Google Sheets, but the roster cache could not be invalidated', error);
+    console.error('DKP was updated in Google Sheets, but the roster cache could not be invalidated', error instanceof Error ? error.name : 'UnknownError');
   }
 }
 
 export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {
   await adjustPlayersDKP([{ rowIndex, points: pointsToAdd }], { mode: 'weekly-earned' });
+}
+
+export async function isDkpMutationApplied(operationKey: string) {
+  await dbConnect();
+  return Boolean(await DkpSheetMutation.exists({ spreadsheetId: getSpreadsheetId(), operationKey, status: 'applied' }));
 }

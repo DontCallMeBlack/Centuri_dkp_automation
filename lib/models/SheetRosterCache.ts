@@ -26,6 +26,8 @@ export interface ISheetRosterCache extends mongoose.Document {
   weeklyResetPending?: {
     cycleStart: Date;
     updates: Array<{ range: string; values: number[][] }>;
+    previousValues?: Array<{ range: string; values: number[][] }>;
+    identities?: Array<{ rowIndex: number; owner: string; account: string }>;
     weeklyActivityHistory?: Array<{ rowIndex: number; owner: string; account: string; weeks: number[] }>;
   };
   weeklyActivityHistory?: Array<{ rowIndex: number; owner: string; account: string; weeks: number[] }>;

@@ -14,13 +14,16 @@ export interface WeeklyAwardRecord {
 export function addWeeklyEarnedFromAwards<T extends WeeklyRosterRecord>(roster: T[], weeklyAwards: WeeklyAwardRecord[]) {
   const weeklyEarnedByRow = new Map<number, number>();
   for (const award of weeklyAwards) {
+    if (!Number.isFinite(award.points)) continue;
+    const creditedRows = new Set<number>();
     for (const participant of award.participants) {
       const matches = roster.filter((record) =>
         getSheetRecordKey(record) === getSheetRecordKey(participant)
       );
       const record = matches.find((match) => match.rowIndex === participant.rowIndex)
         ?? (matches.length === 1 ? matches[0] : undefined);
-      if (!record) continue;
+      if (!record || creditedRows.has(record.rowIndex)) continue;
+      creditedRows.add(record.rowIndex);
 
       weeklyEarnedByRow.set(
         record.rowIndex,

@@ -12,7 +12,17 @@ export interface IBossAward extends Document {
   participants: IBossAwardParticipant[];
   createdBy: string;
   updatedBy?: string;
-  status: 'pending' | 'applied' | 'failed' | 'updating';
+  requestId?: string;
+  requestFingerprint?: string;
+  completedRequests?: Array<{ requestId: string; fingerprint: string }>;
+  pendingChange?: {
+    requestId: string;
+    fingerprint: string;
+    kind: 'edit' | 'delete';
+    participants: IBossAwardParticipant[];
+    updatedBy: string;
+  };
+  status: 'pending' | 'applied' | 'failed' | 'updating' | 'deleted';
   failureReason?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -30,7 +40,11 @@ const BossAwardSchema: Schema<IBossAward> = new Schema({
   participants: { type: [ParticipantSchema], default: [] },
   createdBy: { type: String, required: true },
   updatedBy: { type: String },
-  status: { type: String, enum: ['pending', 'applied', 'failed', 'updating'], required: true },
+  requestId: { type: String },
+  requestFingerprint: { type: String },
+  completedRequests: { type: [{ requestId: String, fingerprint: String, _id: false }], default: [] },
+  pendingChange: { type: Schema.Types.Mixed },
+  status: { type: String, enum: ['pending', 'applied', 'failed', 'updating', 'deleted'], required: true },
   failureReason: { type: String },
 }, { timestamps: true });
 
@@ -39,6 +53,7 @@ BossAwardSchema.index(
   { expireAfterSeconds: 365 * 24 * 60 * 60, name: 'boss_award_one_year_retention' },
 );
 BossAwardSchema.index({ status: 1, createdAt: 1 });
+BossAwardSchema.index({ requestId: 1 }, { unique: true, sparse: true });
 
 const BossAward: Model<IBossAward> = mongoose.models.BossAward
   || mongoose.model<IBossAward>('BossAward', BossAwardSchema);

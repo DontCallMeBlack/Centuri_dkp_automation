@@ -1,0 +1,3 @@
+export default function LoadingSurface({ rows = 5, label = 'Preparing your workspace' }: { rows?: number; label?: string }) {
+  return <section className="surface skeleton-surface" role="status" aria-label={label} aria-busy="true"><span className="sr-only">{label}</span><div className="skeleton mb-3 h-4 w-24" /><div className="skeleton mb-8 h-7 w-52" /><div className="space-y-3">{Array.from({ length: rows }, (_, i) => <div key={i} className="flex items-center gap-4 border-t border-white/5 pt-3"><div className="skeleton h-10 w-10 rounded-xl" /><div className="skeleton h-4 w-1/3" /><div className="skeleton ml-auto h-4 w-16" /></div>)}</div></section>;
+}

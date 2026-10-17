@@ -25,7 +25,9 @@ export function buildWeeklyDkpResetPlan(
   roster: WeeklyDkpRosterRow[],
   sheetName: string,
   previousHistory: WeeklyDkpActivityHistory[] = [],
+  elapsedWeeks = 1,
 ) {
+  if (!Number.isSafeInteger(elapsedWeeks) || elapsedWeeks < 1) throw new Error('Invalid elapsed DKP weeks.');
   const nextHistory = roster.map((record) => {
     const matches = previousHistory.filter((entry) => identityKey(entry) === identityKey(record));
     const prior = matches.find((entry) => entry.rowIndex === record.rowIndex)
@@ -33,7 +35,9 @@ export function buildWeeklyDkpResetPlan(
     // If I already had a value before history tracking was introduced, keep it
     // as one legacy bucket. It will age out after five Sunday rollovers.
     const existingWeeks = prior?.weeks ?? (record.fiveWeekActivity === 0 ? [] : [record.fiveWeekActivity]);
-    const weeks = [...existingWeeks, record.weeklyEarned].slice(-5);
+    const weeks = elapsedWeeks > 5
+      ? [0, 0, 0, 0, 0]
+      : [...existingWeeks, record.weeklyEarned, ...Array(elapsedWeeks - 1).fill(0)].slice(-5);
     return { rowIndex: record.rowIndex, owner: record.owner, account: record.account, weeks };
   });
   const historyByRow = new Map(nextHistory.map((entry) => [entry.rowIndex, entry]));
@@ -163,4 +167,41 @@ export function getCurrentDkpWeekStart(now = new Date()) {
     currentWeekStartLocalDate.getUTCMonth() + 1,
     currentWeekStartLocalDate.getUTCDate(),
   );
+}
+
+/** Calendar weeks, including 167/169-hour weeks at daylight saving changes. */
+export function getDkpElapsedWeeks(start: Date, end: Date) {
+  const first = getZonedParts(getCurrentDkpWeekStart(start));
+  const last = getZonedParts(getCurrentDkpWeekStart(end));
+  return Math.round((Date.UTC(last.year, last.month - 1, last.day) - Date.UTC(first.year, first.month - 1, first.day)) / (7 * 86_400_000));
+}
+
+/** Correct the completed week's bucket when attendance is edited after rollover. */
+export function buildHistoricalDkpActivityCorrection(
+  roster: WeeklyDkpRosterRow[],
+  history: WeeklyDkpActivityHistory[],
+  adjustments: Array<{ rowIndex: number; points: number }>,
+  earnedAt: Date,
+  now: Date,
+  sheetName: string,
+) {
+  const offset = getDkpElapsedWeeks(earnedAt, now);
+  if (offset < 1 || offset > 5) return { updates: [], weeklyActivityHistory: history };
+  const nextHistory = history.map((entry) => ({ ...entry, weeks: [...entry.weeks] }));
+  const updates = adjustments.map(({ rowIndex, points }) => {
+    const record = roster.find((entry) => entry.rowIndex === rowIndex);
+    if (!record) throw new Error('Roster changed while correcting historical DKP activity.');
+    const matches = nextHistory.filter((entry) => identityKey(entry) === identityKey(record));
+    let entry = matches.find((candidate) => candidate.rowIndex === rowIndex) ?? (matches.length === 1 ? matches[0] : undefined);
+    if (!entry) {
+      entry = { rowIndex, owner: record.owner, account: record.account, weeks: [] };
+      nextHistory.push(entry);
+    }
+    // Preserve an existing legacy total in its latest known bucket. Earlier
+    // missing buckets are zero until a correction gives them a known value.
+    while (entry.weeks.length < offset) entry.weeks.unshift(0);
+    entry.weeks[entry.weeks.length - offset] += points;
+    return { range: `${sheetName}!I${rowIndex}`, values: [[record.fiveWeekActivity + points]] };
+  });
+  return { updates, weeklyActivityHistory: nextHistory };
 }

@@ -11,7 +11,15 @@ export function isRosterRowArray(value: unknown, allowEmpty = false): value is n
   return Array.isArray(value) &&
     (allowEmpty || value.length > 0) &&
     value.every((rowIndex): rowIndex is number =>
-      typeof rowIndex === 'number' && Number.isInteger(rowIndex)
+      typeof rowIndex === 'number' && Number.isInteger(rowIndex) && rowIndex >= 3 && rowIndex <= 1000
     ) &&
     new Set(value).size === value.length;
+}
+
+export function isDkpRequestId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+export function getBossRequestFingerprint(kind: string, bossName: string, selectedRows: number[]) {
+  return JSON.stringify([kind, bossName, [...selectedRows].sort((a, b) => a - b)]);
 }

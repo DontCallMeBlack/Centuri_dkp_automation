@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import LoadingSurface from '@/components/LoadingSurface';
+import RoleBadge from '@/components/RoleBadge';
+import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 
 interface AuctionToon {
@@ -61,6 +64,7 @@ interface Auction {
   deliveredAt: string | null;
   settlementError: string | null;
   canResolveNoBid: boolean;
+  canRetrySettlement?: boolean;
 }
 
 interface AuctionData {
@@ -79,11 +83,10 @@ interface AuctionData {
   };
 }
 
-let auctionMemoryCache: AuctionData | null = null;
-const AUCTION_SESSION_CACHE_KEY = 'centuri-auction-house-v1';
+const AUCTION_PREVIEW_CACHE_KEY = '/ui/auction-preview';
 
 function rememberAuctionData(data: AuctionData) {
-  auctionMemoryCache = {
+  const preview: AuctionData = {
     ...data,
     manager: false,
     weeklyEarnedTotal: 0,
@@ -98,33 +101,15 @@ function rememberAuctionData(data: AuctionData) {
       canRemove: false,
       canClose: false,
       canResolveNoBid: false,
+      canRetrySettlement: false,
       highBid: auction.highBid ? { ...auction.highBid, isMine: false } : null,
       winner: auction.winner ? { ...auction.winner, isMine: false } : null,
     })),
   };
-  try {
-    window.sessionStorage.setItem(AUCTION_SESSION_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data: auctionMemoryCache }));
-  } catch {
-    // Keep the in-memory cache even when browser storage is unavailable.
-  }
+  rememberData(AUCTION_PREVIEW_CACHE_KEY, preview);
 }
 
-function readAuctionCache() {
-  if (auctionMemoryCache) return auctionMemoryCache;
-  try {
-    const cached = window.sessionStorage.getItem(AUCTION_SESSION_CACHE_KEY);
-    if (!cached) return null;
-    const parsed = JSON.parse(cached) as { savedAt?: number; data?: AuctionData };
-    if (!parsed.data || !Array.isArray(parsed.data.auctions) || !parsed.savedAt || Date.now() - parsed.savedAt > 10 * 60 * 1000) {
-      window.sessionStorage.removeItem(AUCTION_SESSION_CACHE_KEY);
-      return null;
-    }
-    auctionMemoryCache = parsed.data;
-    return auctionMemoryCache;
-  } catch {
-    return null;
-  }
-}
+function readAuctionCache() { return peekData<AuctionData>(AUCTION_PREVIEW_CACHE_KEY); }
 
 const roleStyles: Record<string, string> = {
   ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',
@@ -147,138 +132,19 @@ function formatRemaining(endsAt: string, now: number) {
   return `${hours}h ${minutes}m ${remainingSeconds}s`;
 }
 
-function AuctionItemImage({
-  itemId,
-  imageCount,
-  alt,
-  className,
-}: {
-  itemId: string;
-  imageCount: number;
-  alt: string;
-  className: string;
-}) {
+function AuctionItemImage({ itemId, imageCount, alt, className }: {itemId:string; imageCount:number; alt:string; className:string}) {
   const [imageIndex, setImageIndex] = useState(0);
-  const [imageUrl, setImageUrl] = useState('');
-  const [imageError, setImageError] = useState('');
-  const [imageVisible, setImageVisible] = useState(false);
-  const imageContainerRef = useRef<HTMLDivElement>(null);
-  const imageTotal = Math.max(1, imageCount);
-
-  useEffect(() => {
-    const container = imageContainerRef.current;
-    if (!container) return;
-
-    setImageVisible(false);
-    if (!('IntersectionObserver' in window)) {
-      setImageVisible(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setImageVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: '200px' },
-    );
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [itemId]);
-
-  useEffect(() => {
-    if (!imageVisible) return;
-    let active = true;
-    let objectUrl = '';
-
-    const loadImage = async () => {
-      try {
-        setImageError('');
-        const response = await fetch(`/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`, {
-          credentials: 'same-origin',
-        });
-        if (!response.ok) {
-          throw new Error(`Image request failed (${response.status})`);
-        }
-
-        const contentType = response.headers.get('content-type') ?? '';
-        if (!contentType.startsWith('image/')) {
-          throw new Error('Image endpoint returned a non-image response');
-        }
-
-        const imageBlob = await response.blob();
-        if (imageBlob.size === 0) throw new Error('Stored image is empty');
-
-        objectUrl = URL.createObjectURL(imageBlob);
-        const image = new Image();
-        image.onload = () => {
-          if (active) setImageUrl(objectUrl);
-        };
-        image.onerror = () => {
-          if (active) setImageError('Stored image could not be decoded');
-        };
-        image.src = objectUrl;
-      } catch (loadError) {
-        if (active) {
-          setImageError(loadError instanceof Error ? loadError.message : 'Unable to load item image');
-        }
-      }
-    };
-
-    setImageUrl('');
-    void loadImage();
-
-    return () => {
-      active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [itemId, imageIndex, imageVisible]);
-
-  if (imageError) {
-    return (
-      <div ref={imageContainerRef} role="img" aria-label={`${alt}: ${imageError}`} title={imageError} className={`${className} relative flex flex-col items-center justify-center gap-1 overflow-hidden p-2 text-center text-[9px] text-rose-300`}>
-        <ImageOff className="h-4 w-4 shrink-0" />
-        <span>Image unavailable</span>
-        {imageTotal > 1 && (
-          <ImageNavigation
-            imageIndex={imageIndex}
-            imageTotal={imageTotal}
-            setImageIndex={setImageIndex}
-          />
-        )}
-      </div>
-    );
-  }
-
-  if (!imageUrl) {
-    return (
-      <div ref={imageContainerRef} aria-label={imageVisible ? `Loading ${alt}` : alt} className={`${className} relative flex items-center justify-center overflow-hidden`}>
-        {imageVisible && <LoaderCircle className="h-4 w-4 animate-spin text-slate-500" />}
-        {imageTotal > 1 && (
-          <ImageNavigation
-            imageIndex={imageIndex}
-            imageTotal={imageTotal}
-            setImageIndex={setImageIndex}
-          />
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div ref={imageContainerRef} className={`${className} relative overflow-hidden`}>
-      <img src={imageUrl} alt={`${alt} image ${imageIndex + 1}`} className="h-full w-full object-cover" />
-      {imageTotal > 1 && (
-        <ImageNavigation
-          imageIndex={imageIndex}
-          imageTotal={imageTotal}
-          setImageIndex={setImageIndex}
-        />
-      )}
-    </div>
-  );
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const total = Math.max(1,imageCount);
+  useEffect(() => { setImageIndex(0); setLoaded(false); setFailed(false); },[itemId]);
+  const changeImage = (index:number) => { setLoaded(false); setFailed(false); setImageIndex(index); };
+  return <div className={`${className} relative overflow-hidden`}>
+    {!failed && <img src={`/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`} alt={`${alt}, image ${imageIndex+1}`} loading="lazy" decoding="async" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`} />}
+    {!loaded && !failed && <div className="skeleton pointer-events-none absolute inset-0" />}
+    {failed && <div role="img" aria-label={`${alt}: image unavailable`} className="flex h-full min-h-10 flex-col items-center justify-center gap-1 text-[9px] text-slate-500"><ImageOff size={17} />Image unavailable</div>}
+    {total > 1 && <ImageNavigation imageIndex={imageIndex} imageTotal={total} setImageIndex={changeImage} />}
+  </div>;
 }
 
 function ImageNavigation({
@@ -315,12 +181,14 @@ function ImageNavigation({
   );
 }
 
-export default function AuctionHousePanel() {
-  const [data, setData] = useState<AuctionData | null>(() => auctionMemoryCache);
+export default function AuctionHousePanel({ active = true }: { active?: boolean }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const [data, setData] = useState<AuctionData | null>(null);
   const dataRef = useRef<AuctionData | null>(data);
-  const [loading, setLoading] = useState(() => !auctionMemoryCache);
-  const [syncing, setSyncing] = useState(() => Boolean(auctionMemoryCache));
-  const [lastSyncedAt, setLastSyncedAt] = useState<number>(() => Date.now());
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number>(0);
   const [localTimeReady, setLocalTimeReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -366,21 +234,10 @@ export default function AuctionHousePanel() {
   useEffect(() => {
     let mounted = true;
     const load = async () => {
+      const version = clientDataVersion();
       try {
-        const response = await fetch('/api/auction', { cache: 'no-store' });
-        const result = await response.json();
-        if (response.status === 401) {
-          auctionMemoryCache = null;
-          try {
-            window.sessionStorage.removeItem(AUCTION_SESSION_CACHE_KEY);
-          } catch {
-            // Session storage may be disabled by browser privacy settings.
-          }
-          router.push('/login');
-          return;
-        }
-        if (!response.ok) throw new Error(result.error || 'Unable to load auctions');
-        if (mounted) {
+        const result = await getData<AuctionData>('/api/auction');
+        if (mounted && version === clientDataVersion()) {
           setError('');
           setData(result);
           rememberAuctionData(result);
@@ -388,6 +245,7 @@ export default function AuctionHousePanel() {
           setSyncing(false);
         }
       } catch (loadError) {
+        if (loadError instanceof ApiError && loadError.status === 401) { clearClientData(); router.replace('/login'); return; }
         if (mounted) {
           setError(loadError instanceof Error ? loadError.message : 'Unable to load auctions');
           setSyncing(false);
@@ -402,22 +260,26 @@ export default function AuctionHousePanel() {
     let lastIdlePollAt = 0;
     const pollLiveAuctions = async () => {
       const current = dataRef.current;
-      if (!current || pollInFlight || document.visibilityState !== 'visible') return;
+      if (!current || pollInFlight || !activeRef.current || document.visibilityState !== 'visible') return;
       const hasLiveAuctions = current.auctions.some((auction) =>
-        auction.status === 'active' && !auction.biddingClosed && new Date(auction.endsAt).getTime() > Date.now(),
+        ['active','settling','settlement-failed'].includes(auction.status),
       );
       if (!hasLiveAuctions && Date.now() - lastIdlePollAt < 5 * 60_000) return;
       if (!hasLiveAuctions) lastIdlePollAt = Date.now();
       pollInFlight = true;
+      const pollGeneration = clientDataVersion();
       try {
         const versions = [...current.auctions]
           .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
           .slice(0, 100)
           .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}`]);
         const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}`, { cache: 'no-store' });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error('Live bids could not be checked. Refresh before bidding.');
         const result = await response.json();
+        if (!mounted || pollGeneration !== clientDataVersion()) return;
+        setLastSyncedAt(Date.now());
         if (!result.changed || !Array.isArray(result.auctions)) return;
+        const personalBalanceChanged = (result.auctions as Auction[]).some((live) => { const old=current.auctions.find((entry) => entry.id === live.id); return Boolean(old?.highBid?.isMine || live.highBid?.isMine || old?.winner?.isMine) && (old?.bidVersion !== live.bidVersion || old?.status !== live.status || old?.highBid?.amount !== live.highBid?.amount); });
         const byId = new Map((result.auctions as Auction[]).map((auction) => [auction.id, auction]));
         setData((previous) => {
           if (!previous) return previous;
@@ -434,8 +296,9 @@ export default function AuctionHousePanel() {
           return updated;
         });
         setLastSyncedAt(Date.now());
-      } catch {
-        // Keep displaying the last known state; the next poll retries.
+        if (personalBalanceChanged) await refresh();
+      } catch (cause) {
+        if (mounted) setError(cause instanceof Error ? cause.message : 'Live updates are delayed. Refresh to check current bids.');
       } finally {
         pollInFlight = false;
       }
@@ -443,9 +306,9 @@ export default function AuctionHousePanel() {
     // Poll only compact auction state frequently; reload roster/catalog less often.
     const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 30_000);
     const fullRefreshTimer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void load();
+      if (activeRef.current && document.visibilityState === 'visible') void load();
     }, 15 * 60_000);
-    const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
+    const clockTimer = window.setInterval(() => { if (activeRef.current && document.visibilityState === 'visible') setNow(Date.now()); }, 1000);
     return () => {
       mounted = false;
       window.clearInterval(refreshTimer);
@@ -456,10 +319,10 @@ export default function AuctionHousePanel() {
 
   const refresh = async () => {
     setSyncing(true);
+    const version = clientDataVersion();
     try {
-      const response = await fetch('/api/auction', { cache: 'no-store' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Unable to refresh auctions');
+      const result = await getData<AuctionData>('/api/auction');
+      if (version !== clientDataVersion()) return;
       setError('');
       setData(result);
       rememberAuctionData(result);
@@ -475,9 +338,9 @@ export default function AuctionHousePanel() {
     let lastReturnRefreshAt = 0;
     const refreshOnReturn = () => {
       const now = Date.now();
-      if (document.visibilityState !== 'visible' || now - lastReturnRefreshAt < 5_000) return;
+      if (!activeRef.current || document.visibilityState !== 'visible' || now - lastReturnRefreshAt < 5_000) return;
       lastReturnRefreshAt = now;
-      void refresh().catch(() => undefined);
+      void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed. Displayed bids may have changed.'));
     };
     document.addEventListener('visibilitychange', refreshOnReturn);
     window.addEventListener('focus', refreshOnReturn);
@@ -487,13 +350,29 @@ export default function AuctionHousePanel() {
     };
   }, []);
 
+  useEffect(() => {
+    if (active) { setNow(Date.now()); void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Unable to refresh auctions.')); }
+  }, [active]);
+  useEffect(() => {
+    const update=() => { if (activeRef.current) void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.')); };
+    window.addEventListener('centuri:dkp-changed',update);
+    return () => window.removeEventListener('centuri:dkp-changed',update);
+  }, []);
+  useEffect(() => {
+    const clear = () => { setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setPostFormOpen(false); setError(''); setNotice(''); };
+    window.addEventListener('centuri:clear-data', clear);
+    return () => window.removeEventListener('centuri:clear-data', clear);
+  }, []);
+
   const loadFullAuctionHistory = async () => {
+    const version = clientDataVersion();
     setArchiveLoading(true);
     setError('');
     try {
       const response = await fetch('/api/auction?includeArchive=1', { cache: 'no-store' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to load full auction history');
+      if (version !== clientDataVersion()) return;
       setArchiveAuctions(result.auctions);
       setArchiveLoaded(true);
     } catch (historyError) {
@@ -507,7 +386,7 @@ export default function AuctionHousePanel() {
     if (auctionView === 'all' && !archiveLoaded && !archiveLoading) {
       void loadFullAuctionHistory();
     }
-  }, [auctionView, archiveLoaded, archiveLoading]);
+  }, [auctionView]);
 
   const submitAuction = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -556,6 +435,7 @@ export default function AuctionHousePanel() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to place bid');
       setNotice(result.message);
+      notifyDkpChanged();
       if (result.highBid) {
         setData((current) => {
           if (!current) return current;
@@ -572,12 +452,9 @@ export default function AuctionHousePanel() {
       setBidAmounts((current) => ({ ...current, [auction.id]: '' }));
       await refresh();
     } catch (bidError) {
-      setError(bidError instanceof Error ? bidError.message : 'Unable to place bid');
-      try {
-        await refresh();
-      } catch (refreshError) {
-        setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh auctions');
-      }
+      const failure = bidError instanceof Error ? bidError.message : 'Unable to confirm bid';
+      try { await refresh(); setError(failure); }
+      catch { setError(`${failure} Current bids could not be refreshed; the displayed balances may have changed.`); }
     } finally {
       setSaving(false);
     }
@@ -696,14 +573,27 @@ export default function AuctionHousePanel() {
     }
   };
 
+  const retrySettlement = async (auction: Auction) => {
+    if (saving) return;
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const response=await fetch('/api/auction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'retry-settlement',auctionId:auction.id})});
+      const result=await response.json();
+      if (!response.ok) throw new Error(result.error || 'Settlement could not be retried.');
+      setNotice(result.message || 'Settlement retry requested.');
+      await refresh(); notifyDkpChanged();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to retry settlement.'); }
+    finally { setSaving(false); }
+  };
+
   if (loading) {
-    return <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading auction house...</div>;
+    return <LoadingSurface label="Preparing auction house" />;
   }
 
   if (!data) {
     return <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300">
       <p role="alert">{error || 'Unable to load the auction house.'}</p>
-      <button onClick={() => window.location.reload()} className="mt-4 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-800">Retry</button>
+      <button onClick={() => { setLoading(true); void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.')).finally(() => setLoading(false)); }} className="mt-4 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-800">Retry</button>
     </section>;
   }
 
@@ -755,26 +645,26 @@ export default function AuctionHousePanel() {
     auctionHolderFilter,
     auctionSearch.trim(),
   ].filter(Boolean).length;
-  const liveAuctions = allAuctions.filter((auction) => auction.status === 'active' && new Date(auction.endsAt).getTime() > now);
+  const liveAuctions = allAuctions.filter((auction) => ['active','settling'].includes(auction.status));
   const visibleAuctions = auctionView === 'live'
     ? filteredAuctions.filter((auction) => liveAuctions.some((live) => live.id === auction.id))
     : filteredAuctions;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 pb-8">
-      <section className="relative overflow-hidden rounded-3xl border border-slate-700/80 bg-slate-950 shadow-xl shadow-black/20">
+      <section className="surface relative overflow-hidden">
         <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl" />
         <div className="relative flex flex-col gap-5 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/25"><Gavel className="h-5 w-5" /></div>
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-300">Centuri loot</p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">Auction house</h2>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-white">Find your next upgrade.</h2>
               <p className="mt-1 text-sm text-slate-400">Browse live items, check the lead, and place a bid.</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-            <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Weekly DKP</p><p className="mt-0.5 text-lg font-black tabular-nums text-white">{data.weeklyEarnedTotal.toLocaleString()} <span className="text-xs font-semibold text-slate-500">/ {data.weeklyMinimum.toLocaleString()}</span></p></div>
+            <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Weekly DKP</p><p className="mt-0.5 text-lg font-black tabular-nums text-white">{lastSyncedAt ? data.weeklyEarnedTotal.toLocaleString() : '\u2014'} <span className="text-xs font-semibold text-slate-500">/ {data.weeklyMinimum.toLocaleString()}</span></p></div>
             <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Live auctions</p><p className="mt-0.5 text-lg font-black tabular-nums text-emerald-300">{liveAuctions.length}</p></div>
             {data.manager && (
               <button
@@ -1050,13 +940,14 @@ export default function AuctionHousePanel() {
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} currently open` : `${allAuctions.length} total loaded`}</p><p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${syncing ? 'animate-pulse bg-amber-300' : 'bg-emerald-400'}`} />{syncing ? 'Refreshing live bids' : `Live · synced ${new Date(lastSyncedAt).toLocaleTimeString()}`}</p></div>
+            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p><p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${syncing ? 'animate-pulse bg-indigo-300' : error || !lastSyncedAt ? 'bg-amber-300' : 'bg-emerald-400'}`} />{syncing ? 'Refreshing live bids' : error || !lastSyncedAt ? 'Updates delayed - refresh needed' : `Last checked ${new Date(lastSyncedAt).toLocaleTimeString()}`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="tablist" aria-label="Auction views">
               <button type="button" role="tab" aria-selected={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" role="tab" aria-selected={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
             </div>
           </div>
           <div className="flex min-w-0 gap-2">
+          <button type="button" disabled={syncing} className="icon-button" aria-label="Refresh auctions" onClick={() => void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.'))}><RefreshCw size={15} className={syncing ? 'animate-spin' : ''} /></button>
           <label className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <input
@@ -1180,9 +1071,10 @@ export default function AuctionHousePanel() {
                         <h4 className="mt-1 break-words text-lg font-black leading-tight text-white">{auction.itemName}</h4>
                       </div>
                     </div>
-                    {isActive && auction.canRemove && (
-                      <div className="flex shrink-0 justify-end">
-                        <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="group/remove inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-400/30 bg-gradient-to-br from-rose-500/20 via-rose-950/60 to-slate-950 text-rose-200 shadow-lg shadow-rose-950/25 transition duration-200 hover:-translate-y-0.5 hover:border-rose-300/70 hover:from-rose-500/40 hover:text-white hover:shadow-xl hover:shadow-rose-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`} title="Remove auction"><X className="h-4 w-4 transition group-hover/remove:rotate-90" strokeWidth={2.5} /></button>
+                    {isActive && (auction.canRemove || auction.canClose) && (
+                      <div className="flex shrink-0 justify-end gap-2">
+                        {auction.canClose && <button className="secondary-button !min-h-9 !px-2.5 !py-1.5 !text-[10px]" type="button" disabled={saving} onClick={() => void closeAuction(auction)}><Clock3 size={12} /> Close</button>}
+                        {auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="group/remove inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-400/30 bg-gradient-to-br from-rose-500/20 via-rose-950/60 to-slate-950 text-rose-200 shadow-lg shadow-rose-950/25 transition duration-200 hover:-translate-y-0.5 hover:border-rose-300/70 hover:from-rose-500/40 hover:text-white hover:shadow-xl hover:shadow-rose-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`} title="Remove auction"><X className="h-4 w-4 transition group-hover/remove:rotate-90" strokeWidth={2.5} /></button>}
                       </div>
                     )}
                   </header>
@@ -1193,18 +1085,18 @@ export default function AuctionHousePanel() {
                     </div>
                     <div className="flex min-w-0 flex-col gap-3 sm:pt-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' ? 'SETTLING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold capitalize ${roleStyle}`}>{auctionRoles.join(' / ')}</span>
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
+                      {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}
                       <span className="rounded-full border border-slate-700 bg-slate-950/60 px-2 py-1 text-[10px] font-semibold text-slate-400">{auction.bossType}</span>
                       {isActive && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{formatRemaining(auction.endsAt, now)}</span>}
-                      {!isActive && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">{auction.status === 'settlement-failed' ? <ShieldAlert className="h-3.5 w-3.5 text-rose-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}{auction.status === 'settlement-failed' ? 'Settlement needs review' : 'Auction closed'}</span>}
+                      {!isActive && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">{auction.status === 'settlement-failed' ? <ShieldAlert className="h-3.5 w-3.5 text-rose-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}{auction.status === 'settlement-failed' ? 'Settlement needs review' : auction.status === 'completed' ? 'Auction closed' : 'Confirming auction result'}</span>}
                     </div>
 
                     <div className="@container min-w-0">
                       {auction.highBid ? (
                         <div className="relative grid gap-2 overflow-hidden rounded-xl border border-amber-300/20 bg-gradient-to-br from-amber-300/[0.12] via-amber-400/[0.04] to-slate-950/70 p-4 text-center shadow-inner shadow-amber-200/[0.03] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning toon' : 'Leading toon'}</p>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning toon' : isActive ? 'Leading toon' : 'Last leading bid'}</p>
                             <p className="mt-1 break-all text-lg font-bold leading-snug text-slate-100">{auction.highBid.account || auction.highBid.owner}</p>
                           </div>
                           <p aria-live="polite" className="text-4xl font-black tracking-tight tabular-nums text-amber-100 drop-shadow-[0_0_14px_rgba(251,191,36,0.18)] sm:text-right">{auction.highBid.amount.toLocaleString()} <span className="text-[10px] font-bold tracking-normal text-amber-300/70">DKP</span></p>
@@ -1215,7 +1107,7 @@ export default function AuctionHousePanel() {
                             ? 'border-slate-800 bg-slate-950/50 text-slate-400'
                             : 'border-slate-700 bg-slate-950/70 font-semibold text-slate-300'
                         }`}>
-                          {isActive ? 'No bids yet' : 'Auction ended with no bids'}
+                          {isActive ? 'No bids yet' : auction.status === 'completed' ? 'Auction ended with no bids' : 'Confirming auction result...'}
                         </p>
                       )}
                       {isActive && auction.highBid?.isMine && (
@@ -1256,7 +1148,7 @@ export default function AuctionHousePanel() {
                                 <span className="sr-only">Bid amount</span>
                                 <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="Enter bid amount" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
                               </label>
-                              <button disabled={saving || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 hover:shadow-indigo-900/50 disabled:cursor-not-allowed disabled:opacity-45">
+                              <button disabled={saving || syncing || !lastSyncedAt || !Number.isSafeInteger(Number(bidAmounts[auction.id])) || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 hover:shadow-indigo-900/50 disabled:cursor-not-allowed disabled:opacity-45">
                                 <Gavel className="h-4 w-4" /> {Number(bidAmounts[auction.id]) >= minimumBid ? `Bid ${Number(bidAmounts[auction.id]).toLocaleString()}` : 'Place bid'}
                               </button>
                             </div>
@@ -1272,6 +1164,7 @@ export default function AuctionHousePanel() {
                     {auction.status === 'settlement-failed' && auction.settlementError && (
                       <p role="alert" className="flex gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-300"><ShieldAlert className="h-4 w-4 shrink-0" />{auction.settlementError}</p>
                     )}
+                    {auction.canRetrySettlement && <button type="button" className="secondary-button" disabled={saving} onClick={() => void retrySettlement(auction)}><RefreshCw size={13} />Retry settlement</button>}
                     {!isActive && auction.status === 'completed' && auction.winner && (
                       <p className="flex items-start gap-2 break-words text-xs leading-snug text-emerald-300">
                         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>Winner: <span className="break-all">{auction.winner.account || auction.winner.owner}</span>

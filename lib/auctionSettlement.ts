@@ -17,3 +17,8 @@ export function isSettlementLeaseExpired(status: SettlementStatus, leaseUntil: D
 export function getAuctionSettlementMutationKey(auctionId: string) {
   return `auction-settlement:${auctionId}`;
 }
+
+export function canRetryAuctionSettlement(role: string, input: Parameters<typeof needsSettlementManualReview>[0]) {
+  return (role === 'chief' || role === 'general') && input.status === 'settlement-failed' &&
+    !needsSettlementManualReview(input);
+}

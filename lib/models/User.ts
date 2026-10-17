@@ -9,6 +9,7 @@ export interface ISheetRecord {
 
 export interface IUser extends Document {
   nickname: string;
+  nicknameKey?: string;
   passwordHash: string;
   role: 'chief' | 'general' | 'guardian' | 'clansman';
   status: 'approved' | 'pending';
@@ -25,6 +26,7 @@ const SheetRecordSchema = new Schema<ISheetRecord>({
 
 const UserSchema: Schema<IUser> = new Schema({
   nickname: { type: String, required: true, unique: true },
+  nicknameKey: { type: String },
   passwordHash: { type: String, required: true },
   role: { type: String, enum: ['chief', 'general', 'guardian', 'clansman'], default: 'clansman' },
   status: { type: String, enum: ['approved', 'pending'], default: 'pending' },
@@ -34,8 +36,8 @@ const UserSchema: Schema<IUser> = new Schema({
 });
 
 UserSchema.index({ 'sheetRecords.rowIndex': 1 }, { unique: true, sparse: true });
+UserSchema.index({ nicknameKey: 1 }, { unique: true, sparse: true });
 
 const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>('User', UserSchema);
 
 export default User;
-                    
