@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Dialog from '@/components/Dialog';
 import RoleBadge from '@/components/RoleBadge';
 import LoadingSurface from '@/components/LoadingSurface';
+import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
+import { ApiError, clearClientData, clientDataVersion, getData, invalidateData } from '@/lib/client/api';
 import { ImagePlus, LoaderCircle, Package, Save, Search, Trash2, Pencil, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { optimizeImageForUpload } from '@/lib/auctionImageClient';
 
@@ -405,7 +407,8 @@ function ItemEditor({
   );
 }
 
-export default function AuctionItemsPanel() {
+export default function AuctionItemsPanel({ active = true }: { active?: boolean }) {
+  const mounted = useRef(true);
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [search, setSearch] = useState('');
@@ -421,42 +424,34 @@ export default function AuctionItemsPanel() {
   const router = useRouter();
 
   const loadItems = async () => {
-    const response = await fetch('/api/auction/items', { cache: 'no-store' });
-    const result = await response.json();
-    if (response.status === 401) {
-      router.push('/login');
-      return;
+    const version = clientDataVersion();
+    try {
+      const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
+      if (!mounted.current || version !== clientDataVersion()) return;
+      setItems(result.items); setRoles(result.roles); setError('');
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
+      throw cause;
+    } finally {
+      if (mounted.current && version === clientDataVersion()) setLoading(false);
     }
-    if (!response.ok) throw new Error(result.error || 'Unable to load saved items.');
-    setItems(result.items);
-    setRoles(result.roles);
   };
 
   useEffect(() => {
-    let mounted = true;
-    void fetch('/api/auction/items', { cache: 'no-store' })
-      .then(async (response) => {
-        const result = await response.json();
-        if (response.status === 401) {
-          router.push('/login');
-          return;
-        }
-        if (!response.ok) throw new Error(result.error || 'Unable to load saved items.');
-        if (mounted) {
-          setItems(result.items);
-          setRoles(result.roles);
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (mounted) setError(loadError instanceof Error ? loadError.message : 'Unable to load saved items.');
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
+    mounted.current = true;
+    const clear = () => { setItems([]); setRoles([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
+    window.addEventListener('centuri:clear-data', clear);
     return () => {
-      mounted = false;
+      mounted.current = false;
+      window.removeEventListener('centuri:clear-data', clear);
     };
   }, [router]);
+  useAutoRefresh(loadItems, { active, intervalMs: 180_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Catalog updates are delayed. Retrying automatically.') });
+
+  const catalogChanged = () => {
+    invalidateData('/api/auction/items'); invalidateData('/api/auction');
+    window.dispatchEvent(new Event('centuri:catalog-changed'));
+  };
 
   const filteredItems = useMemo(
     () => items.filter((item) => item.name.toLowerCase().includes(search.trim().toLowerCase())),
@@ -475,6 +470,7 @@ export default function AuctionItemsPanel() {
       const response = await fetch('/api/auction/items', { method: 'POST', body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to add saved item.');
+      catalogChanged();
       await loadItems();
       setName('');
       setRequiredRoles([]);
@@ -496,6 +492,7 @@ export default function AuctionItemsPanel() {
     updatedBossType: string,
     imageCount?: number,
   ) => {
+    catalogChanged();
     setItems((current) => current
       .map((item) => item.id === itemId
         ? {
@@ -519,6 +516,7 @@ export default function AuctionItemsPanel() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Unable to remove item.');
+    catalogChanged();
     setItems((current) => current.filter((item) => item.id !== itemId));
     setNotice('Item removed from the catalog. Existing auction history is preserved.');
     setError('');
@@ -526,7 +524,7 @@ export default function AuctionItemsPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h2 className="page-title">Great loot starts here.</h2><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/lib/client/api';
 import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
 import LoadingSurface from '@/components/LoadingSurface';
+import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, ClipboardList, History, LoaderCircle, Search, Shield, Trash2, UserCheck, Users, X } from 'lucide-react';
 
 interface ClanUser {
@@ -76,14 +77,13 @@ export default function AdminRequestsPage() {
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
       else if (cause instanceof ApiError && cause.status === 403) setAccessRole(typeof cause.details?.role === 'string' ? cause.details.role : 'member');
       else setError(cause instanceof Error ? cause.message : 'Clan administration could not be refreshed. Showing the last known data.');
+      return false;
     } finally { if (mountedRef.current && sequence === loadSequence.current) { setLoading(false); setRefreshing(false); } }
   };
   useEffect(() => {
     mountedRef.current=true;
     const cached=peekData<AdminData>('/api/admin/requests');
     if (cached) { applyData(cached); setLoading(false); }
-    void loadData();
-    const update=() => { if (document.visibilityState === 'visible') void loadData(); };
     const clear = () => {
       loadSequence.current += 1; dirtyMappings.current.clear();
       setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
@@ -91,11 +91,10 @@ export default function AdminRequestsPage() {
       setManagerRole(''); setManagerId(''); setAccessRole(''); setBusyId('');
       setError(''); setNotice(''); setLoading(true); setRefreshing(false);
     };
-    document.addEventListener('visibilitychange',update);
-    window.addEventListener('centuri:dkp-changed',update);
     window.addEventListener('centuri:clear-data',clear);
-    return () => { mountedRef.current=false; loadSequence.current += 1; document.removeEventListener('visibilitychange',update); window.removeEventListener('centuri:dkp-changed',update); window.removeEventListener('centuri:clear-data',clear); };
+    return () => { mountedRef.current=false; loadSequence.current += 1; window.removeEventListener('centuri:clear-data',clear); };
   }, []);
+  useAutoRefresh(loadData);
 
   const sendAdminAction = async (
     userId: string,
@@ -269,7 +268,7 @@ export default function AdminRequestsPage() {
 
   return (
     <main className="space-y-6 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Good people. Stronger clan.</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div><button type="button" className="secondary-button" disabled={refreshing || Boolean(busyId)} onClick={() => void loadData()}><History size={14} />{refreshing ? 'Refreshing...' : 'Refresh members'}</button></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Good people. Stronger clan.</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div><span className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${refreshing ? 'animate-pulse' : ''}`} />Automatic updates</span></div>
       <div className="grid grid-cols-3 gap-3">{[[UserCheck,'Awaiting approval',pendingUsers.length],[Users,'Clan members',members.length],[ClipboardList,'Recorded actions',auditEvents.length]].map(([Icon,label,count]) => { const I=Icon as typeof Users; return <div key={String(label)} className="surface stat-card"><span className="stat-icon hidden sm:block"><I size={17} /></span><div><p className="stat-label">{String(label)}</p><p className="stat-value">{Number(count)}</p></div></div>; })}</div>
       <div className="surface p-5 sm:p-6">
         <nav aria-label="Administration sections" className="section-tabs !mt-0">

@@ -1,3 +1,5 @@
+import { DkpIntegrityError } from '../dkpAccounting.ts';
+
 /** Safe, bounded parsing and same-origin checks for cookie-authenticated mutations. */
 export class RequestValidationError extends Error {
   readonly status: number;
@@ -73,6 +75,7 @@ export async function readFormDataLimited(request: Request, maxBytes = 3 * 1024 
 }
 
 export function requestErrorResponse(error: unknown, fallback: string): Response {
+  if (error instanceof DkpIntegrityError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof RequestValidationError) return Response.json({ error: error.message }, { status: error.status });
   // Never log request bodies, credentials, database URLs or provider responses.
   console.error(fallback, error instanceof Error ? error.name : 'UnknownError');

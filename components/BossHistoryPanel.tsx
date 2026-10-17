@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
+import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
 
@@ -31,7 +32,7 @@ interface BossAward {
 
 interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMember[]}
 
-export default function BossHistoryPanel({ embedded = false }: { embedded?: boolean }) {
+export default function BossHistoryPanel({ embedded = false, active = true }: { embedded?: boolean; active?: boolean }) {
   const user = useSessionUser();
   const mountedRef = useRef(true);
   const requestIds = useRef(new Map<string, string>());
@@ -54,27 +55,27 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
     setCanManage(data.canManage === true); setAwards(data.awards); setRoster(data.roster);
     setSelectedRows((previous) => ({...Object.fromEntries(data.awards.map((award) => [award.id,award.selectedRows])),...(editingRef.current ? {[editingRef.current]:previous[editingRef.current]} : {})}));
   };
-  const loadHistory = async () => {
+  const loadHistory = async (clearReadError = true) => {
     if (!mountedRef.current) return;
     setRefreshing(true);
-    try { const data=await getData<HistoryData>('/api/admin/boss-history'); if (mountedRef.current) { applyData(data); setAccessDenied(false); } }
+    try { const data=await getData<HistoryData>('/api/admin/boss-history'); if (mountedRef.current) { applyData(data); setAccessDenied(false); if (clearReadError) setError(''); } }
     catch (cause) {
       if (!mountedRef.current) return;
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
       else if (cause instanceof ApiError && cause.status === 403) setAccessDenied(true);
       else setError(cause instanceof Error ? cause.message : 'Boss history could not be refreshed. Showing the last known data.');
+      return false;
     } finally { if (mountedRef.current) { setLoading(false); setRefreshing(false); } }
   };
   useEffect(() => {
     mountedRef.current=true;
     const cached=peekData<HistoryData>('/api/admin/boss-history');
     if (cached) { applyData(cached); setLoading(false); }
-    void loadHistory();
-    const update=() => { if (document.visibilityState === 'visible') void loadHistory(); };
-    window.addEventListener('centuri:dkp-changed',update);
-    document.addEventListener('visibilitychange',update);
-    return () => { mountedRef.current=false; window.removeEventListener('centuri:dkp-changed',update); document.removeEventListener('visibilitychange',update); };
+    const clear = () => { setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
+    window.addEventListener('centuri:clear-data', clear);
+    return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
+  useAutoRefresh(loadHistory, { active });
 
   const toggleRow = (awardId: string, rowIndex: number) => {
     setSelectedRows((current) => {
@@ -120,7 +121,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       notifyDkpChanged();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to update boss attendance');
-      await loadHistory();
+      await loadHistory(false);
     } finally {
       setBusyId('');
     }
@@ -153,7 +154,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
       notifyDkpChanged();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete boss kill');
-      await loadHistory();
+      await loadHistory(false);
     } finally {
       setBusyId('');
     }
@@ -168,7 +169,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
         body: JSON.stringify(change ? {awardId:award.id,requestId:change.requestId,selectedRows:change.selectedRows} : {requestId:award.requestId,bossName:award.bossName,selectedRows:award.originalSelectedRows}),
       }));
       setNotice(result.message); notifyDkpChanged();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed.'); await loadHistory(); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed.'); await loadHistory(false); }
     finally { setBusyId(''); }
   };
 
@@ -190,7 +191,7 @@ export default function BossHistoryPanel({ embedded = false }: { embedded?: bool
 
   return (
     <section className="space-y-5 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Review boss rewards and keep attendance accurate.' : 'Explore your clan boss kills and attendance.'}</p></div><button type="button" className="secondary-button" disabled={refreshing || Boolean(busyId)} onClick={() => void loadHistory()}><History size={14} />{refreshing ? 'Refreshing...' : 'Refresh history'}</button></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Review boss rewards and keep attendance accurate.' : 'Explore your clan boss kills and attendance.'}</p></div><span className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${refreshing ? 'animate-pulse' : ''}`} />Automatic updates</span></div>
       <div className="space-y-4">
         <p className="text-sm text-slate-400">
           {canManage
