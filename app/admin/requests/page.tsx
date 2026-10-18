@@ -14,6 +14,7 @@ interface ClanUser {
   nickname: string;
   role: string;
   sheetRecordRows?: number[];
+  needsLinkRefresh?: boolean;
 }
 
 interface RosterMember {
@@ -26,7 +27,7 @@ interface RosterMember {
 
 interface ClanAuditEntry {
   id: string;
-  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'account-approval' | 'account-denial';
+  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial';
   actorNickname: string;
   actorRole: string;
   targetNickname: string;
@@ -189,11 +190,11 @@ export default function AdminRequestsPage() {
   };
 
   const renderMappingSelector = (userId: string, label: string) => {
-    const currentMember = members.find((member) => member._id === userId);
-    const occupiedRows = new Set(members.flatMap((member) => member.sheetRecordRows ?? []));
+    const accounts = [...members, ...pendingUsers];
+    const currentMember = accounts.find((member) => member._id === userId);
+    const occupiedRows = new Set(accounts.filter((member) => member._id !== userId).flatMap((member) => member.sheetRecordRows ?? []));
     const availableRoster = roster.filter((record) =>
-      !occupiedRows.has(record.rowIndex) ||
-      (currentMember?.sheetRecordRows ?? []).includes(record.rowIndex),
+      !occupiedRows.has(record.rowIndex),
     );
 
     const query = (mappingQueries[userId] ?? '').trim().toLowerCase();
@@ -483,14 +484,14 @@ export default function AdminRequestsPage() {
                             ? 'bg-emerald-500/10 text-emerald-300'
                             : event.eventType === 'demotion'
                               ? 'bg-amber-500/10 text-amber-300'
-                              : event.eventType === 'toon-links' || event.eventType === 'account-approval'
+                              : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' || event.eventType === 'account-approval'
                                 ? 'bg-indigo-500/10 text-indigo-300' : 'bg-red-500/10 text-red-300'
                         }`}>
                           {event.eventType === 'promotion'
                             ? <ArrowUp className="h-4 w-4" />
                             : event.eventType === 'demotion'
                               ? <ArrowDown className="h-4 w-4" />
-                              : event.eventType === 'toon-links' ? <Link2 className="h-4 w-4" />
+                              : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' ? <Link2 className="h-4 w-4" />
                                 : event.eventType === 'account-approval' ? <UserCheck className="h-4 w-4" />
                                   : <Trash2 className="h-4 w-4" />}
                         </span>
@@ -499,6 +500,7 @@ export default function AdminRequestsPage() {
                             {event.eventType === 'member-removal'
                               ? <><span className="text-white">{event.targetNickname}</span> was removed from the clan</>
                               : event.eventType === 'toon-links' ? <><span className="text-white">{event.targetNickname}</span> · Toon links updated</>
+                                : event.eventType === 'toon-reference-refresh' ? <><span className="text-white">{event.targetNickname}</span> · Stale roster references refreshed; toon ownership unchanged</>
                                 : event.eventType === 'account-approval' ? <><span className="text-white">{event.targetNickname}</span> · Account approved</>
                                   : event.eventType === 'account-denial' ? <><span className="text-white">{event.targetNickname}</span> · Sign-up denied</>
                                     : <><span className="text-white">{event.targetNickname}</span> {event.eventType === 'promotion' ? 'promoted' : 'demoted'} from <span className="capitalize text-slate-300">{event.previousRole}</span> to <span className="capitalize text-slate-300">{event.newRole}</span></>}
@@ -539,12 +541,13 @@ export default function AdminRequestsPage() {
             </header>
             <p className="mb-4 text-xs leading-6 text-slate-400">Select the toons this account can use. Unlinked toons appear here again immediately after saving. Toons assigned to other accounts are hidden.</p>
             {renderMappingSelector(member._id, `Available toon rows for ${member.nickname}`)}
+            {member.needsLinkRefresh && <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-400/5 p-3 text-xs leading-5 text-amber-200">The sheet has moved since these links were saved. Save the correct toon selection to refresh this account’s row references.</p>}
             <div className="mt-4 flex flex-wrap items-center gap-2 text-xs"><span className="rounded-full border border-indigo-400/20 bg-indigo-500/10 px-3 py-1 text-indigo-200">{selected.length} selected</span>{added > 0 && <span className="text-emerald-300">+{added} linking</span>}{removed > 0 && <span className="text-rose-300">−{removed} unlinking</span>}</div>
             {selected.length === 0 && <p className="mt-3 text-xs text-amber-200">Saving leaves this account with no linked toons. You can add toons again at any time.</p>}
             {error && <p role="alert" className="mt-4 rounded-xl border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p>}
             <footer className="mt-6 flex flex-wrap justify-end gap-2 border-t border-white/5 pt-5">
               <button type="button" className="secondary-button" disabled={busyId !== ''} onClick={closeToonEditor}>Discard changes</button>
-              <button type="button" className="primary-button" disabled={busyId !== '' || (added === 0 && removed === 0)} onClick={() => void linkMember(member._id)}>{busyId ? <LoaderCircle size={15} className="animate-spin" /> : <Check size={15} />}{busyId ? 'Saving links…' : 'Save toon links'}</button>
+              <button type="button" className="primary-button" disabled={busyId !== '' || (added === 0 && removed === 0 && !member.needsLinkRefresh)} onClick={() => void linkMember(member._id)}>{busyId ? <LoaderCircle size={15} className="animate-spin" /> : <Check size={15} />}{busyId ? 'Saving links…' : 'Save toon links'}</button>
             </footer>
           </div>
         </Dialog>;

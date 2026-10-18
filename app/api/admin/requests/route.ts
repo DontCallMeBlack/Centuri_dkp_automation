@@ -11,12 +11,13 @@ import { CLAN_ROLES, canChangeMemberRole, isClanRole, validRosterRows } from '@/
 import { getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey, type SheetRecordIdentity } from '@/lib/sheetRecordLinks';
 import { getChangedLinkIdentities, getReservationConflict, type ReservationSubject } from '@/lib/auth/reservationProtection';
+import { planStaleRowReferenceRelease } from '@/lib/auth/staleRowReferences';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
 const unfinished: IAuction['status'][] = ['active', 'settling', 'settlement-failed', 'removing'];
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const manager = await getSessionUser();
     if (!manager) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -26,9 +27,39 @@ export async function GET() {
       User.find({ status: 'approved' }).select('_id nickname role status sheetRecordName sheetRecords').sort({ nickname: 1 }).lean(),
       getSheetRoster(), ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).lean(),
     ]);
-    const includeRows = (user: (typeof members)[number]) => ({ ...user, sheetRecordRows: getLinkedSheetRecordRows(user, roster) });
+    const includeRows = (user: (typeof members)[number]) => {
+      const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
+      const needsLinkRefresh = Boolean(user.sheetRecords?.some((saved) => saved.rowIndex === undefined ||
+        !roster.some((record) => record.rowIndex === saved.rowIndex && getSheetRecordKey(record) === getSheetRecordKey(saved))));
+      return { ...user, sheetRecordRows, needsLinkRefresh };
+    };
+    let linkDiagnostics;
+    const diagnosticAccount = new URL(request.url).searchParams.get('diagnoseLinks');
+    if (diagnosticAccount) {
+      if (diagnosticAccount.length > 80) throw new RequestValidationError('Account name is too long.');
+      const query = new URL(request.url).searchParams.get('toons') ?? diagnosticAccount;
+      if (query.length > 500) throw new RequestValidationError('Toon search is too long.');
+      const normalize = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '');
+      const names = new Set(query.split(',').map(normalize).filter(Boolean));
+      const matchingRoster = roster.filter((record) => names.has(normalize(record.account)) || names.has(normalize(record.owner)));
+      const matchingRows = new Set(matchingRoster.map((record) => record.rowIndex));
+      const matchingKeys = new Set(matchingRoster.map(getSheetRecordKey));
+      const accounts = [...pendingUsers, ...members].filter((user) => normalize(user.nickname) === normalize(diagnosticAccount) ||
+        getLinkedSheetRecordRows(user, roster).some((row) => matchingRows.has(row)) ||
+        user.sheetRecords?.some((record) => (record.rowIndex !== undefined && matchingRows.has(record.rowIndex)) || matchingKeys.has(getSheetRecordKey(record))));
+      const indexes = await User.collection.indexes();
+      linkDiagnostics = {
+        account: diagnosticAccount,
+        roster: matchingRoster.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })),
+        accounts: accounts.map((user) => ({ nickname: user.nickname, status: user.status,
+          storedLinks: user.sheetRecords ?? [], legacyOwner: user.sheetRecordName ?? null,
+          resolvedRows: getLinkedSheetRecordRows(user, roster) })),
+        indexes: indexes.map(({ key, unique, sparse }) => ({ fields: Object.keys(key), unique: Boolean(unique), sparse: Boolean(sparse) })),
+      };
+    }
     return NextResponse.json({ success: true, managerRole: manager.role, managerId: manager._id.toString(),
       pendingUsers: pendingUsers.map(includeRows), members: members.map(includeRows), roster,
+      ...(linkDiagnostics ? { linkDiagnostics } : {}),
       auditEvents: auditEvents.map(({ _id, ...event }) => ({ ...event, id: _id.toString(), targetUserId: event.targetUserId.toString(), actorUserId: event.actorUserId.toString() })),
     }, { headers: privateHeaders });
   } catch (error) { return requestErrorResponse(error, 'Unable to load clan administration. Please retry.'); }
@@ -53,6 +84,34 @@ async function assertLinksUnreserved(subjects: ReservationSubject[], session: Cl
   }
 }
 
+async function releaseStaleRowReferences(actorId: string, targetId: string, rows: number[], roster: Awaited<ReturnType<typeof getSheetRoster>>, action: string) {
+  await withClanAdministrationTransaction(async (session) => {
+    const actor = await User.findOne({ _id: actorId, status: 'approved' }).session(session);
+    if (!actor || !canManageClan(actor.role)) throw new RequestValidationError('Your permissions changed. Refresh and try again.', 403);
+    const target = await User.findById(targetId).session(session);
+    if (!target) throw new RequestValidationError('Account not found.', 404);
+    if (target.status !== (action === 'approve' ? 'pending' : 'approved')) {
+      throw new RequestValidationError('This account’s approval status changed. Refresh and try again.', 409);
+    }
+    const candidates = await User.find({ _id: { $ne: targetId }, 'sheetRecords.rowIndex': { $in: rows } }).session(session);
+    for (const candidate of candidates) {
+      const plan = planStaleRowReferenceRelease(candidate, roster, rows);
+      if (!plan) continue;
+      const identities = (candidate.sheetRecords ?? []).map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account }));
+      // Historical reservations can depend on old physical rows. Keep those
+      // references until the affected auctions have been resolved.
+      await assertLinksUnreserved([{ identities, rows: plan.before }], session);
+      // Unset every row key on this account so a mixed array cannot introduce
+      // a null key in the sparse multikey index. Owner/toon identities remain.
+      await User.updateOne({ _id: candidate._id }, { $unset: { 'sheetRecords.$[].rowIndex': '' } }, { session });
+      await ClanAuditEvent.create([{ eventType: 'toon-reference-refresh',
+        actorUserId: actor._id, actorNickname: actor.nickname, actorRole: actor.role,
+        targetUserId: candidate._id, targetNickname: candidate.nickname, previousRole: candidate.role,
+      }], { session });
+    }
+  });
+}
+
 export async function POST(request: Request) {
   const denied = guardMutationRequest(request);
   if (denied) return denied;
@@ -71,6 +130,16 @@ export async function POST(request: Request) {
       needsRoster = Boolean(preview?.sheetRecords?.length || preview?.sheetRecordName?.trim());
     }
     const roster = needsRoster ? await getSheetRoster({ fresh: true }) : [];
+    if (['approve', 'link'].includes(action) && validRosterRows(body.sheetRecordRows)) {
+      const selected = body.sheetRecordRows.map((row) => roster.find((record) => record.rowIndex === row));
+      if (selected.some((record) => !record)) throw new RequestValidationError('A selected toon no longer exists. Refresh the roster.', 409);
+      if (selected.some((record) => record && roster.filter((other) => getSheetRecordKey(other) === getSheetRecordKey(record)).length > 1)) {
+        throw new RequestValidationError('Duplicate owner/toon identities exist in the sheet. Resolve them before linking.', 409);
+      }
+      // Separate commit is necessary: MongoDB cannot reuse another document's
+      // released unique-index key inside the transaction that releases it.
+      await releaseStaleRowReferences(initialManager._id.toString(), userId, body.sheetRecordRows, roster, action);
+    }
     const result = await withClanAdministrationTransaction(async (session) => {
       // Actor, target and chief count are re-read inside the same serialized
       // transaction. Earlier page/session snapshots never authorize a write.
@@ -160,6 +229,8 @@ export async function POST(request: Request) {
         throw new RequestValidationError('Duplicate owner/toon identities exist in the sheet. Resolve them before linking.', 409);
       }
       const changed = getChangedLinkIdentities(currentIdentities, selected);
+      const refreshingReferences = selected.some((record) => !target.sheetRecords?.some((saved) =>
+        saved.rowIndex === record.rowIndex && getSheetRecordKey(saved) === getSheetRecordKey(record)));
       // Unchanged identities can refresh stale row metadata without acquiring or
       // releasing access. New links must also reject orphaned reservations.
       const removedRows = currentRows.filter((row) => !nextRows.includes(row));
@@ -171,16 +242,26 @@ export async function POST(request: Request) {
         ...(legacyOwners.length
           ? [{ identities: [], legacyOwners, ignoredIdentities: selected.filter((record) => !changed.added.includes(record)) }] : []),
       ], session);
-      const otherUsers = await User.find({ _id: { $ne: target._id }, status: 'approved' }).select('sheetRecordName sheetRecords').session(session).lean();
-      const occupied = new Set(otherUsers.flatMap((user) => getLinkedSheetRecordRows(user, roster)));
-      if (nextRows.some((row) => occupied.has(row))) throw new RequestValidationError('A selected toon is already linked to another account.', 409);
+      // Pending accounts can retain legacy assignments too; the database's
+      // unique row index does not limit its ownership check to approved users.
+      const otherUsers = await User.find({ _id: { $ne: target._id } }).select('nickname status sheetRecordName sheetRecords').session(session).lean();
+      for (const other of otherUsers) {
+        const occupied = new Set(getLinkedSheetRecordRows(other, roster));
+        const conflict = selected.find((record) => occupied.has(record.rowIndex));
+        if (conflict) throw new RequestValidationError(`${conflict.account || conflict.owner} is linked to ${other.nickname}${other.status === 'pending' ? ' (pending approval)' : ''}. Unlink it from that account first.`, 409);
+        // Reordered sheet rows may still be present in an old database index
+        // entry. Report that separately instead of claiming identity ownership.
+        const staleReference = other.sheetRecords?.find((record) => record.rowIndex !== undefined &&
+          nextRows.includes(record.rowIndex) && !occupied.has(record.rowIndex));
+        if (staleReference) throw new RequestValidationError(`A stale sheet-row reference on ${other.nickname} is blocking this link. Open that account’s toon editor and save its links to refresh the row references. No toon has been reassigned.`, 409);
+      }
       // Omit an empty links array so the sparse unique row index does not
       // reserve an empty-array key for an account without linked toons.
       target.sheetRecords = selected.length ? selected.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })) : undefined;
       target.sheetRecordName = undefined;
       if (action === 'approve') target.status = 'approved';
       await target.save({ session });
-      if (action === 'approve' || changed.added.length || changed.removed.length || legacyOwners.length) {
+      if (action === 'approve' || changed.added.length || changed.removed.length || legacyOwners.length || refreshingReferences) {
         const uniqueIdentities = (records: SheetRecordIdentity[]) => [...new Map(records.map((record) => [getSheetRecordKey(record), record])).values()];
         await ClanAuditEvent.create([{ eventType: action === 'approve' ? 'account-approval' : 'toon-links',
           actorUserId: manager._id, actorNickname: manager.nickname, actorRole: manager.role,
@@ -192,7 +273,15 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ success: true, message: result }, { headers: privateHeaders });
   } catch (error) {
-    if (typeof error === 'object' && error && 'code' in error && error.code === 11000) return NextResponse.json({ error: 'A selected toon is already linked to another account.' }, { status: 409 });
+    if (typeof error === 'object' && error && 'code' in error && error.code === 11000) {
+      const pattern = 'keyPattern' in error && typeof error.keyPattern === 'object' && error.keyPattern
+        ? Object.keys(error.keyPattern) : [];
+      console.error('Administration unique-index conflict.', { fields: pattern });
+      return NextResponse.json({ error: pattern.includes('sheetRecords.rowIndex')
+        ? 'A saved sheet-row assignment is blocking this link. Reopen the toon editor to check current assignments. If the toon is available, clan leadership needs to reconcile its stale row reference.'
+        : 'A database uniqueness conflict prevented saving these changes. No changes were committed. Clan leadership can check the server log for the conflicting field.',
+      }, { status: 409 });
+    }
     return requestErrorResponse(error, 'Unable to complete the administration request. Please retry.');
   }
 }
