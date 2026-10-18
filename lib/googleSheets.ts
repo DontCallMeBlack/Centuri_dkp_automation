@@ -39,6 +39,9 @@ const auth = new google.auth.GoogleAuth({
 });
 
 function getSpreadsheetId() {
+  if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production') {
+    throw new RequestValidationError('Live DKP access is disabled outside production deployments.', 503);
+  }
   const spreadsheetId = process.env.GOOGLE_SHEET_ID?.trim();
   if (!spreadsheetId) {
     throw new RequestValidationError('Google Sheets is not configured. The site owner must set GOOGLE_SHEET_ID in the server environment.', 503);
@@ -175,6 +178,7 @@ async function releaseWeeklyResetLock(cacheKey: string, lockId: string) {
 }
 
 async function assertLedgerLock(cacheKey: string, lockId: string) {
+  assertDkpWritesEnabled();
   const renewed = await SheetRosterCache.updateOne(
     { cacheKey, weeklyResetLockId: lockId, weeklyResetLockUntil: { $gt: new Date() } },
     { $set: { weeklyResetLockUntil: new Date(Date.now() + WEEKLY_RESET_LOCK_MS) } },
@@ -218,6 +222,7 @@ async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnT
 }
 
 async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string) {
+  assertDkpWritesEnabled();
   const sheets = createSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
@@ -368,6 +373,7 @@ async function withWeeklyResetLock<T>(cacheKey: string, operation: (lockId: stri
 
 /** Serialize reservations with debits and weekly rollover using a fresh ledger. */
 export async function withDkpLedgerLock<T>(operation: (roster: ISheetRosterRecord[]) => Promise<T>) {
+  assertDkpWritesEnabled();
   await dbConnect();
   const cacheKey = getSpreadsheetId();
   await ensureSheetRosterCacheDocument(cacheKey);
@@ -379,6 +385,7 @@ export async function withDkpLedgerLock<T>(operation: (roster: ISheetRosterRecor
 }
 
 export async function ensureWeeklyDkpReset() {
+  assertDkpWritesEnabled();
   await dbConnect();
   const cacheKey = getSpreadsheetId();
   await ensureSheetRosterCacheDocument(cacheKey);
@@ -400,28 +407,10 @@ export async function ensureWeeklyDkpReset() {
   await withWeeklyResetLock(cacheKey, async () => undefined);
 }
 
-export function startDkpWeeklyResetScheduler() {
-  if (
-    !process.env.GOOGLE_SHEET_ID?.trim() ||
-    !process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim() ||
-    !process.env.GOOGLE_PRIVATE_KEY?.trim() ||
-    !process.env.MONGODB_URI
-  ) return;
-
-  const globalWithScheduler = globalThis as typeof globalThis & {
-    __centuriDkpWeeklyResetInterval?: NodeJS.Timeout;
-  };
-  if (globalWithScheduler.__centuriDkpWeeklyResetInterval) return;
-
-  const runReset = () => {
-    void ensureWeeklyDkpReset().catch((error: unknown) => {
-      console.error('Weekly DKP reset did not complete; it will be retried.', error instanceof Error ? error.name : 'UnknownError');
-    });
-  };
-  const interval = setInterval(runReset, 60_000);
-  interval.unref();
-  globalWithScheduler.__centuriDkpWeeklyResetInterval = interval;
-  runReset();
+function assertDkpWritesEnabled() {
+  if (process.env.DKP_WRITES_PAUSED === 'true') {
+    throw new RequestValidationError('DKP updates are paused for Sheet maintenance. Try again later.', 503);
+  }
 }
 
 function serializeRosterRecord(record: ISheetRosterRecord): ISheetRosterRecord {
@@ -603,6 +592,7 @@ export async function adjustPlayersDKP(
     actorUserId?: string;
   } = {},
 ) {
+  assertDkpWritesEnabled();
   if (adjustments.length === 0) return;
 
   const requestedMode = options.mode ?? 'balance';

@@ -10,6 +10,8 @@ import type { DkpCellIssue } from '@/lib/sheetRoster';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
+import { useSessionUser } from '@/components/AppShell';
+import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 
 interface AuctionToon {
   rowIndex: number;
@@ -72,6 +74,7 @@ interface Auction {
 }
 
 interface AuctionData {
+  nextCursor?: string | null;
   dkpIssues?: DkpCellIssue[];
   manager: boolean;
   weeklyEarnedTotal: number;
@@ -187,6 +190,7 @@ function ImageNavigation({
 }
 
 export default function AuctionHousePanel({ active = true }: { active?: boolean }) {
+  const sessionUser = useSessionUser();
   const activeRef = useRef(active);
   activeRef.current = active;
   const [data, setData] = useState<AuctionData | null>(null);
@@ -215,6 +219,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [archiveAuctions, setArchiveAuctions] = useState<Auction[]>([]);
   const [archiveLoaded, setArchiveLoaded] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveCursor, setArchiveCursor] = useState<string | null>(null);
+  const archivePageCount = useRef(1);
+  const archiveLoadedRef = useRef(false);
+  const archiveSequence = useRef(0);
   const [selectedToons, setSelectedToons] = useState<Record<string, number>>({});
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const [auctionView, setAuctionView] = useState<'live' | 'all'>('live');
@@ -259,7 +267,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         const versions = [...current.auctions]
           .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
           .slice(0, 100)
-          .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}`]);
+          .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}:${auction.itemId}`]);
         const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}`, { cache: 'no-store' });
         if (!response.ok) throw new Error('Live bid updates are delayed. Retrying automatically.');
         const result = await response.json();
@@ -276,7 +284,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             ...previous,
             auctions: previous.auctions.filter((auction) => !(result.removedIds as string[] | undefined)?.includes(auction.id)).map((auction) => {
               const live = byId.get(auction.id);
-              return live ? { ...auction, ...live, imageCount: auction.imageCount } : auction;
+              return live ? { ...auction, ...live } : auction;
             }).concat((result.auctions as Auction[]).filter((live) => !previous.auctions.some((auction) => auction.id === live.id)))
               .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime()),
           };
@@ -284,6 +292,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           rememberAuctionData(updated);
           return updated;
         });
+        setArchiveAuctions((previous) => previous
+          .filter((auction) => !(result.removedIds as string[] | undefined)?.includes(auction.id))
+          .map((auction) => byId.has(auction.id) ? { ...auction, ...byId.get(auction.id)! } : auction));
         setLastSyncedAt(Date.now());
         if (personalBalanceChanged) await refresh();
       } catch (cause) {
@@ -317,6 +328,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       rememberAuctionData(result);
       setLastSyncedAt(Date.now());
       setSyncing(false);
+      if (archiveLoadedRef.current) await loadFullAuctionHistory();
     } catch (refreshError) {
       setSyncing(false);
       if (refreshError instanceof ApiError && refreshError.status === 401) { clearClientData(); router.replace('/login'); return false; }
@@ -328,26 +340,37 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
   useAutoRefresh(refresh, { active, intervalMs: 180_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
   useEffect(() => {
-    const clear = () => { setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setPostFormOpen(false); setError(''); setNotice(''); };
+    const clear = () => { archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setPostFormOpen(false); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);
 
-  const loadFullAuctionHistory = async () => {
+  const loadFullAuctionHistory = async (append = false) => {
+    if (append && (!archiveCursor || archiveLoading)) return;
     const version = clientDataVersion();
+    const sequence = ++archiveSequence.current;
     setArchiveLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/auction?includeArchive=1', { cache: 'no-store' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Unable to load full auction history');
-      if (version !== clientDataVersion()) return;
-      setArchiveAuctions(result.auctions);
+      let cursor = append ? archiveCursor : null;
+      const combined: Auction[] = [];
+      const pages = append ? 1 : archivePageCount.current;
+      for (let page = 0; page < pages; page += 1) {
+        const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        const result = await getData<AuctionData>(`/api/auction?includeArchive=1${suffix}`);
+        if (version !== clientDataVersion() || sequence !== archiveSequence.current) return;
+        combined.push(...result.auctions); cursor = result.nextCursor ?? null;
+        if (!cursor) break;
+      }
+      if (append) archivePageCount.current += 1;
+      setArchiveCursor(cursor);
+      setArchiveAuctions((previous) => [...new Map([...(append ? previous : []), ...combined].map((auction) => [auction.id, auction])).values()]);
+      archiveLoadedRef.current = true;
       setArchiveLoaded(true);
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : 'Unable to load full auction history');
+      if (version === clientDataVersion() && sequence === archiveSequence.current) setError(historyError instanceof Error ? historyError.message : 'Unable to load full auction history');
     } finally {
-      setArchiveLoading(false);
+      if (version === clientDataVersion() && sequence === archiveSequence.current) setArchiveLoading(false);
     }
   };
 
@@ -363,13 +386,16 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     setError('');
     setNotice('');
     try {
+      if (!sessionUser?.id) throw new Error('Your session is still loading. Try again in a moment.');
+      const requestId = await getActionRequestId(sessionUser.id, 'auction-create', selectedItemId);
       const response = await fetch('/api/auction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create-auction', itemId: selectedItemId }),
+        body: JSON.stringify({ action: 'create-auction', itemId: selectedItemId, requestId }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to post auction');
+      await completeActionRequest(sessionUser.id, 'auction-create', selectedItemId);
       setNotice('Auction posted for 24 hours. Bids in the final 5 minutes leave 5 minutes on the clock.');
       setPostFormOpen(false);
       await refresh();
@@ -991,8 +1017,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <p role="status" className="flex items-center gap-2 rounded-xl border border-indigo-400/20 bg-indigo-400/5 px-4 py-3 text-sm text-indigo-200"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading full auction history…</p>
         )}
         {auctionView === 'all' && archiveLoaded && (
-          <p role="status" className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-400">Showing the full auction history ({allAuctions.length} auctions).</p>
+          <p role="status" className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-400">{allAuctions.length} auctions loaded{archiveCursor ? ' · More history is available below.' : ' · All available history loaded.'}</p>
         )}
+        {auctionView === 'all' && archiveCursor && <button type="button" className="secondary-button w-full" disabled={archiveLoading} onClick={() => void loadFullAuctionHistory(true)}>{archiveLoading ? <LoaderCircle size={15} className="animate-spin" /> : <Clock3 size={15} />}Load older auctions</button>}
         {auctionView === 'all' && !archiveLoaded && !archiveLoading && error && (
           <button type="button" onClick={() => void loadFullAuctionHistory()} className="rounded-xl border border-red-400/20 bg-red-400/5 px-4 py-3 text-left text-sm text-red-200">History did not load. Select here to retry.</button>
         )}

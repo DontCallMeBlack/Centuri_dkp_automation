@@ -8,6 +8,7 @@ import User from '@/lib/models/User';
 import { BOSS_DKP_POINTS, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
+import { limitMemberRequests } from '@/lib/auth/rateLimit';
 
 
 export async function GET() {
@@ -60,6 +61,7 @@ export async function POST(req: Request) {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageClan(user.role) && user.role !== 'guardian') return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    await limitMemberRequests(user._id.toString(), 'boss-write');
     const { bossName, selectedRows, requestId } = await readJsonObject(req);
     if (!isDkpRequestId(requestId)) {
       return NextResponse.json({ error: 'A valid requestId UUID is required. Retry interrupted actions with the same request ID.' }, { status: 400 });

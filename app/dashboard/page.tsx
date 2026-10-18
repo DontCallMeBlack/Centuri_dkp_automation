@@ -13,6 +13,7 @@ import RosterDataIssues from '@/components/RosterDataIssues';
 import type { ReadableRosterRecord } from '@/lib/sheetRoster';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
+import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, CheckCircle2, Users, Zap, X, Wallet, Swords } from 'lucide-react';
 const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface /> });
@@ -90,7 +91,6 @@ function Dashboard() {
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [refreshing, setRefreshing] = useState(false);
   const [awardError, setAwardError] = useState('');
-  const requestIds = useRef(new Map<string, string>());
   const activeRef = useRef(true);
   const [roster, setRoster] = useState<RosterMember[]>([]);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
@@ -146,6 +146,7 @@ function Dashboard() {
 
   const handleDkpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sessionUser?.id) { setAwardError('Your session is still loading. Try again in a moment.'); return; }
     if (selectedMembers.length === 0 || submitting) {
       setAwardError('Please select at least one member.');
       return;
@@ -155,10 +156,9 @@ function Dashboard() {
     setAwardError('');
     setStatusMessage('');
     const payloadKey = JSON.stringify({ bossName: selectedBoss, selectedRows: [...selectedMembers].sort((a,b) => a-b) });
-    const requestId = requestIds.current.get(payloadKey) ?? crypto.randomUUID();
-    requestIds.current.set(payloadKey, requestId);
-
     try {
+      const account = sessionUser.id;
+      const requestId = await getActionRequestId(account, 'boss-award', payloadKey);
       const res = await fetch('/api/dkp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -172,7 +172,7 @@ function Dashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      requestIds.current.delete(payloadKey);
+      await completeActionRequest(account, 'boss-award', payloadKey);
       setStatusMessage(data.message);
       notifyDkpChanged();
       setSelectedMembers([]);
@@ -236,7 +236,7 @@ function Dashboard() {
     <div className="space-y-6">
       {activeView === 'dkp' && <><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div><p className="page-kicker">Your clan. In sync.</p><h1 className="page-title">Welcome back{userSession?.nickname ? `, ${userSession.nickname}` : ''}<span className="text-indigo-400">.</span></h1><p className="page-description">Your raids, rewards, and next upgrade. All in one place.</p></div>
-        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => { setAwardError(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}
+        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => { setAwardError(''); setPickerQuery(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}
       </div>
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
       <RosterDataIssues issues={roster.flatMap((toon) => toon.dkpIssues ?? [])} />
@@ -250,33 +250,7 @@ function Dashboard() {
       <main>
         <section id="panel-dkp" aria-label="Roster" hidden={activeView !== 'dkp'}>
           <div className="space-y-8">
-            {canSubmitDkp && (
-              <section className="surface relative overflow-hidden !border-indigo-400/10 !bg-indigo-400/[.025] px-5 py-5">
-                <div className="pointer-events-none absolute -right-10 -top-20 h-48 w-48 rounded-full bg-indigo-400/15 blur-3xl" />
-                <div className="relative flex flex-row items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-300">Raid operations</p>
-                    <h2 className="mt-1 text-base font-semibold tracking-tight text-white">Another boss down?</h2><p className="mt-2 text-xs text-slate-500">Record the kill and reward everyone who was there.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPickerQuery('');
-                      setPickerOpen(true);
-                    }}
-                    className="secondary-button shrink-0"
-                  >
-                    <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Distribute DKP</span><span className="sm:hidden">Distribute</span>
-                  </button>
-                </div>
-                {statusMessage && (
-                  <div role="status" className="relative mt-5 flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-sm text-emerald-300">
-                    <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    {statusMessage}
-                  </div>
-                )}
-              </section>
-            )}
+            {canSubmitDkp && statusMessage && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-sm text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" />{statusMessage}</div>}
             {!canSubmitDkp && (
               <p className="surface px-4 py-3 text-xs text-slate-400">
                 Your DKP and clan activity are shown below. Clan leadership records boss awards.
@@ -500,7 +474,7 @@ function Dashboard() {
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? <Zap className="h-4 w-4 animate-pulse" /> : <Plus className="h-4 w-4" />}
-                  {submitting ? 'Applying award...' : `Distribute to ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
+                  {submitting ? 'Recording kill...' : `Record kill · ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
                 </button>
               </div>
             </fieldset></form>
