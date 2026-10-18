@@ -1,6 +1,6 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
-export type ClanAuditEventType = 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'account-approval' | 'account-denial';
+export type ClanAuditEventType = 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial';
 
 interface AuditToon { rowIndex?: number; owner: string; account: string }
 
@@ -21,7 +21,7 @@ export interface IClanAuditEvent extends Document {
 const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   eventType: {
     type: String,
-    enum: ['promotion', 'demotion', 'member-removal', 'toon-links', 'account-approval', 'account-denial'],
+    enum: ['promotion', 'demotion', 'member-removal', 'toon-links', 'toon-reference-refresh', 'account-approval', 'account-denial'],
     required: true,
   },
   actorUserId: { type: Schema.Types.ObjectId, required: true },
