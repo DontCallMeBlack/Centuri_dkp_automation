@@ -160,9 +160,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ success: true, id: item._id.toString() });
   } catch (error: unknown) {
-    if (error instanceof mongoose.Error.ValidationError || isDuplicateKeyError(error)) {
-      return NextResponse.json({ error: 'An item with that name already exists.' }, { status: 409 });
+    if (isDuplicateKeyError(error)) {
+      return NextResponse.json({ error: 'A listed catalog item already uses that name. Edit that item or choose another name.' }, { status: 409 });
     }
+    if (error instanceof mongoose.Error.ValidationError) return NextResponse.json({ error: 'The item details are invalid. Check the name, roles, boss type, and images.' }, { status: 400 });
     if (error instanceof AuctionImageError) return NextResponse.json({ error: error.message }, { status: 400 });
     return requestErrorResponse(error, 'Unable to create catalog item. Please retry shortly.');
   }
@@ -212,9 +213,10 @@ export async function PATCH(request: Request) {
     });
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (error instanceof mongoose.Error.ValidationError || isDuplicateKeyError(error)) {
-      return NextResponse.json({ error: 'An item with that name already exists.' }, { status: 409 });
+    if (isDuplicateKeyError(error)) {
+      return NextResponse.json({ error: 'A listed catalog item already uses that name. Edit that item or choose another name.' }, { status: 409 });
     }
+    if (error instanceof mongoose.Error.ValidationError) return NextResponse.json({ error: 'The item details are invalid. Check the name, roles, boss type, and images.' }, { status: 400 });
     if (error instanceof AuctionImageError) return NextResponse.json({ error: error.message }, { status: 400 });
     return requestErrorResponse(error, 'Unable to update catalog item. Please retry shortly.');
   }

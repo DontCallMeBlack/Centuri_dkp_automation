@@ -203,6 +203,7 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 - The initial API response includes up to the 100 most recent auction records plus relevant pending delivery tasks, no-bid tasks, recent wins by the current user, and recent completed wins. The All history query returns all auction records. The history is not paginated in the UI.
 - A follow-up panel exposes actions for deliveries awaiting confirmation and no-bid auctions awaiting a poster decision. A separate “Items you won” panel shows the current user’s completed wins, the item boss type, mail state, and DKP deduction.
 - Catalog images are loaded lazily when near the viewport. Multi-image items have previous/next controls and an image counter. Image failure displays an unavailable state.
+- Catalog names are unique, ignoring case, among listed items only. Removing an item archives its record and images so existing auctions retain their history; its name can be used for a new catalog item with a new ID.
 
 ### 8.2 Auction posting
 

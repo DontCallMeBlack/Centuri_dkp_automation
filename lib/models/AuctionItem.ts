@@ -40,7 +40,15 @@ const AuctionItemSchema: Schema<IAuctionItem> = new Schema({
   createdBy: { type: String, required: true },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
-AuctionItemSchema.index({ name: 1 }, { unique: true, collation: { locale: 'en', strength: 2 } });
+// Archived records retain their names/images for auction history. Only the
+// listed catalog reserves a name. Existing databases also need the migration
+// in scripts/migrate-catalog-name-index.cjs to release the old global index.
+AuctionItemSchema.index({ name: 1 }, {
+  name: 'listed_item_name_unique',
+  unique: true,
+  collation: { locale: 'en', strength: 2 },
+  partialFilterExpression: { isListed: true },
+});
 
 const AuctionItem: Model<IAuctionItem> = mongoose.models.AuctionItem
   || mongoose.model<IAuctionItem>('AuctionItem', AuctionItemSchema);

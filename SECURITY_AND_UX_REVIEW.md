@@ -45,6 +45,7 @@ This review covers the application source, API authorization, DKP calculations, 
 4. `JWT_SECRET` is no longer used. Service configuration remains `MONGODB_URI`, `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_PRIVATE_KEY`.
 5. Set `APP_ORIGIN` to the exact public HTTPS origin when a reverse proxy changes the origin seen by Next. Set `TRUST_PROXY=true` only when the proxy replaces forwarded IP headers; account/global throttles work without it.
 6. Ambiguous legacy pending writes/reservations intentionally pause. Verify the Sheet and stored records before reconciliation; forcing a retry without confirming prior charges can corrupt balances.
+7. Existing catalog databases need `node scripts/migrate-catalog-name-index.cjs --apply` in the configured deployment environment. Without `--apply`, the script only reports readiness and indexes. It normalizes legacy listed flags, installs the case-insensitive `listed_item_name_unique` index for `isListed: true`, then removes the old global name index. It stops on duplicate listed names and preserves item IDs, archived records, images, and auction history. Deploy the matching model before applying the migration.
 
 ## Verification
 
