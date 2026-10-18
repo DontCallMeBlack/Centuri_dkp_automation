@@ -9,6 +9,7 @@ import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
+import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
 
 function canManageBossHistory(role: string) {
   return role === 'chief' || role === 'general' || role === 'guardian';
@@ -22,20 +23,23 @@ function resolveParticipant(participant: IBossAwardParticipant, roster: Awaited<
   return record;
 }
 
-export async function GET() {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const canManage = canManageBossHistory(user.role);
+export async function GET(request: Request) {
   try {
-    const [awards, roster] = await Promise.all([
-      BossAward.find({ status: { $ne: 'deleted' } }).sort({ createdAt: -1 }).lean(),
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const canManage = canManageBossHistory(user.role);
+    const page = readHistoryPage(new URL(request.url));
+    const [results, roster] = await Promise.all([
+      BossAward.find({ status: { $ne: 'deleted' }, ...page }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean(),
       canManage ? getSheetRoster() : Promise.resolve([]),
     ]);
+    const awards = results.slice(0, HISTORY_PAGE_SIZE);
     const selectedRowsFor = (participants: IBossAwardParticipant[]) => participants.flatMap((participant) => {
       try { return [resolveParticipant(participant, roster).rowIndex]; } catch { return []; }
     });
     return NextResponse.json({
       success: true, canManage, roster,
+      nextCursor: results.length > HISTORY_PAGE_SIZE ? historyCursor(awards[awards.length - 1]) : null,
       awards: awards.map((award) => ({
         id: award._id.toString(), bossName: award.bossName, points: award.points,
         participants: award.participants, status: award.status,
@@ -55,7 +59,7 @@ export async function GET() {
           } : undefined,
         } : {}),
       })),
-    });
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error: unknown) {
     return requestErrorResponse(error, 'Unable to load boss history');
   }
@@ -64,10 +68,10 @@ export async function GET() {
 async function changeAward(req: Request, kind: 'edit' | 'delete') {
   const rejected = guardMutationRequest(req);
   if (rejected) return rejected;
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageBossHistory(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
   try {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!canManageBossHistory(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
     const body = await readJsonObject(req);
     const { awardId, requestId } = body;
     const selectedRows = kind === 'delete' ? [] : body.selectedRows;
@@ -89,12 +93,16 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
 
     if (award.status === 'applied') {
       const roster = await getSheetRoster({ fresh: true });
+      for (const participant of award.participants) resolveParticipant(participant, roster);
       const rosterByRow = new Map(roster.map((record) => [record.rowIndex, record]));
       const nextParticipants = selectedRows.map((rowIndex) => rosterByRow.get(rowIndex));
       if (nextParticipants.some((record) => record === undefined)) {
         return NextResponse.json({ error: 'One or more selected roster records no longer exist.' }, { status: 400 });
       }
-      const claimed = await BossAward.findOneAndUpdate({ _id: awardId, status: 'applied' }, {
+      const claimed = await withClanAdministrationTransaction(async (session) => {
+        const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
+        if (!actor) throw new RequestValidationError('Your role no longer permits attendance changes.', 403);
+        return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied' }, {
         $set: {
           status: 'updating',
           pendingChange: {
@@ -102,7 +110,8 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
             participants: nextParticipants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account })),
           },
         },
-      }, { new: true });
+        }, { new: true, session });
+      });
       award = claimed ?? await BossAward.findById(awardId);
     }
     if (!award || award.status !== 'updating' || !award.pendingChange) {

@@ -1,14 +1,20 @@
 import { after, NextResponse } from 'next/server';
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import mongoose from 'mongoose';
 import Auction, { type IAuction, type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
+import AuctionCreationRequest from '@/lib/models/AuctionCreationRequest';
+import { isDkpRequestId } from '@/lib/bossDkp';
+import { limitMemberRequests } from '@/lib/auth/rateLimit';
+import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot, withDkpLedgerLock } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
-import { canRetryAuctionSettlement, getAuctionSettlementMutationKey, needsSettlementManualReview } from '@/lib/auctionSettlement';
+import { canRetryAuctionSettlement } from '@/lib/auctionSettlement';
+import { settleExpiredAuctions } from '@/lib/auctionSettlementWorker';
+import { getBoundAuctionHold } from '@/lib/auctionHold';
 import { canAffordBid, DkpIntegrityError } from '@/lib/dkpAccounting';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
@@ -41,159 +47,6 @@ async function getAuctionActor(userId: mongoose.Types.ObjectId, session: mongoos
   return actor;
 }
 
-/** Called inside a transaction; old holds are bound only after checking their outstanding bids. */
-async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'owner' | 'account'>, session: mongoose.ClientSession) {
-  let hold = await AuctionHold.findOne({ rowIndex: bid.rowIndex }).session(session);
-  if (!hold) {
-    [hold] = await AuctionHold.create([{
-      rowIndex: bid.rowIndex, heldPoints: 0, owner: bid.owner, account: bid.account,
-    }], { session });
-  }
-  const auctions = await Auction.find({ status: { $in: RESERVING_STATUSES }, 'highBid.rowIndex': bid.rowIndex })
-    .select('highBid').session(session).lean();
-  const reservations = auctions.flatMap((auction) => auction.highBid ? [auction.highBid] : []);
-  if (!canBindAuctionHold(hold, bid, reservations)) {
-    throw new RequestValidationError('This toon has an inconsistent or moved auction reservation. Ask a manager to review it.', 409);
-  }
-  hold.owner = bid.owner;
-  hold.account = bid.account;
-  return hold;
-}
-
-async function settleExpiredAuctions() {
-  const now = new Date();
-  const deadline = Date.now() + 45_000;
-  // Older versions claimed removal outside the deletion transaction. An existing
-  // stale record still owns its hold, because releasing and deleting were atomic.
-  await Auction.updateMany(
-    { status: 'removing', updatedAt: { $lt: new Date(now.getTime() - 5 * 60_000) } },
-    { $set: { status: 'active' } },
-  );
-  const recoverable: Record<string, unknown>[] = [
-    { status: 'active' },
-    {
-      status: 'settlement-failed', settlementNeedsReview: { $ne: true },
-      $or: [{ settlementRetryAt: { $lte: now } }, { settlementRetryAt: { $exists: false } }],
-    },
-    { status: 'settling', $or: [{ settlementLeaseUntil: { $lte: now } }, { settlementLeaseUntil: { $exists: false } }] },
-  ];
-  const expiredAuctions = await Auction.find({
-    $or: recoverable,
-    endsAt: { $lte: now },
-  }).sort({ endsAt: 1 }).limit(25);
-
-  for (const expired of expiredAuctions) {
-    if (Date.now() >= deadline) break;
-    if (!expired.highBid) {
-      await Auction.updateOne(
-        { _id: expired._id, status: expired.status, highBid: null, endsAt: { $lte: now } },
-        {
-          $set: { status: 'completed', deliveryStatus: 'not-required' },
-          $unset: { settlementAttemptId: 1, settlementLeaseUntil: 1 },
-        },
-      );
-      continue;
-    }
-
-    const attemptId = randomUUID();
-    const wasLegacyUntrackedSettlement = needsSettlementManualReview(expired);
-    if (wasLegacyUntrackedSettlement) {
-      await Auction.updateOne(
-        { _id: expired._id, status: expired.status, settlementAttemptId: { $exists: false }, settlementDkpApplied: { $ne: true } },
-        { $set: { status: 'settlement-failed', settlementNeedsReview: true, settlementError: 'Interrupted settlement has no replay record. Verify the Sheet balance before retrying.' } },
-      );
-      continue;
-    }
-    const claimed = await Auction.findOneAndUpdate(
-      {
-        _id: expired._id,
-        endsAt: { $lte: now },
-        $or: recoverable,
-      },
-      { $set: { status: 'settling', settlementError: undefined, settlementAttemptId: attemptId, settlementLeaseUntil: new Date(Date.now() + 5 * 60_000) } },
-      { new: true },
-    );
-    if (!claimed?.highBid) continue;
-
-    let dkpDeductionCompleted = claimed.settlementDkpApplied;
-    try {
-      const winningBid = claimed.highBid;
-      if (!claimed.settlementDkpApplied) {
-        const bindingSession = await mongoose.startSession();
-        try {
-          await bindingSession.withTransaction(async () => {
-            const hold = await getBoundAuctionHold(winningBid, bindingSession);
-            if (hold.heldPoints < winningBid.amount) throw new DkpIntegrityError('The winning auction reservation is missing.');
-            await hold.save({ session: bindingSession });
-          });
-        } finally {
-          await bindingSession.endSession();
-        }
-        await adjustPlayersDKP(
-          [{
-            rowIndex: winningBid.rowIndex,
-            points: -winningBid.amount,
-            owner: winningBid.owner,
-            account: winningBid.account,
-          }],
-          {
-            reservedPointsToConsume: new Map([[winningBid.rowIndex, winningBid.amount]]),
-            mode: 'auction-spend',
-            idempotencyKey: getAuctionSettlementMutationKey(claimed._id.toString()),
-          },
-        );
-        dkpDeductionCompleted = true;
-        const markedApplied = await Auction.updateOne(
-          { _id: claimed._id, status: 'settling', settlementAttemptId: attemptId, settlementDkpApplied: { $ne: true } },
-          { $set: { settlementDkpApplied: true } },
-        );
-        if (markedApplied.modifiedCount !== 1) {
-          throw new Error('DKP was deducted, but settlement progress could not be recorded. Manual review is required.');
-        }
-      }
-
-      const session = await mongoose.startSession();
-      try {
-        await session.withTransaction(async () => {
-          const auction = await Auction.findOne({ _id: claimed._id, status: 'settling', settlementAttemptId: attemptId }).session(session);
-          const hold = await getBoundAuctionHold(winningBid, session);
-          if (!auction || !hold || hold.heldPoints < winningBid.amount) {
-            throw new DkpIntegrityError('Auction settlement records are inconsistent; manual review is required.');
-          }
-
-          hold.heldPoints -= winningBid.amount;
-          await hold.save({ session });
-          auction.status = 'completed';
-          auction.winner = winningBid;
-          auction.deliveryStatus = 'pending';
-          auction.settlementError = undefined;
-          auction.settlementAttemptId = undefined;
-          auction.settlementLeaseUntil = undefined;
-          auction.settlementRetryAt = undefined;
-          await auction.save({ session });
-        });
-      } finally {
-        await session.endSession();
-      }
-    } catch (error: unknown) {
-      await Auction.updateOne(
-        { _id: claimed._id, status: 'settling', settlementAttemptId: attemptId },
-        {
-          $set: {
-            status: 'settlement-failed',
-            settlementError: 'Settlement could not finish. Reserved DKP remains protected while a manager reviews the records.',
-            ...(dkpDeductionCompleted ? { settlementDkpApplied: true } : {}),
-            settlementAttemptId: attemptId,
-            settlementLeaseUntil: new Date(0),
-            settlementRetryAt: new Date(Date.now() + 30_000),
-            ...((error instanceof DkpIntegrityError || error instanceof RequestValidationError) ? { settlementNeedsReview: true } : {}),
-          },
-        },
-      );
-      console.error(`Failed to settle auction ${claimed._id.toString()}`, error instanceof Error ? error.name : 'UnknownError');
-    }
-  }
-}
 
 /** Financial work can finish after the response while the UI continues polling. */
 function scheduleExpirySweep() {
@@ -216,13 +69,15 @@ export async function GET(request: Request) {
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    await limitMemberRequests(user._id.toString(), 'auction-read');
     if (new URL(request.url).searchParams.get('live') === '1') return getLiveAuctionUpdates(request, user);
     const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
     scheduleExpirySweep();
-    const [rosterSnapshot, recentAuctions, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions, unresolvedAuctions] = await Promise.all([
+    const page = includeArchive ? readHistoryPage(new URL(request.url)) : {};
+    const [rosterSnapshot, recentResults, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions, unresolvedAuctions] = await Promise.all([
       getSheetRosterSnapshot(),
       includeArchive
-        ? Auction.find().sort({ createdAt: -1 }).lean()
+        ? Auction.find(page).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean()
         : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
       AuctionItem.find().select('name requiredRoles requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints owner account').lean(),
@@ -242,6 +97,8 @@ export async function GET(request: Request) {
       }).sort({ createdAt: -1 }).limit(100).lean(),
       Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed'] } }).lean(),
     ]);
+    const recentAuctions = includeArchive ? recentResults.slice(0, HISTORY_PAGE_SIZE) : recentResults;
+    const nextCursor = includeArchive && recentResults.length > HISTORY_PAGE_SIZE ? historyCursor(recentAuctions[recentAuctions.length - 1]) : null;
     const roster = rosterSnapshot.roster;
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
@@ -306,6 +163,7 @@ export async function GET(request: Request) {
         bossType: catalogBossTypes.get(_id.toString()) ?? 'Unassigned',
         imageCount: catalogImageCounts.get(_id.toString()) ?? 1,
       })),
+      nextCursor,
       auctions: auctions.map((auction) => ({
         id: auction._id.toString(),
         itemId: auction.itemId.toString(),
@@ -386,6 +244,7 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
       auction.status,
       auction.endsAt.toISOString(),
       auction.deliveryStatus,
+      auction.itemId.toString(),
     ].join(':');
     const returnedIds = new Set(auctions.map((auction) => auction._id.toString()));
     const outsideWindow = [...knownVersions.keys()].filter((id) => !returnedIds.has(id));
@@ -454,6 +313,7 @@ export async function POST(req: Request) {
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    await limitMemberRequests(user._id.toString(), 'auction-write');
     const contentType = req.headers.get('content-type') ?? '';
     if (contentType.includes('multipart/form-data')) {
       return NextResponse.json({
@@ -487,36 +347,32 @@ export async function POST(req: Request) {
 
     if (payload.action === 'create-auction') {
       if (!isManager(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-      const { itemId } = payload;
+      const { itemId, requestId } = payload;
       if (typeof itemId !== 'string' || !mongoose.isValidObjectId(itemId)) {
         return NextResponse.json({ error: 'Select a valid saved item' }, { status: 400 });
       }
-      const [item, roster] = await Promise.all([
-        AuctionItem.findById(itemId),
-        getSheetRoster({ fresh: true }),
-      ]);
-      if (!item) return NextResponse.json({ error: 'That catalog item no longer exists' }, { status: 404 });
-      if (item.isListed === false) return NextResponse.json({ error: 'That item is no longer in the catalog' }, { status: 404 });
-      const bossType = normalizeAuctionBossType(item.bossType);
-      if (!bossType) throw new RequestValidationError('Update this item’s boss type in the item catalog before posting it.');
-      const itemRoles = item.requiredRoles?.length ? item.requiredRoles : item.requiredRole ? [item.requiredRole] : [];
-      if (!itemRoles.length) {
-        return NextResponse.json({ error: 'Set this item’s auction role in the Items tab before posting it' }, { status: 400 });
-      }
-      const selectedRoles = itemRoles.map((role) => roster.find((record) =>
-        normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role),
-      )?.subClass.trim()).filter((role): role is string => Boolean(role));
-      if (selectedRoles.length !== itemRoles.length) {
-        return NextResponse.json({ error: 'This item’s saved role is no longer in the roster. Update it in the Items tab before posting.' }, { status: 400 });
-      }
+      if (!isDkpRequestId(requestId)) throw new RequestValidationError('A request ID is required. Reload this page before posting an auction.');
+      const receiptId = createHash('sha256').update(`auction-create:${user._id.toString()}:${requestId}`).digest('hex');
+      const existingReceipt = await AuctionCreationRequest.findById(receiptId).select('_id').lean();
+      const roster = existingReceipt ? [] : await getSheetRoster({ fresh: true });
       const auction = await withClanAdministrationTransaction(async (session) => {
         const actor = await getAuctionActor(user._id, session);
         if (!isManager(actor.role)) throw new RequestValidationError('Permission denied.', 403);
-        const currentItem = await AuctionItem.findOne({ _id: item._id, isListed: { $ne: false } }).select('_id').session(session);
+        const receipt = await AuctionCreationRequest.findById(receiptId).session(session).lean();
+        if (receipt) {
+          if (receipt.itemId.toString() !== itemId.toLowerCase()) throw new RequestValidationError('This posting request was already used for another item.', 409);
+          return { _id: receipt.auctionId };
+        }
+        const currentItem = await AuctionItem.findOne({ _id: itemId, isListed: { $ne: false } }).session(session);
         if (!currentItem) throw new RequestValidationError('This catalog item is no longer listed.', 409);
+        const bossType = normalizeAuctionBossType(currentItem.bossType);
+        if (!bossType || bossType === 'Unassigned') throw new RequestValidationError('Set this item’s boss type before posting it.');
+        const itemRoles = currentItem.requiredRoles?.length ? currentItem.requiredRoles : currentItem.requiredRole ? [currentItem.requiredRole] : [];
+        const selectedRoles = itemRoles.map((role) => roster.find((record) => normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role))?.subClass.trim()).filter((role): role is string => Boolean(role));
+        if (!itemRoles.length || itemRoles.length > 2 || selectedRoles.length !== itemRoles.length) throw new RequestValidationError('Update this item’s eligible roles in the catalog before posting.');
         const [created] = await Auction.create([{
-          itemId: item._id,
-          itemName: item.name,
+          itemId: currentItem._id,
+          itemName: currentItem.name,
           bossType,
           requiredRoles: selectedRoles,
           requiredRole: selectedRoles[0],
@@ -526,6 +382,7 @@ export async function POST(req: Request) {
           status: 'active',
           deliveryStatus: 'not-required',
         }], { session });
+        await AuctionCreationRequest.create([{ _id: receiptId, actorUserId: actor._id, itemId: currentItem._id, auctionId: created._id }], { session });
         return created;
       });
       return NextResponse.json({ success: true, auctionId: auction._id.toString() });

@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/dkp",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/auctions",
+      "schedule": "5 5 * * *"
     }
   ]
 }

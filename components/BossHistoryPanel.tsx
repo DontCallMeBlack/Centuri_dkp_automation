@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
-import { ApiError, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
+import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
+import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
 
 interface RosterMember {
@@ -30,12 +31,11 @@ interface BossAward {
   createdAt: string;
 }
 
-interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMember[]}
+interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMember[]; nextCursor?:string|null}
 
 export default function BossHistoryPanel({ embedded = false, active = true }: { embedded?: boolean; active?: boolean }) {
   const user = useSessionUser();
   const mountedRef = useRef(true);
-  const requestIds = useRef(new Map<string, string>());
   const [refreshing, setRefreshing] = useState(false);
   const [awards, setAwards] = useState<BossAward[]>([]);
   const [roster, setRoster] = useState<RosterMember[]>([]);
@@ -49,33 +49,69 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const [notice, setNotice] = useState('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [canManage, setCanManage] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const pageCount = useRef(1);
+  const historySequence = useRef(0);
+  const historyPending = useRef(0);
   const router = useRouter();
 
   const applyData = (data:HistoryData) => {
-    setCanManage(data.canManage === true); setAwards(data.awards); setRoster(data.roster);
+    setCanManage(data.canManage === true); setAwards(data.awards); setRoster(data.roster); setNextCursor(data.nextCursor ?? null);
     setSelectedRows((previous) => ({...Object.fromEntries(data.awards.map((award) => [award.id,award.selectedRows])),...(editingRef.current ? {[editingRef.current]:previous[editingRef.current]} : {})}));
   };
   const loadHistory = async (clearReadError = true) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || historyPending.current) return;
+    const version = clientDataVersion();
+    const sequence = ++historySequence.current;
+    historyPending.current = sequence;
     setRefreshing(true);
-    try { const data=await getData<HistoryData>('/api/admin/boss-history'); if (mountedRef.current) { applyData(data); setAccessDenied(false); if (clearReadError) setError(''); } }
+    try {
+      const data = await getData<HistoryData>('/api/admin/boss-history');
+      const combined = [...data.awards];
+      let cursor = data.nextCursor;
+      for (let page = 1; page < pageCount.current && cursor; page += 1) {
+        if (version !== clientDataVersion() || sequence !== historySequence.current) return;
+        const older = await getData<HistoryData>(`/api/admin/boss-history?cursor=${encodeURIComponent(cursor)}`);
+        combined.push(...older.awards); cursor = older.nextCursor;
+      }
+      if (mountedRef.current && version === clientDataVersion() && sequence === historySequence.current) {
+        applyData({ ...data, awards: [...new Map(combined.map((award) => [award.id, award])).values()], nextCursor: cursor });
+        setAccessDenied(false); if (clearReadError) setError('');
+      }
+    }
     catch (cause) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || version !== clientDataVersion() || sequence !== historySequence.current) return;
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
       else if (cause instanceof ApiError && cause.status === 403) setAccessDenied(true);
       else setError(cause instanceof Error ? cause.message : 'Boss history could not be refreshed. Showing the last known data.');
       return false;
-    } finally { if (mountedRef.current) { setLoading(false); setRefreshing(false); } }
+    } finally { if (historyPending.current === sequence) historyPending.current = 0; if (mountedRef.current && version === clientDataVersion() && sequence === historySequence.current) { setLoading(false); setRefreshing(false); } }
   };
   useEffect(() => {
     mountedRef.current=true;
     const cached=peekData<HistoryData>('/api/admin/boss-history');
     if (cached) { applyData(cached); setLoading(false); }
-    const clear = () => { setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
+    const clear = () => { historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
   useAutoRefresh(loadHistory, { active });
+
+  const loadMoreHistory = async () => {
+    if (!nextCursor || loadingMore || refreshing || historyPending.current) return;
+    const sequence = ++historySequence.current;
+    historyPending.current = sequence;
+    const version = clientDataVersion();
+    setLoadingMore(true);
+    try {
+      const data = await getData<HistoryData>(`/api/admin/boss-history?cursor=${encodeURIComponent(nextCursor)}`);
+      if (!mountedRef.current || version !== clientDataVersion() || sequence !== historySequence.current) return;
+      const combined = [...new Map([...awards, ...data.awards].map((award) => [award.id, award])).values()];
+      pageCount.current += 1; applyData({ ...data, awards: combined });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Older kills could not be loaded.'); }
+    finally { if (historyPending.current === sequence) historyPending.current = 0; if (version === clientDataVersion() && sequence === historySequence.current) setLoadingMore(false); }
+  };
 
   const toggleRow = (awardId: string, rowIndex: number) => {
     setSelectedRows((current) => {
@@ -102,12 +138,12 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     }
 
     const payloadKey = JSON.stringify({kind:'edit',awardId,selectedRows:[...(selectedRows[awardId] ?? [])].sort((a,b) => a-b)});
-    const requestId = requestIds.current.get(payloadKey) ?? crypto.randomUUID();
-    requestIds.current.set(payloadKey, requestId);
     setBusyId(awardId);
     setError('');
     setNotice('');
     try {
+      if (!user?.id) throw new Error('Your session is still loading. Try again in a moment.');
+      const requestId = await getActionRequestId(user.id, 'boss-history', payloadKey);
       const response = await fetch('/api/admin/boss-history', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -115,7 +151,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update boss attendance');
-      requestIds.current.delete(payloadKey);
+      await completeActionRequest(user.id, 'boss-history', payloadKey);
       setNotice(data.message);
       setEditingId(''); editingRef.current='';
       notifyDkpChanged();
@@ -135,12 +171,12 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     }
 
     const payloadKey = JSON.stringify({kind:'delete',awardId:award.id});
-    const requestId = requestIds.current.get(payloadKey) ?? crypto.randomUUID();
-    requestIds.current.set(payloadKey, requestId);
     setBusyId(award.id);
     setError('');
     setNotice('');
     try {
+      if (!user?.id) throw new Error('Your session is still loading. Try again in a moment.');
+      const requestId = await getActionRequestId(user.id, 'boss-history', payloadKey);
       const response = await fetch('/api/admin/boss-history', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -148,7 +184,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to delete boss kill');
-      requestIds.current.delete(payloadKey);
+      await completeActionRequest(user.id, 'boss-history', payloadKey);
       setNotice(data.message);
       setEditingId(''); editingRef.current='';
       notifyDkpChanged();
@@ -168,6 +204,12 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
         method: change ? change.kind === 'delete' ? 'DELETE' : 'PATCH' : 'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(change ? {awardId:award.id,requestId:change.requestId,selectedRows:change.selectedRows} : {requestId:award.requestId,bossName:award.bossName,selectedRows:award.originalSelectedRows}),
       }));
+      if (user?.id) {
+        const payload = change
+          ? JSON.stringify(change.kind === 'delete' ? {kind:'delete',awardId:award.id} : {kind:'edit',awardId:award.id,selectedRows:[...change.selectedRows].sort((a,b)=>a-b)})
+          : JSON.stringify({bossName:award.bossName,selectedRows:[...award.originalSelectedRows].sort((a,b)=>a-b)});
+        await completeActionRequest(user.id, change ? 'boss-history' : 'boss-award', payload);
+      }
       setNotice(result.message); notifyDkpChanged();
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed.'); await loadHistory(false); }
     finally { setBusyId(''); }
@@ -329,6 +371,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
             </article>
           );
         })}
+        {nextCursor && <button type="button" className="secondary-button w-full" disabled={loadingMore || refreshing} onClick={() => void loadMoreHistory()}>{loadingMore ? <LoaderCircle size={15} className="animate-spin" /> : <History size={15} />}Load older kills</button>}
       </div>
     </section>
   );

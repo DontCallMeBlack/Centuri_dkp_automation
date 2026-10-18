@@ -8,7 +8,9 @@ export type { WeeklyRosterRecord } from './weeklyDkpEarned';
 export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(roster: T[]) {
   const { start, end } = getPreviousDkpWeekRange();
   const weeklyAwards = await BossAward.find({
-    status: 'applied',
+    // An interrupted attendance edit still owns its original credited award
+    // until the replacement participants are finalized atomically.
+    status: { $in: ['applied', 'updating'] },
     createdAt: { $gte: start, $lt: end },
   }).select('points participants').lean();
 

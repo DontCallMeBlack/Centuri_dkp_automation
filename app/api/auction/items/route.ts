@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import AuctionItem from '@/lib/models/AuctionItem';
+import Auction from '@/lib/models/Auction';
+import { normalizeAuctionBossType } from '@/lib/auctionRules';
 import { getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster } from '@/lib/googleSheets';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
@@ -14,6 +16,7 @@ import {
 import { guardMutationRequest, readJsonObject, readFormDataLimited, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import User from '@/lib/models/User';
+import { limitMemberRequests } from '@/lib/auth/rateLimit';
 
 const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_TOTAL_UPLOAD_BYTES + 128 * 1024;
@@ -128,6 +131,7 @@ export async function POST(request: Request) {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    await limitMemberRequests(user._id.toString(), 'catalog-write');
     const form = await readFormDataLimited(request, MAX_MULTIPART_BYTES);
     const name = form.get('name');
     const bossType = form.get('bossType');
@@ -176,6 +180,7 @@ export async function PATCH(request: Request) {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    await limitMemberRequests(user._id.toString(), 'catalog-write');
     const form = await readFormDataLimited(request, MAX_MULTIPART_BYTES);
     const itemId = form.get('itemId');
     const name = form.get('name');
@@ -199,16 +204,28 @@ export async function PATCH(request: Request) {
       const item = await AuctionItem.findById(itemId).session(session);
       if (!item || item.isListed === false) throw new RequestValidationError('Catalog item not found.', 404);
 
-      item.name = name.trim();
-      item.requiredRoles = selectedRoles;
-      item.requiredRole = selectedRoles[0];
-      item.bossType = bossType;
       if (images) {
+        if (await Auction.exists({ itemId: item._id }).session(session)) {
+          // Pin existing auctions to their original image set before changing
+          // the listed catalog item. Auction IDs and all financial data stay.
+          const [snapshot] = await AuctionItem.create([{
+            name: item.name, requiredRoles: item.requiredRoles, requiredRole: item.requiredRole,
+            bossType: normalizeAuctionBossType(item.bossType) ?? 'Unassigned',
+            images: item.images.map((image) => ({ data: Buffer.from(image.data), contentType: image.contentType })),
+            image: item.image, imageType: item.imageType, imageCount: item.imageCount,
+            isListed: false, createdBy: item.createdBy, createdAt: item.createdAt,
+          }], { session });
+          await Auction.updateMany({ itemId: item._id }, { $set: { itemId: snapshot._id } }, { session, timestamps: false });
+        }
         item.images = images;
         item.imageCount = images.length;
         item.image = undefined;
         item.imageType = undefined;
       }
+      item.name = name.trim();
+      item.requiredRoles = selectedRoles;
+      item.requiredRole = selectedRoles[0];
+      item.bossType = bossType;
       await item.save({ session });
     });
     return NextResponse.json({ success: true });
