@@ -26,7 +26,9 @@ import {
   AUCTION_WEEKLY_MINIMUM,
   getAuctionBidEndTime,
   normalizeAuctionBossType,
-  normalizeAuctionRole,
+  ITEM_SUBROLES,
+  resolveItemSubroles,
+  canRoleBid,
 } from '@/lib/auctionRules';
 
 const MANAGER_ROLES = new Set(['chief', 'general', 'guardian']);
@@ -115,14 +117,7 @@ export async function GET(request: Request) {
     const creators = await User.find({ _id: { $in: creatorUserIds } }).select('_id role').lean();
     const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
     const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
-    const roles = [...new Map(
-      roster
-        .map((record) => record.subClass.trim().replace(/\s+/g, ' '))
-        .filter(Boolean)
-        .map((role) => [normalizeAuctionRole(role), role] as const),
-    ).values()].sort((first, second) =>
-      first.localeCompare(second, undefined, { sensitivity: 'base' }),
-    );
+    const roles = ITEM_SUBROLES;
     const catalogImageCounts = new Map(
       items.map((item) => [item._id.toString(), item.imageCount ?? 1]),
     );
@@ -353,8 +348,6 @@ export async function POST(req: Request) {
       }
       if (!isDkpRequestId(requestId)) throw new RequestValidationError('A request ID is required. Reload this page before posting an auction.');
       const receiptId = createHash('sha256').update(`auction-create:${user._id.toString()}:${requestId}`).digest('hex');
-      const existingReceipt = await AuctionCreationRequest.findById(receiptId).select('_id').lean();
-      const roster = existingReceipt ? [] : await getSheetRoster({ fresh: true });
       const auction = await withClanAdministrationTransaction(async (session) => {
         const actor = await getAuctionActor(user._id, session);
         if (!isManager(actor.role)) throw new RequestValidationError('Permission denied.', 403);
@@ -368,8 +361,8 @@ export async function POST(req: Request) {
         const bossType = normalizeAuctionBossType(currentItem.bossType);
         if (!bossType || bossType === 'Unassigned') throw new RequestValidationError('Set this item’s boss type before posting it.');
         const itemRoles = currentItem.requiredRoles?.length ? currentItem.requiredRoles : currentItem.requiredRole ? [currentItem.requiredRole] : [];
-        const selectedRoles = itemRoles.map((role) => roster.find((record) => normalizeAuctionRole(record.subClass) === normalizeAuctionRole(role))?.subClass.trim()).filter((role): role is string => Boolean(role));
-        if (!itemRoles.length || itemRoles.length > 2 || selectedRoles.length !== itemRoles.length) throw new RequestValidationError('Update this item’s eligible roles in the catalog before posting.');
+        const selectedRoles = resolveItemSubroles(itemRoles);
+        if (!selectedRoles) throw new RequestValidationError('Update this item’s eligible subroles in the catalog before posting.');
         const [created] = await Auction.create([{
           itemId: currentItem._id,
           itemName: currentItem.name,
@@ -589,7 +582,7 @@ export async function POST(req: Request) {
           if (!linkedRows.has(rowIndex)) throw new RequestValidationError('Choose one of your linked toons.', 403);
           const toon = roster.find((record) => record.rowIndex === rowIndex);
           const auctionRoles = currentAuction.requiredRoles?.length ? currentAuction.requiredRoles : [currentAuction.requiredRole ?? ''];
-          if (!toon || !auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role))) {
+          if (!toon || !canRoleBid(toon.subClass, auctionRoles)) {
             throw new RequestValidationError(`Only a linked ${auctionRoles.join(' or ')} toon can bid.`, 403);
           }
           requireRosterValues(toon, ['weeklySpent', 'spent', 'available']);

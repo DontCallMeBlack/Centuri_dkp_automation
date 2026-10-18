@@ -11,7 +11,19 @@ export function getAuctionBidEndTime(endsAt: Date, bidAt: Date) {
 export function normalizeAuctionBossType(value: unknown) {
   if (value === 'Base' || value === 'Prime') return 'Prot';
   if (value === undefined || value === null || value === '') return 'Unassigned';
-  return (['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Unassigned'] as const).find((type) => type === value) ?? null;
+  return (['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Legacy', 'Unassigned'] as const).find((type) => type === value) ?? null;
+}
+
+export const ITEM_SUBROLES = ['Ranger', 'DPS Rogue', 'Fire Mage', 'Ice Mage', 'Support Druid', 'DPS Druid', 'Support Rogue', 'DPS Warrior', 'Tank', 'Everyone'] as const;
+
+export function resolveItemSubroles(roles: string[]): string[] | null {
+  const resolved = [...new Set(roles.map(normalizeAuctionRole))].map((role) => ITEM_SUBROLES.find((entry) => normalizeAuctionRole(entry) === role));
+  if (!resolved.length || resolved.length > 2 || resolved.some((role) => !role) || (resolved.includes('Everyone') && resolved.length !== 1)) return null;
+  return resolved as string[];
+}
+
+export function canRoleBid(subClass: string, roles: string[]) {
+  return roles.some((role) => normalizeAuctionRole(role) === 'everyone' || normalizeAuctionRole(role) === normalizeAuctionRole(subClass));
 }
 
 export function normalizeAuctionRole(role: string) {

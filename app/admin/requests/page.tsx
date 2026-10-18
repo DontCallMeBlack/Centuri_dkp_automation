@@ -6,6 +6,7 @@ import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/
 import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
 import LoadingSurface from '@/components/LoadingSurface';
 import Dialog from '@/components/Dialog';
+import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ArrowDown, ArrowUp, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Unlink, UserCheck, Users, X } from 'lucide-react';
 
@@ -41,6 +42,12 @@ interface ClanAuditEntry {
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
 
 type AdminSection = 'requests' | 'members' | 'activity';
+const ROLE_DETAILS: Record<ClanRole, string> = {
+  chief: 'Full clan administration, member access, DKP awards and auctions.',
+  general: 'Manage members, promote Guardians, record kills and manage auctions.',
+  guardian: 'Record boss kills, manage catalog items and post auctions.',
+  clansman: 'View the roster and bid using linked toons.',
+};
 interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]}
 
 export default function AdminRequestsPage() {
@@ -57,6 +64,7 @@ export default function AdminRequestsPage() {
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
   const [editingToonsFor, setEditingToonsFor] = useState('');
+  const [roleEditor, setRoleEditor] = useState<{ memberId: string; selected: ClanRole } | null>(null);
   const [loading, setLoading] = useState(true);
   const [accessRole, setAccessRole] = useState('');
   const [managerRole, setManagerRole] = useState<ClanRole | ''>('');
@@ -95,6 +103,7 @@ export default function AdminRequestsPage() {
       loadSequence.current += 1; dirtyMappings.current.clear();
       setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
       setSelectedMappings({}); setMappingQueries({}); setEditingToonsFor('');
+      setRoleEditor(null);
       setManagerRole(''); setManagerId(''); setAccessRole(''); setBusyId('');
       setError(''); setNotice(''); setLoading(true); setRefreshing(false);
     };
@@ -273,9 +282,9 @@ export default function AdminRequestsPage() {
     }
   };
 
-  const updateRole = (member: ClanUser, role: ClanRole, direction: 'promote' | 'demote') => {
-    if (!window.confirm(`${direction === 'promote' ? 'Promote' : 'Demote'} ${member.nickname} from ${member.role} to ${role}?`)) return;
-    void sendAdminAction(member._id, 'set-role', undefined, role);
+  const updateRole = (member: ClanUser, role: ClanRole) => {
+    setError('');
+    setRoleEditor({ memberId: member._id, selected: role });
   };
 
   const getAdjacentRole = (role: string, direction: 'promote' | 'demote'): ClanRole | undefined => {
@@ -429,7 +438,7 @@ export default function AdminRequestsPage() {
                           <button
                             type="button"
                             disabled={busyId === member._id || !canPromote}
-                            onClick={() => promotedRole && updateRole(member, promotedRole, 'promote')}
+                            onClick={() => promotedRole && updateRole(member, promotedRole)}
                             className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-emerald-400/30 bg-gradient-to-br from-emerald-500/20 via-emerald-600/15 to-green-700/20 px-3 py-2 text-sm font-bold text-emerald-200 shadow-lg shadow-emerald-950/20 transition hover:border-emerald-300/60 hover:from-emerald-400/30 hover:to-green-500/25 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
                           >
                             {busyId === member._id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
@@ -439,7 +448,7 @@ export default function AdminRequestsPage() {
                           <button
                             type="button"
                             disabled={busyId === member._id || !canDemote}
-                            onClick={() => demotedRole && updateRole(member, demotedRole, 'demote')}
+                            onClick={() => demotedRole && updateRole(member, demotedRole)}
                             className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-400/30 bg-gradient-to-br from-red-500/20 via-rose-600/15 to-red-800/20 px-3 py-2 text-sm font-bold text-red-200 shadow-lg shadow-red-950/20 transition hover:border-red-300/60 hover:from-red-400/30 hover:to-rose-500/25 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
                           >
                             <ArrowDown className="h-4 w-4" />
@@ -526,6 +535,37 @@ export default function AdminRequestsPage() {
         )}
 
       </div>
+      {roleEditor && (() => {
+        const member = members.find((entry) => entry._id === roleEditor.memberId);
+        if (!member) return null;
+        const chiefCount = members.filter((entry) => entry.role === 'chief').length;
+        const allowed = canChangeMemberRole(managerRole, member.role, roleEditor.selected, member._id === managerId, chiefCount);
+        const promoting = CLAN_ROLES.indexOf(roleEditor.selected) < CLAN_ROLES.indexOf(member.role as ClanRole);
+        return <Dialog labelledBy="rank-editor-title" onClose={() => setRoleEditor(null)} busy={busyId !== ''} className="!max-w-xl">
+          <div className="bg-gradient-to-br from-indigo-500/10 via-transparent to-violet-500/10 p-5 sm:p-7">
+            <header className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3"><span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-300/20 bg-indigo-400/10 text-indigo-200"><RoleIcon role={roleEditor.selected} className="h-6 w-6" /></span><div><p className="page-kicker">Member permissions</p><h2 id="rank-editor-title" className="mt-1 break-all text-lg font-bold text-white">{member.nickname}'s rank</h2></div></div>
+              <button type="button" aria-label="Close rank editor" className="icon-button" disabled={busyId !== ''} onClick={() => setRoleEditor(null)}><X size={19} /></button>
+            </header>
+            <p className="mb-5 mt-4 text-xs leading-6 text-slate-400">Choose a rank to review its access. Changes take effect after you save and are recorded in the activity log.</p>
+            <div role="radiogroup" aria-label="Member rank" className="space-y-2">
+              {CLAN_ROLES.map((role) => {
+                const current = role === member.role;
+                const available = current || canChangeMemberRole(managerRole, member.role, role, member._id === managerId, chiefCount);
+                const selected = roleEditor.selected === role;
+                return <label key={role} className={`flex items-center gap-3 rounded-2xl border p-4 transition ${selected ? 'border-indigo-400/60 bg-indigo-500/15 shadow-lg shadow-indigo-950/30' : 'border-white/5 bg-white/[0.02]'} ${available ? 'cursor-pointer hover:border-indigo-300/30' : 'opacity-35'}`}>
+                  <input type="radio" name="member-rank" value={role} checked={selected} disabled={!available || busyId !== ''} onChange={() => setRoleEditor({ memberId: member._id, selected: role })} className="h-4 w-4 accent-indigo-400" />
+                  <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><RoleBadge role={role} />{current && <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Current rank</span>}</div><p className="mt-2 text-xs leading-5 text-slate-400">{ROLE_DETAILS[role]}</p></div>
+                  {selected && <Check size={18} className="shrink-0 text-indigo-300" />}
+                </label>;
+              })}
+            </div>
+            {allowed && <div className={`mt-4 flex flex-wrap items-center gap-2 rounded-xl border p-3 text-xs ${promoting ? 'border-emerald-400/20 bg-emerald-400/5 text-emerald-200' : 'border-amber-400/20 bg-amber-400/5 text-amber-200'}`}><span>{promoting ? 'Promote' : 'Demote'}</span><RoleBadge role={member.role} /><span aria-hidden="true">→</span><RoleBadge role={roleEditor.selected} /></div>}
+            {error && <p role="alert" className="mt-4 rounded-xl border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p>}
+            <footer className="mt-6 flex justify-end gap-2 border-t border-white/5 pt-5"><button type="button" className="secondary-button" disabled={busyId !== ''} onClick={() => setRoleEditor(null)}>Cancel</button><button type="button" className="primary-button" disabled={busyId !== '' || !allowed} onClick={async () => { if (await sendAdminAction(member._id, 'set-role', undefined, roleEditor.selected)) setRoleEditor(null); }}>{busyId ? <LoaderCircle size={15} className="animate-spin" /> : <Check size={15} />}{busyId ? 'Saving rank…' : 'Save rank'}</button></footer>
+          </div>
+        </Dialog>;
+      })()}
       {editingToonsFor && (() => {
         const member = members.find((entry) => entry._id === editingToonsFor);
         if (!member) return null;

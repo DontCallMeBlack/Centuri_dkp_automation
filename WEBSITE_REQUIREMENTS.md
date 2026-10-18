@@ -153,17 +153,19 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 
 ### 6.3 Boss attendance DKP distribution
 
-- Chiefs, Generals, and Guardians can open the distribution picker from Roster. Other roles see an explanation that the operation is restricted.
+- Chiefs, Generals, and Guardians can open the kill-recording picker from Overview. Other roles see an explanation that the operation is restricted.
 - The boss list and award values are fixed:
 
-| Boss | Tier shown | Award per selected toon |
-|---|---:|---:|
-| Base | Tier 1 | 1 DKP |
-| Prime | Tier 2 | 2 DKP |
-| Bt | Tier 3 | 5 DKP |
-| Gele | Tier 4 | 6 DKP |
-| Dino | Tier 5 | 7 DKP |
-| Crom | Tier 6 | 12 DKP |
+| Boss | Award per selected toon |
+|---|---:|
+| Base | 1 DKP |
+| Prime | 2 DKP |
+| Bt | 5 DKP |
+| Gele | 6 DKP |
+| Dino | 7 DKP |
+| Crom | 12 DKP |
+
+Tier labels are not displayed. Legacy is an auction item type, not a new boss award.
 
 - The dialog lets a manager search every roster toon by owner, account, or class, select/deselect multiple rows, see selected toon chips and a selected count, and choose the boss.
 - The dialog defaults to Base. Submission is disabled until at least one toon is selected. The client also rejects an empty selection with a message.
@@ -209,14 +211,14 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 
 - Chiefs, Generals, and Guardians can post an auction. Clansmen see a restricted-access notice.
 - Posting selects a previously saved catalog item. New items must first be created from the Items section.
-- The item must have one or two saved eligible roles, and each role must still be present in the live roster. The UI disables posting if the role is missing or invalid; the server checks again against a fresh roster.
+- The item must have one or two supported eligible subroles, or Everyone on its own. The UI disables posting if the selection is invalid; the server validates the current catalog selection inside the posting transaction.
 - Posting snapshots the item name, boss type, and role(s) onto a new auction record, records the poster, and sets the initial end time to **24 hours** after posting. Existing active records keep their stored deadlines. Legacy Base/Prime catalog boss labels normalize to Prot when posting; unknown labels produce a specific catalog correction error.
 - The item selector searches catalog item names and initially displays 40 matches, with a Show more control adding 40 at a time. The selected item and its roles/type are shown before submission.
 - Successful posting closes the form, shows a confirmation, and refreshes auction data.
 
 ### 8.3 Bid eligibility, bid amounts, and reservations
 
-- Any approved user may bid if they have at least one linked toon matching one of the auction’s allowed roles and meet the weekly DKP check.
+- Any approved user may bid if they have at least one linked toon matching one of the auction’s allowed subroles and meet the weekly DKP check. Everyone items allow any linked toon; balance, reservation and other bidding checks still apply.
 - The weekly DKP check sums qualifying applied boss-award points for all of the user’s linked toons over the previous completed Sunday-to-Sunday week. The configured minimum is **0 DKP**, so a zero or positive total passes; a negative total does not.
 - A bid must be a positive safe whole-number amount, exceed the current leading bid, use one of the bidder’s own linked toons, match an allowed role, and not exceed that toon’s available DKP.
 - If one linked toon is eligible, it is selected automatically and shown. If several are eligible, the bidder chooses one. The input’s minimum is current bid + 1 (or 1 when there is no bid), and its maximum reflects available DKP after holds across auctions.
@@ -265,12 +267,12 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 - Catalog access is limited to Chief, General, and Guardian.
 - Item fields are name, allowed role(s), boss type, and one or more images.
 - Name is trimmed and must contain 1–120 characters. Names are unique with case-insensitive English collation.
-- One or two roles must be selected from role values currently present in the roster. Role matching normalizes whitespace and letter case. Duplicate normalized roles are collapsed.
-- Boss type must be Prot, Bt, Gele, Dino, or Crom. Prot groups Base and Prime; the UI label is “Prot (Base / Prime)”. Unassigned is a stored compatibility value but cannot be used to create or update catalog items.
+- One or two subroles must be selected from Ranger, DPS Rogue, Fire Mage, Ice Mage, Support Druid, DPS Druid, Support Rogue, DPS Warrior and Tank. Everyone is an exclusive alternative. Selection cards show each class icon and a checked state; other roster strings are not offered as item choices. Role matching normalizes whitespace and letter case. Duplicate normalized roles are collapsed.
+- Boss type must be Prot, Bt, Gele, Dino, Crom, or Legacy. Prot groups Base and Prime; the UI label is “Prot (Base / Prime)”. Unassigned is a stored compatibility value but cannot be used to create or update catalog items.
 - Catalog search filters item names. Items are sorted alphabetically. Each item can be edited in place and removed after confirmation.
 - New-item and individual edit forms expand on demand from compact previews, avoiding rendering every image crop/role editor on initial load. The add form starts collapsed.
 - Updating an item without uploading images preserves existing images. Uploading replacement images replaces the item’s entire image set.
-- In the edit form, Save is disabled if no field or image has changed, and replacement image selection is processed through the same crop flow as new images. Existing roles no longer present in the roster are labeled as such in the editor; the server will reject saving an item with a role that is no longer in the roster.
+- Replacement images use the same crop flow as new images. Items with unsupported saved subroles must be assigned supported choices before saving or posting; the editor shows a correction message. Existing auction eligibility is snapshotted separately from catalog edits.
 - Removing an item is a soft removal (`isListed=false`): it disappears from the catalog and new auction choices, but existing auction history is kept.
 
 ### 9.2 Image selection, crop, compression, storage, and delivery
@@ -313,7 +315,7 @@ Google Sheets reads request `UNFORMATTED_VALUE`, so display rounding and spreads
 
 - Role order for promotion/demotion is Chief → General → Guardian → Clansman.
 - A user cannot change their own role.
-- A Chief can set another account to any of the four roles, subject to the final-Chief protection and valid-role check. The UI presents one adjacent promotion or demotion at a time.
+- A Chief can set another account to any of the four roles, subject to the final-Chief protection and valid-role check. Promote and Demote open a rank dialog with icon cards, permission summaries, current-rank labeling, change preview and explicit Save. Unavailable ranks are disabled. The same shared permission rules drive the dialog and server authorization.
 - A General can only promote a Clansman to Guardian or demote a Guardian to Clansman. A General cannot manage Chief or General targets.
 - The last approved Chief cannot be demoted. Role changes require a confirmation dialog.
 - A successful promotion/demotion is stored with actor ID/nickname/role, target ID/nickname, old/new role, and timestamp in the clan audit log in the same MongoDB transaction as the role update.
@@ -480,7 +482,7 @@ This section records the server-side checks that sit behind the screen behavior 
 - `create-auction` additionally requires a UUID request ID. A transaction stores its permanent receipt and reads the current listed catalog item; an identical retry acknowledges the original auction even after that auction is deleted. Browser session storage retains opaque action IDs across reloads for auction posting and boss operations with identical inputs.
 - Auction IDs and item IDs must be valid MongoDB object IDs. Bids require an integer row index and a positive safe integer amount. The server validates role, row ownership, current auction state, available DKP and reservations again, even when the UI already disables invalid inputs.
 - Bid reservations share the financial ledger lock and administration transaction fence; they bind both row and normalized owner/toon identity. Staff authority for other auction/catalog mutations is re-read inside the administration transaction as well.
-- `GET/POST/PATCH/DELETE /api/auction/items` require Chief, General, or Guardian. Create/update requires a trimmed 1–120 character name, a supported assigned boss type, and one or two unique roles present in a fresh roster. New items need at least one valid image; update may omit images to keep the existing image set. Duplicate names return HTTP 409; invalid fields/images return HTTP 400; missing item IDs/records return 400/404 as applicable.
+- `GET/POST/PATCH/DELETE /api/auction/items` require Chief, General, or Guardian. Create/update requires a trimmed 1–120 character name, a supported assigned boss type, and one or two supported subroles or Everyone alone. New items need at least one valid image; update may omit images to keep the existing image set. Duplicate names return HTTP 409; invalid fields/images return HTTP 400; missing item IDs/records return 400/404 as applicable.
 - `GET /api/auction/image` requires a valid session, valid item ID, and nonnegative integer image index. Invalid IDs/indices return 400; missing item/image returns 404. Successful responses return image bytes rather than JSON.
 
 The website’s client performs useful validation and disables many invalid controls, but the server checks above remain authoritative. The code does not define a formal OpenAPI schema or shared typed API contract.

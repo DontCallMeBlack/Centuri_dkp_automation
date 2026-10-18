@@ -2,10 +2,8 @@ import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import AuctionItem from '@/lib/models/AuctionItem';
 import Auction from '@/lib/models/Auction';
-import { normalizeAuctionBossType } from '@/lib/auctionRules';
+import { normalizeAuctionBossType, ITEM_SUBROLES, resolveItemSubroles } from '@/lib/auctionRules';
 import { getSessionUser } from '@/lib/auth/session';
-import { getSheetRoster } from '@/lib/googleSheets';
-import { normalizeAuctionRole } from '@/lib/auctionRules';
 import {
   MAX_AUCTION_ITEM_IMAGE_BYTES,
   MAX_AUCTION_UPLOAD_IMAGE_BYTES,
@@ -20,7 +18,7 @@ import { limitMemberRequests } from '@/lib/auth/rateLimit';
 
 const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_TOTAL_UPLOAD_BYTES + 128 * 1024;
-const BOSS_TYPES = ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Unassigned'] as const;
+const BOSS_TYPES = ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Legacy', 'Unassigned'] as const;
 type BossType = (typeof BOSS_TYPES)[number];
 
 function isBossType(value: string): value is BossType {
@@ -46,12 +44,7 @@ async function getValidRoles(value: FormDataEntryValue[]) {
     .flatMap((entry) => entry.split(','))
     .map((role) => role.trim())
     .filter(Boolean);
-  const unique = [...new Set(requested.map(normalizeAuctionRole))];
-  if (unique.length === 0 || unique.length > 2) return null;
-  const roster = await getSheetRoster({ fresh: true });
-  const roles = [...new Map(roster.map((record) => [normalizeAuctionRole(record.subClass), record.subClass.trim()])).entries()];
-  const resolved = unique.map((key) => roles.find(([roleKey]) => roleKey === key)?.[1]);
-  return resolved.every(Boolean) ? resolved as string[] : null;
+  return resolveItemSubroles(requested);
 }
 
 export const dynamic = 'force-dynamic';
@@ -101,13 +94,8 @@ export async function GET() {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-    const [items, roster] = await Promise.all([
-      AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRoles requiredRole bossType imageCount').sort({ name: 1 }).lean(),
-      getSheetRoster(),
-    ]);
-    const roles = [...new Set(
-      roster.map((record) => record.subClass.trim().replace(/\s+/g, ' ')).filter(Boolean),
-    )].sort((first, second) => first.localeCompare(second, undefined, { sensitivity: 'base' }));
+    const items = await AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRoles requiredRole bossType imageCount').sort({ name: 1 }).lean();
+    const roles = ITEM_SUBROLES;
     return NextResponse.json({
       success: true,
       roles,
@@ -144,7 +132,7 @@ export async function POST(request: Request) {
     }
     const selectedRoles = await getValidRoles(requiredRolesInput);
     if (!selectedRoles) {
-      return NextResponse.json({ error: 'Choose one or two roles currently listed in the Google Sheets roster.' }, { status: 400 });
+      return NextResponse.json({ error: 'Choose one or two supported subroles, or Everyone on its own.' }, { status: 400 });
     }
     const images = await readOptimizedImages(form);
     if (!images?.length) {
@@ -197,7 +185,7 @@ export async function PATCH(request: Request) {
     }
     const selectedRoles = await getValidRoles(requiredRolesInput);
     if (!selectedRoles) {
-      return NextResponse.json({ error: 'Choose one or two roles currently listed in the Google Sheets roster.' }, { status: 400 });
+      return NextResponse.json({ error: 'Choose one or two supported subroles, or Everyone on its own.' }, { status: 400 });
     }
     const images = await readOptimizedImages(form);
     await withItemManager(user._id, async (session) => {

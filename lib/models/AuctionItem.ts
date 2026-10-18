@@ -4,7 +4,7 @@ export interface IAuctionItem extends Document {
   name: string;
   requiredRoles: string[];
   requiredRole?: string;
-  bossType: 'Prot' | 'Bt' | 'Gele' | 'Dino' | 'Crom' | 'Unassigned';
+  bossType: 'Prot' | 'Bt' | 'Gele' | 'Dino' | 'Crom' | 'Legacy' | 'Unassigned';
   images: Array<{
     data: Buffer;
     contentType: 'image/png' | 'image/jpeg' | 'image/webp';
@@ -28,7 +28,7 @@ const AuctionItemSchema: Schema<IAuctionItem> = new Schema({
   requiredRole: { type: String, default: '' },
   bossType: {
     type: String,
-    enum: ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Unassigned'],
+    enum: ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Legacy', 'Unassigned'],
     default: 'Unassigned',
     required: true,
   },
