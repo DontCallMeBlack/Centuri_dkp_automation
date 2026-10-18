@@ -15,6 +15,13 @@ import {
 import { buildDkpAdjustmentUpdates, DkpIntegrityError, getDkpReplayState, snapshotDkpCells } from '@/lib/dkpAccounting';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import User from '@/lib/models/User';
+import RosterMutation from '@/lib/models/RosterMutation';
+import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
+import Auction from '@/lib/models/Auction';
+import BossAward from '@/lib/models/BossAward';
+import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
+import { getReservationConflict } from '@/lib/auth/reservationProtection';
+import { ITEM_SUBROLES } from '@/lib/auctionRules';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
 import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
@@ -358,6 +365,7 @@ async function withWeeklyResetLock<T>(cacheKey: string, operation: (lockId: stri
   }, WEEKLY_RESET_LOCK_MS / 4);
   interval.unref();
   try {
+    await replayPendingRosterMutation(cacheKey, lockId);
     await processWeeklyDkpResetWhileLocked(cacheKey, lockId);
     if (heartbeatError) throw heartbeatError;
     await assertLedgerLock(cacheKey, lockId);
@@ -398,6 +406,7 @@ export async function ensureWeeklyDkpReset() {
     cache &&
     !cache.weeklyResetPending &&
     !(await DkpSheetMutation.exists({ spreadsheetId: cacheKey, status: 'pending' })) &&
+    !(await RosterMutation.exists({ spreadsheetId: cacheKey, status: 'pending' })) &&
     cache.weeklyResetFor &&
     cache.weeklyResetFor.getTime() >= currentWeekStart.getTime()
   ) {
@@ -706,6 +715,126 @@ export async function adjustPlayersDKP(
   } catch (error: unknown) {
     console.error('DKP was updated in Google Sheets, but the roster cache could not be invalidated', error instanceof Error ? error.name : 'UnknownError');
   }
+}
+
+/** Apply one durable roster change before any new financial work. A whole-row
+ * RAW write is replayed only when the exact before/after snapshot matches. */
+async function replayPendingRosterMutation(spreadsheetId: string, lockId: string) {
+  const mutation = await RosterMutation.findOne({ spreadsheetId, status: 'pending' });
+  if (!mutation) return;
+  const sheets = createSheetsClient();
+  const rows = await readSheetRows(sheets);
+  const current = Array.from({ length: 9 }, (_, index) => String(rows[mutation.rowIndex - 3]?.[index] ?? ''));
+  const same = (values: Array<string | number>) => values.length === 9 && values.every((value, index) => String(value) === current[index]);
+  if (!same(mutation.after)) {
+    if (!same(mutation.before)) throw new DkpIntegrityError('An interrupted clan toon change no longer matches its Sheet snapshot. Clan leadership must reconcile the row before continuing.');
+    await assertLedgerLock(spreadsheetId, lockId);
+    await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${SHEET_NAME}!A${mutation.rowIndex}:I${mutation.rowIndex}`,
+      valueInputOption: 'RAW', requestBody: { values: [mutation.after] },
+    }), false);
+  }
+  await assertLedgerLock(spreadsheetId, lockId);
+  await withClanAdministrationTransaction(async (session) => {
+    const pending = await RosterMutation.findOne({ _id: mutation._id, status: 'pending' }).session(session);
+    if (!pending) return;
+    for (const change of pending.linkChanges) {
+      await User.updateOne({ _id: change.userId }, change.links.length
+        ? { $set: { sheetRecords: change.links }, $unset: { sheetRecordName: '' } }
+        : { $unset: { sheetRecords: '', sheetRecordName: '' } }, { session });
+    }
+    const cache = await SheetRosterCache.findOne({ cacheKey: spreadsheetId }).session(session);
+    if (!cache || cache.weeklyResetLockId !== lockId || cache.weeklyResetLockUntil.getTime() <= Date.now()) throw new DkpIntegrityError('The roster change lost its ledger lock. Retry the original request.');
+    cache.weeklyActivityHistory = (cache.weeklyActivityHistory ?? []).filter((entry) => entry.rowIndex !== pending.rowIndex && getSheetRecordKey(entry) !== pending.identityKey);
+    cache.fetchedAt = new Date(0); cache.refreshLockUntil = new Date(0); cache.generation += 1;
+    await cache.save({ session });
+    const toon = { rowIndex: pending.rowIndex, owner: pending.owner, account: pending.account };
+    await ClanAuditEvent.create([{
+      eventType: pending.action === 'create' ? 'toon-created' : 'toon-removed',
+      actorUserId: pending.actorUserId, actorNickname: pending.actorNickname, actorRole: pending.actorRole,
+      targetNickname: pending.account || pending.owner, previousRole: 'unlinked',
+      ...(pending.action === 'create' ? { addedToons: [toon] } : { removedToons: [toon], forfeitedDkp: pending.before.slice(3, 9) }),
+    }], { session });
+    pending.status = 'applied';
+    await pending.save({ session });
+  }, { recoveringRoster: true });
+}
+
+export async function changeClanToon(actorUserId: string, requestId: string, input:
+  | { action: 'create'; owner: string; account: string; subClass: string }
+  | { action: 'remove'; rowIndex: number; owner: string; account: string }) {
+  assertDkpWritesEnabled();
+  await dbConnect();
+  const spreadsheetId = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(spreadsheetId);
+  const id = createHash('sha256').update(`roster:${spreadsheetId}:${actorUserId}:${requestId}`).digest('hex');
+  const fingerprint = createHash('sha256').update(JSON.stringify(input)).digest('hex');
+  return withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    const previous = await RosterMutation.findById(id).lean();
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new RequestValidationError('This request ID was already used for a different toon change.', 409);
+      return { rowIndex: previous.rowIndex, replayed: true };
+    }
+    if (input.action === 'create' && (!ITEM_SUBROLES.includes(input.subClass as typeof ITEM_SUBROLES[number]) || input.subClass === 'Everyone')) throw new RequestValidationError('Choose a supported toon subrole.');
+    const rows = await readSheetRows();
+    const roster = rosterFromRows(rows);
+    const identityKey = getSheetRecordKey(input);
+    let rowIndex: number;
+    let subClass: string;
+    if (input.action === 'create') {
+      if (roster.some((record) => record.account.trim().toLowerCase() === input.account.toLowerCase())) throw new RequestValidationError('A toon with this name is already in the clan.', 409);
+      if (await RosterMutation.exists({ spreadsheetId, identityKey })) throw new RequestValidationError('This toon identity already has a roster lifecycle and cannot be recreated with its old history.', 409);
+      if (await BossAward.exists({ participants: { $elemMatch: { owner: input.owner, account: input.account } } }).collation({ locale: 'en', strength: 2 })) throw new RequestValidationError('This owner/toon identity already has clan award history. Reconcile the existing identity instead of creating it as a brand-new toon.', 409);
+      // Never place a new toon on a row still referenced by saved identities,
+      // historical bids, awards, or earlier financial/roster operations.
+      const referenced = await Promise.all([
+        User.distinct('sheetRecords.rowIndex'), Auction.distinct('highBid.rowIndex'), Auction.distinct('winner.rowIndex'),
+        BossAward.distinct('participants.rowIndex'), BossAward.distinct('pendingChange.participants.rowIndex'),
+        DkpSheetMutation.distinct('identities.rowIndex', { spreadsheetId }), RosterMutation.distinct('rowIndex', { spreadsheetId }),
+      ]);
+      const reserved = new Set<number>([...roster.map((record) => record.rowIndex), ...referenced.flat().filter((value): value is number => typeof value === 'number')]);
+      rowIndex = 0;
+      for (let row = 3; row <= 1000; row += 1) {
+        if (!reserved.has(row) && Array.from({ length: 3 }, (_, index) => rows[row - 3]?.[index] ?? '').every((value) => !value.trim())) { rowIndex = row; break; }
+      }
+      if (!rowIndex) throw new RequestValidationError('No unused roster row is available within rows 3–1000. Contact the site owner to expand roster capacity.', 409);
+      subClass = input.subClass;
+    } else {
+      rowIndex = input.rowIndex;
+      const record = roster.find((entry) => entry.rowIndex === rowIndex);
+      if (!record || getSheetRecordKey(record) !== identityKey) throw new RequestValidationError('This roster entry changed. Refresh the list before removing it.', 409);
+      if (roster.filter((entry) => getSheetRecordKey(entry) === identityKey).length !== 1) throw new RequestValidationError('This toon has a duplicate owner/toon identity. Reconcile the duplicate rows before removing it.', 409);
+      subClass = record.subClass;
+    }
+    const before = Array.from({ length: 9 }, (_, index) => String(rows[rowIndex - 3]?.[index] ?? ''));
+    const after = input.action === 'create' ? [input.owner, input.account, subClass, 0, 0, 0, 0, 0, 0] : Array<string>(9).fill('');
+    await assertLedgerLock(spreadsheetId, lockId);
+    await withClanAdministrationTransaction(async (session) => {
+      const actor = await User.findOne({ _id: actorUserId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
+      if (!actor) throw new RequestValidationError('Only Chief and General accounts can manage clan toons.', 403);
+      const holds = await AuctionHold.find({ heldPoints: { $ne: 0 } }).select('rowIndex owner account heldPoints').session(session).lean();
+      const auctions = await Auction.find({ $or: [{ status: { $in: ['active', 'removing', 'settling', 'settlement-failed'] } }, { status: 'completed', deliveryStatus: 'pending' }] }).select('status deliveryStatus highBid winner').session(session).lean();
+      const awards = await BossAward.find({ status: { $in: ['pending', 'updating'] } }).select('participants pendingChange').session(session).lean();
+      const users = await User.find().select('_id sheetRecords sheetRecordName').session(session).lean();
+      if (getReservationConflict({ identities: [input], rows: [rowIndex], rejectUnverifiedLegacyHolds: true }, holds, auctions)) throw new RequestValidationError('Resolve this toon’s reserved bids, unfinished auctions or pending delivery before removing it. Its DKP can then be forfeited.', 409);
+      if (awards.some((award) => [...award.participants, ...(award.pendingChange?.participants ?? [])].some((participant) => participant.rowIndex === rowIndex || getSheetRecordKey(participant) === identityKey))) throw new RequestValidationError('Finish this toon’s pending boss award or attendance change before changing its roster entry.', 409);
+      const linkChanges = users.flatMap((user) => {
+        const legacyMatches = user.sheetRecordName?.trim().toLowerCase() === input.owner.toLowerCase();
+        if (!legacyMatches && !user.sheetRecords?.some((record) => record.rowIndex === rowIndex || getSheetRecordKey(record) === identityKey)) return [];
+        const existing = user.sheetRecords?.length ? user.sheetRecords : roster.filter((record) => getLinkedSheetRecordRows(user, roster).includes(record.rowIndex));
+        // Identity-only links avoid retaining any stale physical row ownership.
+        const links = existing.filter((record) => getSheetRecordKey(record) !== identityKey).map(({ owner, account }) => ({ owner, account }));
+        return [{ userId: user._id.toString(), links }];
+      });
+      await RosterMutation.create([{
+        _id: id, spreadsheetId, fingerprint, action: input.action, status: 'pending', rowIndex, identityKey,
+        owner: input.owner, account: input.account, subClass, before, after,
+        actorUserId: actor._id, actorNickname: actor.nickname, actorRole: actor.role, linkChanges,
+      }], { session });
+    });
+    await replayPendingRosterMutation(spreadsheetId, lockId);
+    return { rowIndex, replayed: false };
+  });
 }
 
 export async function updatePlayerDKP(rowIndex: number, pointsToAdd: number) {

@@ -6,6 +6,7 @@ import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/
 import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
 import LoadingSurface from '@/components/LoadingSurface';
 import Dialog from '@/components/Dialog';
+import ClanToonsPanel from '@/components/ClanToonsPanel';
 import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ArrowDown, ArrowUp, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Unlink, UserCheck, Users, X } from 'lucide-react';
@@ -28,7 +29,7 @@ interface RosterMember {
 
 interface ClanAuditEntry {
   id: string;
-  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial';
+  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-removed';
   actorNickname: string;
   actorRole: string;
   targetNickname: string;
@@ -37,11 +38,12 @@ interface ClanAuditEntry {
   createdAt: string;
   addedToons?: Array<{owner:string; account:string}>;
   removedToons?: Array<{owner:string; account:string}>;
+  forfeitedDkp?: string[];
 }
 
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
 
-type AdminSection = 'requests' | 'members' | 'activity';
+type AdminSection = 'requests' | 'members' | 'toons' | 'activity';
 const ROLE_DETAILS: Record<ClanRole, string> = {
   chief: 'Full clan administration, member access, DKP awards and auctions.',
   general: 'Manage members, promote Guardians, record kills and manage auctions.',
@@ -320,6 +322,7 @@ export default function AdminRequestsPage() {
           {([
             ['requests', 'Sign-up requests', UserCheck, pendingUsers.length],
             ['members', 'Members', Users, members.length],
+            ['toons', 'Clan toons', Shield, roster.length],
             ['activity', 'Activity log', History, auditEvents.length],
           ] as const).map(([key, label, Icon, count]) => (
             <button
@@ -336,6 +339,8 @@ export default function AdminRequestsPage() {
 
         {error && <p role="alert" className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
+
+        <section hidden={section !== 'toons'} aria-label="Manage clan toons"><ClanToonsPanel active={section === 'toons'} accountId={managerId} onChanged={loadData} /></section>
 
         {section === 'requests' && (
           <section className="mt-6 space-y-3">
@@ -475,7 +480,7 @@ export default function AdminRequestsPage() {
           <section className="mt-6">
             <div className="mb-5">
               <h2 className="text-lg font-bold text-white">Member access history</h2>
-              <p className="mt-1 text-sm text-slate-400">The latest 100 actions: toon links, approvals, role changes, and removals, including who made each change.</p>
+              <p className="mt-1 text-sm text-slate-400">The latest 100 actions: new and removed clan toons, account links, approvals, and rank changes.</p>
             </div>
             {auditEvents.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-800 py-12 text-center">
@@ -489,14 +494,14 @@ export default function AdminRequestsPage() {
                     <article key={event.id} className="flex flex-col gap-2 bg-slate-950/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-start gap-3">
                         <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                          event.eventType === 'promotion'
+                          event.eventType === 'promotion' || event.eventType === 'toon-created'
                             ? 'bg-emerald-500/10 text-emerald-300'
                             : event.eventType === 'demotion'
                               ? 'bg-amber-500/10 text-amber-300'
                               : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' || event.eventType === 'account-approval'
                                 ? 'bg-indigo-500/10 text-indigo-300' : 'bg-red-500/10 text-red-300'
                         }`}>
-                          {event.eventType === 'promotion'
+                          {event.eventType === 'toon-created' ? <Plus className="h-4 w-4" /> : event.eventType === 'promotion'
                             ? <ArrowUp className="h-4 w-4" />
                             : event.eventType === 'demotion'
                               ? <ArrowDown className="h-4 w-4" />
@@ -506,7 +511,9 @@ export default function AdminRequestsPage() {
                         </span>
                         <div className="min-w-0">
                           <p className="break-words text-sm font-semibold text-slate-100">
-                            {event.eventType === 'member-removal'
+                            {event.eventType === 'toon-created' ? <><span className="text-white">{event.targetNickname}</span> · New clan toon created with zero DKP</>
+                              : event.eventType === 'toon-removed' ? <><span className="text-white">{event.targetNickname}</span> · Toon permanently removed; DKP forfeited</>
+                              : event.eventType === 'member-removal'
                               ? <><span className="text-white">{event.targetNickname}</span> was removed from the clan</>
                               : event.eventType === 'toon-links' ? <><span className="text-white">{event.targetNickname}</span> · Toon links updated</>
                                 : event.eventType === 'toon-reference-refresh' ? <><span className="text-white">{event.targetNickname}</span> · Stale roster references refreshed; toon ownership unchanged</>
@@ -514,8 +521,9 @@ export default function AdminRequestsPage() {
                                   : event.eventType === 'account-denial' ? <><span className="text-white">{event.targetNickname}</span> · Sign-up denied</>
                                     : <><span className="text-white">{event.targetNickname}</span> {event.eventType === 'promotion' ? 'promoted' : 'demoted'} from <span className="capitalize text-slate-300">{event.previousRole}</span> to <span className="capitalize text-slate-300">{event.newRole}</span></>}
                           </p>
-                          {!!event.addedToons?.length && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald-300"><Link2 size={13} className="mt-0.5" /><span>Linked: {event.addedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
-                          {!!event.removedToons?.length && <p className="mt-1 flex items-start gap-1.5 text-xs text-rose-300"><Unlink size={13} className="mt-0.5" /><span>Unlinked: {event.removedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
+                          {!!event.addedToons?.length && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald-300"><Link2 size={13} className="mt-0.5" /><span>{event.eventType === 'toon-created' ? 'Created (unlinked)' : 'Linked'}: {event.addedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
+                          {!!event.removedToons?.length && <p className="mt-1 flex items-start gap-1.5 text-xs text-rose-300"><Unlink size={13} className="mt-0.5" /><span>{event.eventType === 'toon-removed' ? 'Removed' : 'Unlinked'}: {event.removedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
+                          {event.forfeitedDkp && <p className="mt-1 text-xs text-rose-300">DKP at removal · Available: {event.forfeitedDkp[4] || '0'} · Weekly earned: {event.forfeitedDkp[0] || '0'}</p>}
                           <p className="mt-1 text-xs text-slate-500">
                             By <span className="text-slate-300">{event.actorNickname}</span>
                             <span className="capitalize"> · {event.actorRole}</span>

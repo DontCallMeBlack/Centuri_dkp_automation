@@ -71,6 +71,8 @@ The latest fix pass passed TypeScript and the production build. No new automated
 
 ## Latest fix pass
 
+- Clan toon management adds Chief/General-only creation and permanent DKP-forfeiting removal. Exact row snapshots, durable retry receipts, the ledger lock, administration fencing and a recovery action coordinate Sheet writes with account unlinking and audit events. Unfinished financial work blocks removal. Removed identities cannot regain historical award credit through app recreation or stale requests. This feature was checked with TypeScript and production builds, without live roster mutation tests.
+
 - Overview has one kill-recording entry button. Boss grants, attendance changes and auction posting retain opaque retry IDs in account-scoped browser session storage across reloads. Retrying requires the same selected inputs; closing the tab can lose that browser receipt.
 - Auction creation stores a permanent server receipt inside its transaction and reads catalog details there. Existing auctions retain their original pictures when catalog images change.
 - Authentication quotas apply per trusted source and source/account pair, preventing an attacker on another IP from exhausting a nickname-only or global quota. Authenticated auction, catalog and boss writes also have per-member limits.

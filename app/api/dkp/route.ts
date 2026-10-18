@@ -2,13 +2,16 @@ import { NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/googleSheets';
-import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
+import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
 import User from '@/lib/models/User';
 import { BOSS_DKP_POINTS, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
+import { withClanAdministrationTransaction } from '@/lib/auth/administration';
+import RosterMutation from '@/lib/models/RosterMutation';
+import { RequestValidationError } from '@/lib/security/request';
 
 
 export async function GET() {
@@ -86,11 +89,17 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'One or more selected roster records no longer exist' }, { status: 400 });
       }
       try {
-        award = await BossAward.create({
+        award = await withClanAdministrationTransaction(async (session) => {
+          const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
+          if (!actor) throw new RequestValidationError('Your role no longer permits boss awards.', 403);
+          if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: participants.map((record) => getSheetRecordKey(record!)) } }).session(session)) throw new RequestValidationError('A selected toon was permanently removed. Refresh the roster before recording this kill.', 409);
+          const [created] = await BossAward.create([{
           _id: awardId, requestId, requestFingerprint: fingerprint,
           bossName, points: BOSS_DKP_POINTS[bossName],
           participants: participants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account })),
           createdBy: user.nickname, status: 'pending',
+          }], { session });
+          return created;
         });
       } catch (error: unknown) {
         if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 11000) throw error;
