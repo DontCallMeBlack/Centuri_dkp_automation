@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Dialog from '@/components/Dialog';
 import RoleBadge from '@/components/RoleBadge';
+import ItemSubrolePicker from '@/components/ItemSubrolePicker';
+import { resolveItemSubroles } from '@/lib/auctionRules';
 import LoadingSurface from '@/components/LoadingSurface';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, clientDataVersion, getData, invalidateData } from '@/lib/client/api';
@@ -24,6 +26,7 @@ const BOSS_TYPES = [
   { value: 'Gele', label: 'Gele' },
   { value: 'Dino', label: 'Dino' },
   { value: 'Crom', label: 'Crom' },
+  { value: 'Legacy', label: 'Legacy' },
 ] as const;
 const BOSS_TYPE_VALUES = BOSS_TYPES.map((boss) => boss.value);
 
@@ -244,6 +247,8 @@ function SquareImageUpload({
 }
 
 async function buildItemForm(name: string, requiredRoles: string[], bossType: string, files: File[]) {
+  const subroles = resolveItemSubroles(requiredRoles);
+  if (!subroles) throw new Error('Choose one or two subroles with icons, or Everyone on its own.');
   const optimizedFiles = await Promise.all(files.map(optimizeImageForUpload));
   const totalUploadBytes = optimizedFiles.reduce((total, file) => total + file.size, 0);
   if (totalUploadBytes > 2 * 1024 * 1024) {
@@ -252,7 +257,7 @@ async function buildItemForm(name: string, requiredRoles: string[], bossType: st
 
   const form = new FormData();
   form.set('name', name);
-  for (const role of requiredRoles) form.append('requiredRoles', role);
+  for (const role of subroles) form.append('requiredRoles', role);
   form.set('bossType', bossType);
   for (const file of optimizedFiles) form.append('images', file);
   return form;
@@ -260,12 +265,10 @@ async function buildItemForm(name: string, requiredRoles: string[], bossType: st
 
 function ItemEditor({
   item,
-  roles,
   onSaved,
   onRemoved,
 }: {
   item: CatalogItem;
-  roles: string[];
   onSaved: (itemId: string, name: string, requiredRoles: string[], bossType: string, imageCount?: number) => void;
   onRemoved: (itemId: string) => Promise<void>;
 }) {
@@ -332,26 +335,8 @@ function ItemEditor({
           onChange={(event) => setName(event.target.value)}
           className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white outline-none focus:border-indigo-400/60"
         />
-        <fieldset className="space-y-2">
-          <legend className="text-xs text-slate-400">Allowed roles (choose up to 2)</legend>
-          <div className="grid grid-cols-2 gap-1.5">
-            {[...new Set([...requiredRoles, ...roles])].map((role) => (
-              <label key={role} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/70 px-2 py-1.5 text-xs capitalize text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={requiredRoles.includes(role)}
-                  disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
-                  onChange={(event) =>
-                    setRequiredRoles((current) =>
-                      event.target.checked ? [...current, role] : current.filter((entry) => entry !== role)
-                    )
-                  }
-                />
-                {role}{!roles.includes(role) ? ' (not on roster)' : ''}
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        <ItemSubrolePicker value={requiredRoles} onChange={setRequiredRoles} disabled={saving} />
+        {!resolveItemSubroles(requiredRoles) && <p className="text-xs text-amber-200">Select supported subroles above before saving this item.</p>}
         <label className="sr-only" htmlFor={`item-boss-${item.id}`}>Boss type</label>
         <select
           id={`item-boss-${item.id}`}
@@ -410,7 +395,6 @@ function ItemEditor({
 export default function AuctionItemsPanel({ active = true }: { active?: boolean }) {
   const mounted = useRef(true);
   const [items, setItems] = useState<CatalogItem[]>([]);
-  const [roles, setRoles] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
@@ -428,7 +412,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
     try {
       const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
       if (!mounted.current || version !== clientDataVersion()) return;
-      setItems(result.items); setRoles(result.roles); setError('');
+      setItems(result.items); setError('');
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
       throw cause;
@@ -439,7 +423,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
 
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setItems([]); setRoles([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
+    const clear = () => { setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => {
       mounted.current = false;
@@ -532,7 +516,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
       {createOpen && <section id="create-catalog-form" className="surface space-y-4 p-5 sm:p-6">
         <div>
           <h3 className="font-bold text-white">Add catalog item</h3>
-          <p className="mt-1 text-xs text-slate-400">Save the role and boss type with each item; Base and Prime are grouped as Prot. Images are optimized to WebP.</p>
+          <p className="mt-1 text-xs text-slate-400">Choose a boss or Legacy, then select eligible subroles. Everyone opens bidding to every linked toon.</p>
         </div>
         <form onSubmit={createItem} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2">
           <input
@@ -544,26 +528,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
             placeholder="Item name"
             className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm text-white outline-none focus:border-indigo-400/60"
           />
-          <fieldset className="space-y-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
-            <legend className="px-1 text-xs text-slate-400">Allowed roles (up to 2)</legend>
-            <div className="grid grid-cols-2 gap-1">
-              {roles.map((role) => (
-                <label key={role} className="flex items-center gap-1.5 text-xs capitalize text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={requiredRoles.includes(role)}
-                    disabled={!requiredRoles.includes(role) && requiredRoles.length >= 2}
-                    onChange={(event) =>
-                      setRequiredRoles((current) =>
-                        event.target.checked ? [...current, role] : current.filter((entry) => entry !== role)
-                      )
-                    }
-                  />
-                  {role}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <ItemSubrolePicker value={requiredRoles} onChange={setRequiredRoles} disabled={saving} />
           <label className="sr-only" htmlFor="new-item-boss">Boss type</label>
           <select
             id="new-item-boss"
@@ -618,7 +583,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
         ) : (
           <div className="grid gap-3">
             {filteredItems.map((item) => (
-              <ItemEditor key={item.id} item={item} roles={roles} onSaved={updateItem} onRemoved={removeItem} />
+              <ItemEditor key={item.id} item={item} onSaved={updateItem} onRemoved={removeItem} />
             ))}
           </div>
         )}

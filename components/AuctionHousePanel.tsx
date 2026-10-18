@@ -8,7 +8,7 @@ import RoleBadge from '@/components/RoleBadge';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { DkpCellIssue } from '@/lib/sheetRoster';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
-import { normalizeAuctionRole } from '@/lib/auctionRules';
+import { normalizeAuctionRole, canRoleBid, resolveItemSubroles } from '@/lib/auctionRules';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
@@ -409,7 +409,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const submitBid = async (auction: Auction) => {
     const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
     const eligibleToons = data?.toons.filter((toon) =>
-      auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
+      canRoleBid(toon.subClass, auctionRoles),
     ) ?? [];
     const rowIndex = selectedToons[auction.id] ?? eligibleToons[0]?.rowIndex;
     const rawAmount = bidAmounts[auction.id]?.trim() ?? '';
@@ -597,12 +597,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   );
   const visibleItems = filteredItems.slice(0, itemResultLimit);
   const selectedCatalogItem = data.items.find((item) => item.id === selectedItemId);
-  const selectedItemRoleIsValid = Boolean(
-    Boolean(selectedCatalogItem?.requiredRoles.length) &&
-    selectedCatalogItem!.requiredRoles.every((requiredRole) => data.roles.some((role) =>
-      normalizeAuctionRole(role) === normalizeAuctionRole(requiredRole),
-    )),
-  );
+  const selectedItemRoleIsValid = Boolean(selectedCatalogItem && resolveItemSubroles(selectedCatalogItem.requiredRoles));
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
   );
@@ -617,8 +612,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     return bid ? [bid.nickname] : [];
   }))].sort((first, second) => first.localeCompare(second));
   const filteredAuctions = allAuctions.filter((auction) =>
-    (!auctionRoleFilter || (auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''])
-      .some((role) => normalizeAuctionRole(role) === normalizeAuctionRole(auctionRoleFilter))) &&
+    (!auctionRoleFilter || canRoleBid(auctionRoleFilter, auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''])) &&
     (!auctionBossFilter || auction.bossType === auctionBossFilter) &&
     (!auctionHolderFilter ||
       auction.winner?.nickname === auctionHolderFilter ||
@@ -785,13 +779,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                   />
                   <div className="min-w-0">
                     <p className="break-words text-sm font-bold leading-snug text-white">{selectedCatalogItem.name}</p>
-                    <p className="mt-1 break-words text-xs text-slate-400">
-                      {selectedCatalogItem.requiredRoles.join(' / ') || 'Role not set'} · {selectedCatalogItem.bossType}
-                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">{selectedCatalogItem.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="text-xs text-slate-400">{selectedCatalogItem.bossType}</span></div>
                     {!selectedItemRoleIsValid && (
                       <p className="mt-1 text-xs leading-snug text-amber-200">
                         {selectedCatalogItem.requiredRoles.length
-                          ? 'This saved role is not on the current roster. Update it in Items before posting.'
+                          ? 'Choose supported subroles with icons in Items before posting.'
                           : 'A role must be set for this item in Items before it can be posted.'}
                       </p>
                     )}
@@ -987,6 +979,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               <option value="Gele">Gele</option>
               <option value="Dino">Dino</option>
               <option value="Crom">Crom</option>
+              <option value="Legacy">Legacy</option>
               <option value="Unassigned">Unassigned</option>
             </select>
           </label>
@@ -1043,7 +1036,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               const endingSoon = isActive && secondsLeft <= 30;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
               const eligibleToons = data.toons.filter((toon) =>
-                toon.canBid !== false && toon.available !== null && auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
+                toon.canBid !== false && toon.available !== null && canRoleBid(toon.subClass, auctionRoles),
               );
               const selectedRow = selectedToons[auction.id] ?? eligibleToons[0]?.rowIndex;
               const selectedToon = eligibleToons.find((toon) => toon.rowIndex === selectedRow);
@@ -1150,7 +1143,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                           </>
                         ) : (
                           <p className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-xs text-slate-400">
-                            {data.canBidWeekly ? `You need a linked ${auctionRoles.join(' or ')} toon to bid.` : `You need ${data.weeklyMinimum} weekly DKP across your toons to bid.`}
+                            {data.canBidWeekly ? (auctionRoles.some((role) => normalizeAuctionRole(role) === 'everyone') ? 'Link a toon with valid DKP to bid on this item.' : `You need a linked ${auctionRoles.join(' or ')} toon to bid.`) : `You need ${data.weeklyMinimum} weekly DKP across your toons to bid.`}
                           </p>
                         )}
                       </div>

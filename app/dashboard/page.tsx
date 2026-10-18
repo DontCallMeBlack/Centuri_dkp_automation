@@ -45,12 +45,12 @@ interface RosterSyncStatus {
 }
 
 const BOSSES = [
-  { name: 'Base', points: 1, tier: 'Tier 1' },
-  { name: 'Prime', points: 2, tier: 'Tier 2' },
-  { name: 'Bt', points: 5, tier: 'Tier 3' },
-  { name: 'Gele', points: 6, tier: 'Tier 4' },
-  { name: 'Dino', points: 7, tier: 'Tier 5' },
-  { name: 'Crom', points: 12, tier: 'Tier 6' },
+  { name: 'Base', points: 1 },
+  { name: 'Prime', points: 2 },
+  { name: 'Bt', points: 5 },
+  { name: 'Gele', points: 6 },
+  { name: 'Dino', points: 7 },
+  { name: 'Crom', points: 12 },
 ];
 
 const ROLE_ORDER = [
@@ -377,7 +377,7 @@ function Dashboard() {
                   >
                     {BOSSES.map((boss) => (
                       <option key={boss.name} value={boss.name}>
-                        {boss.name} · +{boss.points} DKP · {boss.tier}
+                        {boss.name} · +{boss.points} DKP
                       </option>
                     ))}
                   </select>

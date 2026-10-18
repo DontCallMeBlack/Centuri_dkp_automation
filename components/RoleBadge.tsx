@@ -1,4 +1,4 @@
-import { BowArrow, Crown, Flame, HeartHandshake, Leaf, Shield, Snowflake, Sword, Swords, UserRound, WandSparkles } from 'lucide-react';
+import { BowArrow, Crown, Flame, HeartHandshake, Leaf, Shield, Snowflake, Sword, Swords, UserRound, Users, WandSparkles } from 'lucide-react';
 
 const ranks = {
   chief: { icon: Crown, tone: 'role-gold', label: 'Chief' },
@@ -7,6 +7,7 @@ const ranks = {
   clansman: { icon: UserRound, tone: 'role-slate', label: 'Clansman' },
 };
 const classes = {
+  everyone: { icon: Users, tone: 'role-cyan' },
   ranger: { icon: BowArrow, tone: 'role-gold' },
   'dps rogue': { icon: Sword, tone: 'role-violet' },
   'fire mage': { icon: Flame, tone: 'role-orange' },
