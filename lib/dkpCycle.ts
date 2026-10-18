@@ -1,3 +1,5 @@
+import { DkpIntegrityError } from './dkpAccounting.ts';
+
 const DKP_TIME_ZONE = 'America/New_York';
 
 export interface WeeklyDkpRosterRow {
@@ -5,8 +7,8 @@ export interface WeeklyDkpRosterRow {
   owner: string;
   account: string;
   weeklyEarned: number;
-  earned: number;
-  available: number;
+  earned: number | null;
+  available: number | null;
   fiveWeekActivity: number;
 }
 
@@ -43,20 +45,23 @@ export function buildWeeklyDkpResetPlan(
   const historyByRow = new Map(nextHistory.map((entry) => [entry.rowIndex, entry]));
   const updates = roster.flatMap((record) => {
     const history = historyByRow.get(record.rowIndex)!;
+    if (record.weeklyEarned !== 0 && (record.earned === null || record.available === null)) {
+      throw new DkpIntegrityError(`Weekly rollover needs valid earned and available DKP in F${record.rowIndex} and H${record.rowIndex}. Correct this toon’s balances first.`);
+    }
     return [
       { range: `${sheetName}!D${record.rowIndex}`, values: [[0]] },
       { range: `${sheetName}!E${record.rowIndex}`, values: [[0]] },
       { range: `${sheetName}!I${record.rowIndex}`, values: [[history.weeks.reduce((sum, points) => sum + points, 0)]] },
       ...(record.weeklyEarned === 0 ? [] : [
-        { range: `${sheetName}!F${record.rowIndex}`, values: [[record.earned + record.weeklyEarned]] },
-        { range: `${sheetName}!H${record.rowIndex}`, values: [[record.available + record.weeklyEarned]] },
+        { range: `${sheetName}!F${record.rowIndex}`, values: [[record.earned! + record.weeklyEarned]] },
+        { range: `${sheetName}!H${record.rowIndex}`, values: [[record.available! + record.weeklyEarned]] },
       ]),
     ];
   });
   return { updates, weeklyActivityHistory: nextHistory };
 }
 
-export function initializeWeeklyDkpActivityHistory(roster: WeeklyDkpRosterRow[]): WeeklyDkpActivityHistory[] {
+export function initializeWeeklyDkpActivityHistory(roster: Pick<WeeklyDkpRosterRow, 'rowIndex' | 'owner' | 'account' | 'fiveWeekActivity'>[]): WeeklyDkpActivityHistory[] {
   return roster.map((record) => ({
     rowIndex: record.rowIndex,
     owner: record.owner,
@@ -178,7 +183,7 @@ export function getDkpElapsedWeeks(start: Date, end: Date) {
 
 /** Correct the completed week's bucket when attendance is edited after rollover. */
 export function buildHistoricalDkpActivityCorrection(
-  roster: WeeklyDkpRosterRow[],
+  roster: Array<{ rowIndex: number; owner: string; account: string; fiveWeekActivity: number | null }>,
   history: WeeklyDkpActivityHistory[],
   adjustments: Array<{ rowIndex: number; points: number }>,
   earnedAt: Date,
@@ -191,6 +196,7 @@ export function buildHistoricalDkpActivityCorrection(
   const updates = adjustments.map(({ rowIndex, points }) => {
     const record = roster.find((entry) => entry.rowIndex === rowIndex);
     if (!record) throw new Error('Roster changed while correcting historical DKP activity.');
+    if (record.fiveWeekActivity === null) throw new DkpIntegrityError(`DKP cell I${rowIndex} must be corrected before changing this toon’s historical attendance.`);
     const matches = nextHistory.filter((entry) => identityKey(entry) === identityKey(record));
     let entry = matches.find((candidate) => candidate.rowIndex === rowIndex) ?? (matches.length === 1 ? matches[0] : undefined);
     if (!entry) {

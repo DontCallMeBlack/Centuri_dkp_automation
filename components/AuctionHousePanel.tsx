@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
+import RosterDataIssues from '@/components/RosterDataIssues';
+import type { DkpCellIssue } from '@/lib/sheetRoster';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
 import { normalizeAuctionRole } from '@/lib/auctionRules';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
@@ -15,8 +17,9 @@ interface AuctionToon {
   account: string;
   subClass: string;
   weeklyEarned: number;
-  available: number;
+  available: number | null;
   heldPoints: number;
+  canBid?: boolean;
 }
 
 interface CatalogItem {
@@ -69,6 +72,7 @@ interface Auction {
 }
 
 interface AuctionData {
+  dkpIssues?: DkpCellIssue[];
   manager: boolean;
   weeklyEarnedTotal: number;
   weeklyMinimum: number;
@@ -1012,13 +1016,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               const endingSoon = isActive && secondsLeft <= 30;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
               const eligibleToons = data.toons.filter((toon) =>
-                auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
+                toon.canBid !== false && toon.available !== null && auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role)),
               );
               const selectedRow = selectedToons[auction.id] ?? eligibleToons[0]?.rowIndex;
               const selectedToon = eligibleToons.find((toon) => toon.rowIndex === selectedRow);
               const toonMaximumBid = (toon: AuctionToon) => Math.max(
                 0,
-                toon.available - toon.heldPoints + (
+                (toon.available ?? 0) - toon.heldPoints + (
                   auction.highBid?.isMine && auction.highBid.rowIndex === toon.rowIndex ? auction.highBid.amount : 0
                 ),
               );

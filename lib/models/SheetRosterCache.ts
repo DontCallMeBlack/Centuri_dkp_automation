@@ -1,17 +1,7 @@
 import mongoose, { Model, Schema } from 'mongoose';
+import type { ReadableRosterRecord } from '../sheetRoster';
 
-export interface ISheetRosterRecord {
-  rowIndex: number;
-  owner: string;
-  account: string;
-  subClass: string;
-  weeklyEarned: number;
-  weeklySpent: number;
-  earned: number;
-  spent: number;
-  available: number;
-  fiveWeekActivity?: number;
-}
+export interface ISheetRosterRecord extends ReadableRosterRecord {}
 
 export interface ISheetRosterCache extends mongoose.Document {
   cacheKey: string;
@@ -38,12 +28,13 @@ const SheetRosterRecordSchema = new Schema<ISheetRosterRecord>({
   owner: { type: String, required: true },
   account: { type: String, default: '' },
   subClass: { type: String, default: '' },
-  weeklyEarned: { type: Number, required: true },
-  weeklySpent: { type: Number, required: true },
-  earned: { type: Number, required: true },
-  spent: { type: Number, required: true },
-  available: { type: Number, required: true },
-  fiveWeekActivity: { type: Number, required: true, default: 0 },
+  weeklyEarned: { type: Number, default: null },
+  weeklySpent: { type: Number, default: null },
+  earned: { type: Number, default: null },
+  spent: { type: Number, default: null },
+  available: { type: Number, default: null },
+  fiveWeekActivity: { type: Number, default: null },
+  dkpIssues: { type: [{ field: String, cell: String, value: String, message: String, _id: false }], default: [] },
 }, { _id: false });
 
 const SheetRosterCacheSchema: Schema<ISheetRosterCache> = new Schema({

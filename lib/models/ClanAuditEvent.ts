@@ -1,6 +1,8 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
-export type ClanAuditEventType = 'promotion' | 'demotion' | 'member-removal';
+export type ClanAuditEventType = 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'account-approval' | 'account-denial';
+
+interface AuditToon { rowIndex?: number; owner: string; account: string }
 
 export interface IClanAuditEvent extends Document {
   eventType: ClanAuditEventType;
@@ -11,13 +13,15 @@ export interface IClanAuditEvent extends Document {
   targetNickname: string;
   previousRole: string;
   newRole?: string;
+  addedToons?: AuditToon[];
+  removedToons?: AuditToon[];
   createdAt: Date;
 }
 
 const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   eventType: {
     type: String,
-    enum: ['promotion', 'demotion', 'member-removal'],
+    enum: ['promotion', 'demotion', 'member-removal', 'toon-links', 'account-approval', 'account-denial'],
     required: true,
   },
   actorUserId: { type: Schema.Types.ObjectId, required: true },
@@ -27,6 +31,8 @@ const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   targetNickname: { type: String, required: true },
   previousRole: { type: String, required: true },
   newRole: { type: String },
+  addedToons: { type: [new Schema({ rowIndex: Number, owner: String, account: String }, { _id: false })], default: undefined },
+  removedToons: { type: [new Schema({ rowIndex: Number, owner: String, account: String }, { _id: false })], default: undefined },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
 ClanAuditEventSchema.index({ createdAt: -1 });
