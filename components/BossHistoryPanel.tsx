@@ -165,7 +165,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
   const deleteAward = async (award: BossAward) => {
     if (!window.confirm(
-      `Delete the ${award.bossName} kill? This removes ${award.points} DKP from each of its ${award.participants.length} toon(s) and cannot be undone.`,
+      `Delete the ${award.bossName} kill? This removes ${award.points} DKP from each participant still on the roster. Removed toons are skipped because their DKP was already forfeited. This cannot be undone.`,
     )) {
       return;
     }

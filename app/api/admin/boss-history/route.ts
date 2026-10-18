@@ -25,6 +25,15 @@ function resolveParticipant(participant: IBossAwardParticipant, roster: Awaited<
   return record;
 }
 
+function resolveHistoricalParticipant(participant: IBossAwardParticipant, roster: Awaited<ReturnType<typeof getSheetRoster>>) {
+  const matches = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(participant));
+  if (matches.length === 0) return undefined;
+  const record = matches.find((candidate) => candidate.rowIndex === participant.rowIndex)
+    ?? (matches.length === 1 ? matches[0] : undefined);
+  if (!record) throw new DkpIntegrityError(`Toon "${participant.account || participant.owner}" is ambiguous on the roster. A manager must reconcile it before editing this award.`);
+  return record;
+}
+
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser();
@@ -96,7 +105,6 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
 
     if (award.status === 'applied') {
       const roster = await getSheetRoster({ fresh: true });
-      for (const participant of award.participants) resolveParticipant(participant, roster);
       const rosterByRow = new Map(roster.map((record) => [record.rowIndex, record]));
       const nextParticipants = selectedRows.map((rowIndex) => rosterByRow.get(rowIndex));
       if (nextParticipants.some((record) => record === undefined)) {
@@ -105,7 +113,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
       const claimed = await withClanAdministrationTransaction(async (session) => {
         const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
         if (!actor) throw new RequestValidationError('Your role no longer permits attendance changes.', 403);
-        const keys = [...award!.participants, ...nextParticipants.filter((record) => record !== undefined)].map(getSheetRecordKey);
+        const keys = nextParticipants.filter((record) => record !== undefined).map((record) => getSheetRecordKey(record!));
         if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: keys } }).session(session)) throw new RequestValidationError('This kill includes a permanently removed toon. Its forfeited DKP cannot be changed through old attendance records.', 409);
         return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied' }, {
         $set: {
@@ -127,23 +135,21 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
       return NextResponse.json({ error: 'Another attendance change is in progress. Resume its original request before making another change.' }, { status: 409 });
     }
     const operationKey = `boss-history:${awardId}:${requestId}`;
-    let adjustmentCount = 0;
+    const roster = await getSheetRoster({ fresh: true });
+    const resolvedPrevious = award.participants.map((participant) => resolveHistoricalParticipant(participant, roster));
+    const skippedParticipantCount = resolvedPrevious.filter((record) => record === undefined).length;
+    const previous = new Map(resolvedPrevious.flatMap((record) => record ? [[getSheetRecordKey(record), record] as const] : []));
+    const next = new Map(pending.participants.map((participant) => {
+      const record = resolveParticipant(participant, roster);
+      return [getSheetRecordKey(record), record];
+    }));
+    const adjustments = [
+      ...[...next].filter(([identity]) => !previous.has(identity)).map(([, record]) => ({ ...record, points: award!.points })),
+      ...[...previous].filter(([identity]) => !next.has(identity)).map(([, record]) => ({ ...record, points: -award!.points })),
+    ];
+    const adjustmentCount = adjustments.length;
     let financialOperationApplied = await isDkpMutationApplied(operationKey);
     if (!financialOperationApplied) {
-      const roster = await getSheetRoster({ fresh: true });
-      const previous = new Map(award.participants.map((participant) => {
-        const record = resolveParticipant(participant, roster);
-        return [record.rowIndex, record];
-      }));
-      const next = new Map(pending.participants.map((participant) => {
-        const record = resolveParticipant(participant, roster);
-        return [record.rowIndex, record];
-      }));
-      const adjustments = [
-        ...[...next].filter(([rowIndex]) => !previous.has(rowIndex)).map(([, record]) => ({ ...record, points: award!.points })),
-        ...[...previous].filter(([rowIndex]) => !next.has(rowIndex)).map(([, record]) => ({ ...record, points: -award!.points })),
-      ];
-      adjustmentCount = adjustments.length;
       if (adjustments.length) {
         await adjustPlayersDKP(adjustments, {
           mode: 'weekly-earned', earnedAt: award.createdAt, idempotencyKey: operationKey, actorUserId: user._id.toString(),
@@ -175,7 +181,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
     return NextResponse.json({
       success: true,
       message: kind === 'delete'
-        ? `Deleted ${award.bossName} kill and reversed its attendance DKP.`
+        ? `Deleted ${award.bossName} kill and reversed DKP for ${adjustmentCount} available toon(s)${skippedParticipantCount ? `; skipped ${skippedParticipantCount} removed toon(s)` : ''}.`
         : `Updated ${award.bossName} attendance; ${adjustmentCount} toon(s) had DKP adjusted.`,
     });
   } catch (error: unknown) {
