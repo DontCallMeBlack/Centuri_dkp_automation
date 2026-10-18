@@ -53,6 +53,7 @@ The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, 
 | `/api/auth/logout` | `POST` revoke the current server session and expire its HttpOnly cookie. |
 | `/api/dkp` | `GET` roster, linked approved members, user role, and sheet sync status; `POST` records a boss attendance award and changes DKP. |
 | `/api/admin/requests` | `GET` administration data; `POST` approve, deny, link, unlink, remove, or change a role. Chief/General only. |
+| `/api/admin/toons` | `GET` clan roster and pending change; `POST` create/remove a toon or finish an interrupted change. Chief/General only. |
 | `/api/admin/boss-history` | `GET` awards; `PATCH` edit attendance; `DELETE` a boss award. Reads require a session; mutations require Chief/General/Guardian. |
 | `/api/auction` | `GET` auction data, `GET ?live=1` lightweight auction updates, `GET ?includeArchive=1` full history, and `POST` auction actions. Any approved account may read/bid; individual actions have role and ownership checks. |
 | `/api/auction/items` | `GET`, `POST`, `PATCH`, `DELETE` the saved-item catalog. Chief/General/Guardian only. |
@@ -486,6 +487,22 @@ This section records the server-side checks that sit behind the screen behavior 
 - `GET /api/auction/image` requires a valid session, valid item ID, and nonnegative integer image index. Invalid IDs/indices return 400; missing item/image returns 404. Successful responses return image bytes rather than JSON.
 
 The website’s client performs useful validation and disables many invalid controls, but the server checks above remain authoritative. The code does not define a formal OpenAPI schema or shared typed API contract.
+
+## 17. Clan toon management
+
+- Members & access has a **Clan toons** section for approved Chiefs and Generals. Guardians and Clansmen cannot read or mutate this management endpoint.
+- The list searches toon name, owner, subrole and linked account, shows available DKP and linked accounts, and refreshes automatically while visible.
+- Adding requires a toon name and owner of 1–80 characters, plus exactly one of the nine supported toon subroles. Everyone is an item-only eligibility option. Names reject control characters; Google writes use RAW input so names cannot become formulas.
+- A duplicate live toon name, ignoring case, is rejected. A newly created toon has D–I explicitly set to numeric zero: weekly earned, weekly spent, all-time earned, all-time spent, available DKP and five-week activity. It remains unlinked even when its owner matches an old owner-wide account assignment; existing links are narrowed to explicit identities.
+- Creation selects an unused row within 3–1000, excluding rows referenced by saved links, boss awards, historical bids, DKP journals and earlier roster operations. It does not shift other rows. Lack of safe capacity returns a conflict.
+- Removal clears A–I in the selected roster row without shifting rows. It forfeits every DKP/activity value for that toon, including a nonzero available balance, and removes its account links. It does not delete the login account or other toons. The dialog shows the owner, linked accounts and balance, and requires an explicit permanent-forfeiture checkbox.
+- Reserved bids, pending delivery, unfinished boss awards/attendance edits, ambiguous identities and unverified legacy reservations block the operation until resolved. No reservation is silently released. Completed auction and boss history remains intact.
+- A removed owner/toon identity is permanently retired from app-created roster entries. An identity with an earlier roster lifecycle or retained award history cannot be recreated as brand new to inherit old award credit. Stale linking and boss-award requests are rejected for retired identities.
+- Each mutation requires a UUID v4 request ID; actor-scoped browser session storage retains opaque retry IDs. A permanent MongoDB roster receipt records the authorized actor, request fingerprint, exact before/after row and planned link changes before writing to Sheets.
+- Roster writes use the shared renewable DKP ledger lock and administration fence. Pending roster changes prevent conflicting administration mutations. Recovery accepts only the exact before or after Sheet state, finishes links, removes the retired activity bucket, invalidates the roster cache and writes one audit event in a MongoDB transaction. A mismatched external edit pauses recovery for reconciliation.
+- Creation/removal audit entries identify the acting manager and toon/owner. Removal retains the six original DKP/activity values in the audit record. The interface shows available and weekly-earned DKP at removal.
+- Interrupted changes can be completed with **Finish interrupted change** by a Chief or General. The next financial worker also recovers a staged change before starting new financial work. Direct Sheet edits still require coordinated maintenance; Google Sheets and MongoDB do not share one atomic transaction.
+- Management reads permit 120 requests per member per minute; roster writes permit 20. Mutations require the same origin and bounded JSON, and respond with safe errors.
 
 ---
 

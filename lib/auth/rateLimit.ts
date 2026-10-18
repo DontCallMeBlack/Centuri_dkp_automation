@@ -16,8 +16,8 @@ async function consume(key: string, limit: number, windowMs: number): Promise<nu
   return record.count > limit ? Math.max(1, Math.ceil((expiresAt.getTime() - now) / 1000)) : 0;
 }
 
-export async function limitMemberRequests(userId: string, action: 'auction-read' | 'auction-write' | 'catalog-write' | 'boss-write') {
-  const limit = action === 'auction-read' ? 120 : action === 'auction-write' ? 30 : 20;
+export async function limitMemberRequests(userId: string, action: 'auction-read' | 'auction-write' | 'catalog-write' | 'boss-write' | 'roster-read' | 'roster-write') {
+  const limit = action.endsWith('-read') ? 120 : action === 'auction-write' ? 30 : 20;
   const retry = await consume(`member:${action}:${userId}`, limit, 60_000);
   if (retry) throw new RequestValidationError(`Too many requests. Try again in ${retry} seconds.`, 429);
 }

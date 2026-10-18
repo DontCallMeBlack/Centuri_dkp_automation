@@ -5,6 +5,7 @@ import AuthSession from '@/lib/models/AuthSession';
 import Auction, { type IAuction } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
+import RosterMutation from '@/lib/models/RosterMutation';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { CLAN_ROLES, canChangeMemberRole, isClanRole, validRosterRows } from '@/lib/auth/permissions';
@@ -60,7 +61,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, managerRole: manager.role, managerId: manager._id.toString(),
       pendingUsers: pendingUsers.map(includeRows), members: members.map(includeRows), roster,
       ...(linkDiagnostics ? { linkDiagnostics } : {}),
-      auditEvents: auditEvents.map(({ _id, ...event }) => ({ ...event, id: _id.toString(), targetUserId: event.targetUserId.toString(), actorUserId: event.actorUserId.toString() })),
+      auditEvents: auditEvents.map(({ _id, ...event }) => ({ ...event, id: _id.toString(), targetUserId: event.targetUserId?.toString(), actorUserId: event.actorUserId.toString() })),
     }, { headers: privateHeaders });
   } catch (error) { return requestErrorResponse(error, 'Unable to load clan administration. Please retry.'); }
 }
@@ -225,6 +226,7 @@ export async function POST(request: Request) {
       const records = nextRows.map((row) => byRow.get(row));
       if (records.some((record) => !record)) throw new RequestValidationError('A selected toon no longer exists. Refresh the roster.', 409);
       const selected = records.filter((record) => record !== undefined);
+      if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: selected.map(getSheetRecordKey) } }).session(session)) throw new RequestValidationError('A selected toon was permanently removed. Refresh the roster before changing links.', 409);
       if (selected.some((record) => roster.filter((other) => getSheetRecordKey(other) === getSheetRecordKey(record)).length > 1)) {
         throw new RequestValidationError('Duplicate owner/toon identities exist in the sheet. Resolve them before linking.', 409);
       }
