@@ -109,7 +109,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       if (!mountedRef.current || version !== clientDataVersion() || sequence !== historySequence.current) return;
       const combined = [...new Map([...awards, ...data.awards].map((award) => [award.id, award])).values()];
       pageCount.current += 1; applyData({ ...data, awards: combined });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Older kills could not be loaded.'); }
+    } catch (cause) { if (mountedRef.current && version === clientDataVersion() && sequence === historySequence.current) setError(cause instanceof Error ? cause.message : 'Older kills could not be loaded.'); }
     finally { if (historyPending.current === sequence) historyPending.current = 0; if (version === clientDataVersion() && sequence === historySequence.current) setLoadingMore(false); }
   };
 

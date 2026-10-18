@@ -4,6 +4,7 @@ import BossAward, { type IBossAwardParticipant } from '@/lib/models/BossAward';
 import { getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import User from '@/lib/models/User';
+import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { adjustPlayersDKP, getSheetRoster, isDkpMutationApplied } from '@/lib/googleSheets';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
@@ -72,6 +73,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageBossHistory(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    await limitMemberRequests(user._id.toString(), 'boss-write');
     const body = await readJsonObject(req);
     const { awardId, requestId } = body;
     const selectedRows = kind === 'delete' ? [] : body.selectedRows;
