@@ -11,10 +11,9 @@ import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/li
 
 
 export async function GET() {
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   try {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const [rosterSnapshot, activeUsers] = await Promise.all([
       getSheetRosterSnapshot(),
       User.find({ status: 'approved' })
@@ -57,13 +56,10 @@ export async function GET() {
 export async function POST(req: Request) {
   const rejected = guardMutationRequest(req);
   if (rejected) return rejected;
-  const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!canManageClan(user.role) && user.role !== 'guardian') {
-    return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-  }
-
   try {
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!canManageClan(user.role) && user.role !== 'guardian') return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
     const { bossName, selectedRows, requestId } = await readJsonObject(req);
     if (!isDkpRequestId(requestId)) {
       return NextResponse.json({ error: 'A valid requestId UUID is required. Retry interrupted actions with the same request ID.' }, { status: 400 });

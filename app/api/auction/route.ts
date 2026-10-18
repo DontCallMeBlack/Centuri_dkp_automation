@@ -14,6 +14,7 @@ import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
+import { requireRosterValues } from '@/lib/sheetRoster';
 import {
   AUCTION_DURATION_MS,
   AUCTION_WEEKLY_MINIMUM,
@@ -280,6 +281,7 @@ export async function GET(request: Request) {
         heldPoints: holds.filter((hold) => holdMatchesIdentity(hold, record) ||
           (hold.owner === undefined && hold.rowIndex === record.rowIndex))
           .reduce((sum, hold) => sum + hold.heldPoints, 0),
+        canBid: !record.dkpIssues.some((issue) => ['weeklySpent', 'spent', 'available'].includes(issue.field)) && record.available !== null,
       }));
     const weeklyEarnedTotal = linkedToons.reduce((total, record) => total + record.weeklyEarned, 0);
 
@@ -295,6 +297,7 @@ export async function GET(request: Request) {
         refreshDelayed: rosterSnapshot.refreshDelayed,
       },
       roles,
+      dkpIssues: roster.flatMap((record) => record.dkpIssues),
       toons: linkedToons,
       items: items.filter((item) => item.isListed !== false).map(({ _id, name, requiredRoles, requiredRole }) => ({
         id: _id.toString(),
@@ -732,6 +735,7 @@ export async function POST(req: Request) {
           if (!toon || !auctionRoles.some((role) => normalizeAuctionRole(toon.subClass) === normalizeAuctionRole(role))) {
             throw new RequestValidationError(`Only a linked ${auctionRoles.join(' or ')} toon can bid.`, 403);
           }
+          requireRosterValues(toon, ['weeklySpent', 'spent', 'available']);
           if (roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(toon)).length !== 1) {
             throw new RequestValidationError('This toon has a duplicate roster identity. Ask a manager to correct the roster.', 409);
           }

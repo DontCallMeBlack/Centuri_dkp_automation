@@ -17,7 +17,7 @@ import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import User from '@/lib/models/User';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
-import { parseSheetRoster } from '@/lib/sheetRoster';
+import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -106,7 +106,7 @@ async function readSheetRows(sheets = createSheetsClient()) {
 }
 
 function rosterFromRows(rows: string[][]): ISheetRosterRecord[] {
-  return parseSheetRoster(rows);
+  return parseSheetRoster(rows, { allowInvalid: true });
 }
 
 async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
@@ -283,7 +283,7 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
     // The first transfer happens at the next Sunday boundary.
     if (!cache.weeklyResetFor) {
       const roster = await fetchSheetRoster();
-      const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
+      const activityRoster = roster.filter((record) => record.fiveWeekActivity !== null).map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity! }));
       const initialized = await SheetRosterCache.updateOne(
         { cacheKey, weeklyResetLockId: lockId, weeklyResetFor: { $exists: false } },
         {
@@ -299,7 +299,10 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
 
     const rows = await readSheetRows(sheets);
     const roster = rosterFromRows(rows);
-    const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
+    const activityRoster = roster.map((record) => {
+      requireRosterValues(record, ['weeklyEarned', 'fiveWeekActivity']);
+      return record;
+    });
     const resetPlan = buildWeeklyDkpResetPlan(
       activityRoster,
       SHEET_NAME,
@@ -314,7 +317,7 @@ async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string
       const record = roster.find((entry) => entry.rowIndex === hold.rowIndex);
       if (!record || !Number.isFinite(hold.heldPoints) || hold.heldPoints < 0 ||
         (hold.owner !== undefined && getSheetRecordKey(record) !== getSheetRecordKey({ owner: hold.owner, account: hold.account ?? '' })) ||
-        record.available + record.weeklyEarned < hold.heldPoints) {
+        record.available === null || record.weeklyEarned === null || record.available + record.weeklyEarned < hold.heldPoints) {
         throw new DkpIntegrityError('Weekly rollover would invalidate an auction reservation. A manager must reconcile the roster and holds first.');
       }
     }
@@ -432,7 +435,8 @@ function serializeRosterRecord(record: ISheetRosterRecord): ISheetRosterRecord {
     earned: record.earned,
     spent: record.spent,
     available: record.available,
-    fiveWeekActivity: record.fiveWeekActivity ?? 0,
+    fiveWeekActivity: record.fiveWeekActivity === undefined ? 0 : record.fiveWeekActivity,
+    dkpIssues: record.dkpIssues ?? [],
   };
 }
 
@@ -443,7 +447,8 @@ function isRosterCacheFresh(fetchedAt: Date | undefined, now: number) {
 export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
   await dbConnect();
   const cacheKey = getSpreadsheetId();
-  await ensureWeeklyDkpReset();
+  // Read-only views must remain available while a different toon's data needs
+  // repair. Rollover/recovery still runs under the ledger lock before writes.
   const now = Date.now();
   const staleAtRequest = await ensureSheetRosterCacheDocument(cacheKey);
 
@@ -672,9 +677,9 @@ export async function adjustPlayersDKP(
     let weeklyActivityHistory;
     if (historical && options.earnedAt) {
       const cache = await SheetRosterCache.findOne({ cacheKey: spreadsheetId }).lean();
-      const activityRoster = roster.map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity ?? 0 }));
+      const activityRoster = roster;
       const correction = buildHistoricalDkpActivityCorrection(
-        activityRoster, cache?.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster),
+        activityRoster, cache?.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster.filter((record) => record.fiveWeekActivity !== null).map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity! }))),
         targets, options.earnedAt, now, SHEET_NAME,
       );
       updates.push(...correction.updates);

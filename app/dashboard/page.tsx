@@ -9,6 +9,8 @@ import Dialog from '@/components/Dialog';
 import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
 import ToonDkpCards from '@/components/ToonDkpCards';
+import RosterDataIssues from '@/components/RosterDataIssues';
+import type { ReadableRosterRecord } from '@/lib/sheetRoster';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { useRouter } from 'next/navigation';
@@ -17,17 +19,7 @@ const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), 
 const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface /> });
 const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface /> });
 
-interface RosterMember {
-  rowIndex: number;
-  owner: string;
-  account: string;
-  subClass: string;
-  weeklyEarned: number;
-  weeklySpent: number;
-  earned: number;
-  spent: number;
-  available: number;
-}
+type RosterMember = ReadableRosterRecord;
 
 interface ClanMember {
   nickname: string;
@@ -212,7 +204,7 @@ function Dashboard() {
           ? 1
           : firstRole.localeCompare(secondRole, undefined, { sensitivity: 'base' });
     return roleDifference ||
-      second.available - first.available ||
+      (second.available ?? -Infinity) - (first.available ?? -Infinity) ||
       first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
       (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
   });
@@ -238,7 +230,7 @@ function Dashboard() {
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(sessionUser?.role ?? userSession?.role ?? '');
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
-  const ownAvailable = ownToons.reduce((sum,toon) => sum+toon.available,0);
+  const ownAvailable = ownToons.some((toon) => toon.available === null) ? null : ownToons.reduce((sum,toon) => sum+toon.available!,0);
 
   return (
     <div className="space-y-6">
@@ -247,10 +239,11 @@ function Dashboard() {
         {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => { setAwardError(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}
       </div>
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
+      <RosterDataIssues issues={roster.flatMap((toon) => toon.dkpIssues ?? [])} />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan'],[Wallet,'My available DKP',ownAvailable,'Before active auction holds']].map(([Icon,label,value,caption]) => {
           const I = Icon as typeof Users;
-          return <div key={String(label)} className="surface stat-card last:col-span-2 sm:last:col-span-1"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
+          return <div key={String(label)} className="surface stat-card last:col-span-2 sm:last:col-span-1"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
         })}
       </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
@@ -342,7 +335,7 @@ function Dashboard() {
                                   ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
                                   : 'border-slate-700 bg-slate-900 text-slate-400'
                               }`}>
-                                {toon.roleRank}
+                                {toon.available === null ? '—' : toon.roleRank}
                               </span>
                             </td>
                             <td className="max-w-0 overflow-hidden px-2 py-2.5 sm:px-3">
@@ -356,9 +349,9 @@ function Dashboard() {
                             <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-300 lg:table-cell">
                               <span className="block truncate" title={toon.owner}>{toon.owner}</span>
                             </td>
-                            <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.earned.toLocaleString()}</td>
-                            <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.spent.toLocaleString()}</td>
-                            <td className={`overflow-hidden px-2 py-2.5 text-right text-xs font-semibold tabular-nums sm:px-3 sm:text-sm ${toon.available < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{toon.available.toLocaleString()}</td>
+                            <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.earned?.toLocaleString() ?? '—'}</td>
+                            <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.spent?.toLocaleString() ?? '—'}</td>
+                            <td className={`overflow-hidden px-2 py-2.5 text-right text-xs font-semibold tabular-nums sm:px-3 sm:text-sm ${toon.available === null ? 'text-amber-200' : toon.available < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{toon.available?.toLocaleString() ?? '—'}</td>
                           </tr>
                         );
                       })}

@@ -105,6 +105,9 @@ export async function POST(request: Request) {
 
       if (action === 'deny') {
         if (target.status !== 'pending') throw new RequestValidationError('Only pending requests can be denied.', 409);
+        await ClanAuditEvent.create([{ eventType: 'account-denial', actorUserId: manager._id,
+          actorNickname: manager.nickname, actorRole: manager.role, targetUserId: target._id,
+          targetNickname: target.nickname, previousRole: target.role }], { session });
         await AuthSession.deleteMany({ userId: target._id }).session(session);
         await target.deleteOne({ session });
         return 'Sign-up request denied.';
@@ -133,7 +136,17 @@ export async function POST(request: Request) {
         throw new RequestValidationError('This account’s approval status changed. Refresh and try again.', 409);
       }
       const rows = body.sheetRecordRows;
-      if (!validRosterRows(rows) || (action === 'unlink' && rows.length !== 1)) throw new RequestValidationError('Select valid, distinct toon rows.');
+      const clearingLinks = action === 'link' && Array.isArray(rows) && rows.length === 0;
+      if ((!clearingLinks && !validRosterRows(rows)) || !Array.isArray(rows) || (action === 'unlink' && rows.length !== 1)) throw new RequestValidationError('Select valid, distinct toon rows.');
+      if (action === 'link' && body.expectedSheetRecordRows !== undefined) {
+        const expected = body.expectedSheetRecordRows;
+        if (!Array.isArray(expected) || (expected.length > 0 && !validRosterRows(expected))) {
+          throw new RequestValidationError('Invalid saved toon selection.');
+        }
+        if (expected.length !== currentRows.length || expected.some((row) => !currentRowSet.has(row))) {
+          throw new RequestValidationError('This account’s toon links changed while you were editing. Close and reopen the editor to load the latest links.', 409);
+        }
+      }
       const byRow = new Map(roster.map((record) => [record.rowIndex, record]));
       let nextRows = rows;
       if (action === 'unlink') {
@@ -161,10 +174,20 @@ export async function POST(request: Request) {
       const otherUsers = await User.find({ _id: { $ne: target._id }, status: 'approved' }).select('sheetRecordName sheetRecords').session(session).lean();
       const occupied = new Set(otherUsers.flatMap((user) => getLinkedSheetRecordRows(user, roster)));
       if (nextRows.some((row) => occupied.has(row))) throw new RequestValidationError('A selected toon is already linked to another account.', 409);
-      target.sheetRecords = selected.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account }));
+      // Omit an empty links array so the sparse unique row index does not
+      // reserve an empty-array key for an account without linked toons.
+      target.sheetRecords = selected.length ? selected.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })) : undefined;
       target.sheetRecordName = undefined;
       if (action === 'approve') target.status = 'approved';
       await target.save({ session });
+      if (action === 'approve' || changed.added.length || changed.removed.length || legacyOwners.length) {
+        const uniqueIdentities = (records: SheetRecordIdentity[]) => [...new Map(records.map((record) => [getSheetRecordKey(record), record])).values()];
+        await ClanAuditEvent.create([{ eventType: action === 'approve' ? 'account-approval' : 'toon-links',
+          actorUserId: manager._id, actorNickname: manager.nickname, actorRole: manager.role,
+          targetUserId: target._id, targetNickname: target.nickname, previousRole: target.role,
+          addedToons: uniqueIdentities(changed.added), removedToons: uniqueIdentities(changed.removed),
+        }], { session });
+      }
       return action === 'unlink' ? 'Toon unlinked and available for reassignment.' : `${action === 'approve' ? 'Account approved and linked' : 'Account linked'} to ${selected.length} toon(s).`;
     });
     return NextResponse.json({ success: true, message: result }, { headers: privateHeaders });

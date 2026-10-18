@@ -1,7 +1,7 @@
 import { Coins } from 'lucide-react';
 import RoleBadge from './RoleBadge';
 
-interface ToonBalance { rowIndex: number; owner: string; account: string; subClass: string; available: number; weeklyEarned: number }
+interface ToonBalance { rowIndex: number; owner: string; account: string; subClass: string; available: number | null; weeklyEarned: number | null }
 
 export default function ToonDkpCards({ toons, loading }: { toons: ToonBalance[]; loading: boolean }) {
   return <section className="surface p-5 sm:p-6" aria-labelledby="my-toons-title">
@@ -11,8 +11,8 @@ export default function ToonDkpCards({ toons, loading }: { toons: ToonBalance[];
       : <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] gap-3">{toons.map((toon) => <article key={toon.rowIndex} aria-label={`${toon.account || toon.owner} DKP`} className="relative overflow-hidden rounded-2xl border border-indigo-300/10 bg-gradient-to-br from-indigo-400/[.07] via-slate-900/40 to-slate-950/40 p-5">
         <div className="flex min-w-0 items-start justify-between gap-3"><h3 className="min-w-0 truncate text-sm font-semibold text-slate-100" title={toon.account || toon.owner}>{toon.account || toon.owner}</h3><RoleBadge role={toon.subClass} gameClass compact /></div>
         <p className="mt-1 truncate text-[10px] text-slate-500">{toon.subClass || 'Unassigned class'}</p>
-        <div className="mt-5 flex items-baseline gap-2"><p className={`text-3xl font-semibold tracking-tight tabular-nums ${toon.available < 0 ? 'text-rose-300' : 'text-indigo-100'}`}>{toon.available.toLocaleString()}</p><span className="text-[10px] font-medium uppercase tracking-widest text-slate-500">DKP</span></div>
-        <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/5 pt-3 text-[10px]"><span className="text-slate-500">Earned this week</span><span className={`font-medium tabular-nums ${toon.weeklyEarned < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{toon.weeklyEarned > 0 ? '+' : ''}{toon.weeklyEarned.toLocaleString()}</span></div>
+        <div className="mt-5 flex items-baseline gap-2"><p className={`text-3xl font-semibold tracking-tight tabular-nums ${toon.available === null ? 'text-amber-200' : toon.available < 0 ? 'text-rose-300' : 'text-indigo-100'}`}>{toon.available?.toLocaleString() ?? '—'}</p><span className="text-[10px] font-medium uppercase tracking-widest text-slate-500">DKP</span></div>
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/5 pt-3 text-[10px]"><span className="text-slate-500">Earned this week</span><span className={`font-medium tabular-nums ${toon.weeklyEarned === null ? 'text-amber-200' : toon.weeklyEarned < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{toon.weeklyEarned !== null && toon.weeklyEarned > 0 ? '+' : ''}{toon.weeklyEarned?.toLocaleString() ?? '—'}</span></div>
       </article>)}</div>}
   </section>;
 }
