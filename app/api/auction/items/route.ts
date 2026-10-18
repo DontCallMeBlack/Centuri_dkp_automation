@@ -246,6 +246,7 @@ export async function DELETE(request: Request) {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+    await limitMemberRequests(user._id.toString(), 'catalog-write');
     const body = await readJsonObject(request);
     if (
       typeof body !== 'object' ||

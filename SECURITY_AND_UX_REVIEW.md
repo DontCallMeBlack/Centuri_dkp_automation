@@ -1,6 +1,6 @@
 # Security and UI review
 
-This review covers the application source, API authorization, DKP calculations, Google Sheets journal/recovery, auction reservations/settlement, uploads, authentication, and client data handling. Changes are local and have not been deployed. Production data was not mutated during verification.
+This review covers the application source, API authorization, DKP calculations, Google Sheets journal/recovery, auction reservations/settlement, uploads, authentication, and client data handling. Verification results below identify earlier checks separately from the latest fix pass.
 
 ## Security and correctness changes
 
@@ -43,11 +43,13 @@ This review covers the application source, API authorization, DKP calculations, 
 2. Existing users keep their roles and password hashes. They must sign in again because old JWT sessions are intentionally invalidated. New accounts use bcrypt work factor 12 and bounded normalized credentials.
 3. Only a fresh installation needs `CLAN_BOOTSTRAP_TOKEN` (a private random value of at least 32 characters). Set it on the server; the owner enters it when first-Chief setup is requested. The claim cannot repeat after initialization. Never expose it in a public environment variable.
 4. `JWT_SECRET` is no longer used. Service configuration remains `MONGODB_URI`, `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_PRIVATE_KEY`.
-5. Set `APP_ORIGIN` to the exact public HTTPS origin when a reverse proxy changes the origin seen by Next. Set `TRUST_PROXY=true` only when the proxy replaces forwarded IP headers; account/global throttles work without it.
+5. Set `APP_ORIGIN` to the exact public HTTPS origin when a reverse proxy changes the origin seen by Next. Vercel supplies trusted client IP headers automatically. Other production hosts require `TRUST_PROXY=true` and a proxy that replaces forwarded IP headers; authentication fails closed when a valid trusted IP is unavailable.
 6. Ambiguous legacy pending writes/reservations intentionally pause. Verify the Sheet and stored records before reconciliation; forcing a retry without confirming prior charges can corrupt balances.
 7. Existing catalog databases need `node scripts/migrate-catalog-name-index.cjs --apply` in the configured deployment environment. Without `--apply`, the script only reports readiness and indexes. It normalizes legacy listed flags, installs the case-insensitive `listed_item_name_unique` index for `isListed: true`, then removes the old global name index. It stops on duplicate listed names and preserves item IDs, archived records, images, and auction history. Deploy the matching model before applying the migration.
 
 ## Verification
+
+The latest fix pass passed TypeScript and the production build. No new automated tests, browser checks, or live financial mutations were performed in this pass. The regression and smoke results below describe earlier work and do not validate every latest change.
 
 - Production build and `npm run typecheck` passed.
 - All **159 automated regression tests passed**, including unused-template formula errors, exact invalid-cell reporting, legitimate numeric placeholders, late-bid deadline boundaries and legacy boss-type compatibility, plus the accounting, replay/recovery, activity/DST, hold identity, administration, image and session regressions.
@@ -63,8 +65,19 @@ This review covers the application source, API authorization, DKP calculations, 
 - Google Sheets and MongoDB cannot share one atomic transaction. Direct manual Sheet writes bypass app locks; recovery stops on detectable identity/value drift, but operators should restrict direct edit access.
 - Unknown legacy charge state requires verified reconciliation. There is no general reconciliation UI or full historical bid timeline.
 - Distinct staff request IDs cannot prove two submissions refer to different real-world boss kills.
-- Settlement still depends on application requests and host support for Next `after()`; an independent queue would be needed for a strict no-traffic settlement deadline.
+- Settlement runs after application requests, with a daily authenticated cron fallback at 05:05 UTC. Vercel Hobby has a flexible one-hour scheduling window; this does not guarantee prompt settlement without traffic. A more frequent worker is needed for a strict deadline.
 - First loads still depend on database/Sheets latency. The refresh improves navigation and rendering behavior; no production response-time benchmark or uptime guarantee is asserted.
-- MFA, password recovery, paginated full archive, and formal penetration/accessibility certification are outside this implemented pass.
+- MFA, password recovery, and formal penetration/accessibility certification are outside this implemented pass.
+
+## Latest fix pass
+
+- Overview has one kill-recording entry button. Boss grants, attendance changes and auction posting retain opaque retry IDs in account-scoped browser session storage across reloads. Retrying requires the same selected inputs; closing the tab can lose that browser receipt.
+- Auction creation stores a permanent server receipt inside its transaction and reads catalog details there. Existing auctions retain their original pictures when catalog images change.
+- Authentication quotas apply per trusted source and source/account pair, preventing an attacker on another IP from exhausting a nickname-only or global quota. Authenticated auction, catalog and boss writes also have per-member limits.
+- Preview deployments cannot access the shared database or Sheet. Process startup no longer starts financial schedules; hosting cron owns scheduled work.
+- Boss-history calculations keep the previously applied participants counted during an interrupted attendance edit. History APIs use cursor pagination in batches of 50, and loaded history refreshes without retaining deleted records.
+- Session row metadata resolves from the cached roster rather than exposing stale stored row assignments. Financial endpoints still resolve against their required roster state.
+- Pages use a fresh script nonce and dynamically rendered content security policy; inline script allowances are removed. Existing inline styles remain allowed.
+- `DKP_WRITES_PAUSED=true` pauses financial Sheet operations for coordinated maintenance. Deploy the pause and wait for in-flight work to finish before editing directly. Google Sheets edits still cannot participate atomically in MongoDB transactions.
 
 Security design references: [OWASP session management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html), [CSRF prevention](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html), and [password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html). Framework behavior was checked against this repository’s bundled Next.js guides before implementation.
