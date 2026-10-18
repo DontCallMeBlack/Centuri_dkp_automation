@@ -13,6 +13,13 @@ export interface RosterMutationRecord {
   subClass: string;
   before: string[];
   after: Array<string | number>;
+  compaction?: {
+    endRow: number;
+    beforeRows: string[][];
+    afterRows: Array<Array<string | number>>;
+    deletedRows: number[];
+    moves: Array<{ owner: string; account: string; fromRow: number; toRow: number }>;
+  };
   actorUserId: mongoose.Types.ObjectId;
   actorNickname: string;
   actorRole: string;
@@ -26,6 +33,7 @@ const schema = new Schema<RosterMutationRecord>({
   rowIndex: { type: Number, required: true }, identityKey: { type: String, required: true },
   owner: { type: String, required: true }, account: { type: String, default: '' }, subClass: { type: String, default: '' },
   before: { type: [String], required: true }, after: { type: Schema.Types.Mixed, required: true },
+  compaction: { type: Schema.Types.Mixed },
   actorUserId: { type: Schema.Types.ObjectId, required: true }, actorNickname: { type: String, required: true }, actorRole: { type: String, required: true },
   linkChanges: { type: Schema.Types.Mixed, required: true },
 }, { timestamps: true });

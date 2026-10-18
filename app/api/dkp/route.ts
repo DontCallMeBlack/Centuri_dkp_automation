@@ -14,12 +14,14 @@ import RosterMutation from '@/lib/models/RosterMutation';
 import { RequestValidationError } from '@/lib/security/request';
 
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const fresh = new URL(req.url).searchParams.get('fresh') === '1' &&
+      (canManageClan(user.role) || user.role === 'guardian');
     const [rosterSnapshot, activeUsers] = await Promise.all([
-      getSheetRosterSnapshot(),
+      getSheetRosterSnapshot({ fresh }),
       User.find({ status: 'approved' })
         .select('nickname role sheetRecordName sheetRecords')
         .sort({ nickname: 1 })

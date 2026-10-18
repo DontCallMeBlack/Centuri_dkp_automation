@@ -120,13 +120,14 @@ function Dashboard() {
   useEffect(() => { setVisitedViews((current) => current.has(activeView) ? current : new Set([...current, activeView])); }, [activeView]);
 
 
-  const fetchData = async () => {
+  const fetchData = async (fresh = false) => {
     setRefreshing(true);
     try {
-      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; rosterSync: RosterSyncStatus}>('/api/dkp');
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; rosterSync: RosterSyncStatus}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp');
       if (!data.success) throw new Error('The roster could not be refreshed.');
       if (!activeRef.current) return;
       setRoster(data.roster); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSync(data.rosterSync); setRosterSyncError('');
+      return data.roster;
     } catch (err) {
       if (!activeRef.current) return;
       if (err instanceof ApiError && err.status === 401) { clearClientData(); router.replace('/login'); }
@@ -142,6 +143,16 @@ function Dashboard() {
     setSelectedMembers((prev) =>
       prev.includes(rowIndex) ? prev.filter((id) => id !== rowIndex) : [...prev, rowIndex]
     );
+  };
+
+  const openAwardPicker = async () => {
+    setAwardError('');
+    setPickerQuery('');
+    setPickerOpen(true);
+    const latestRoster = await fetchData(true);
+    if (!latestRoster) return;
+    const liveRows = new Set(latestRoster.map((toon) => toon.rowIndex));
+    setSelectedMembers((previous) => previous.filter((rowIndex) => liveRows.has(rowIndex)));
   };
 
   const handleDkpSubmit = async (e: React.FormEvent) => {
@@ -236,7 +247,7 @@ function Dashboard() {
     <div className="space-y-6">
       {activeView === 'dkp' && <><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div><p className="page-kicker">Your clan. In sync.</p><h1 className="page-title">Welcome back{userSession?.nickname ? `, ${userSession.nickname}` : ''}<span className="text-indigo-400">.</span></h1><p className="page-description">Your raids, rewards, and next upgrade. All in one place.</p></div>
-        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => { setAwardError(''); setPickerQuery(''); setPickerOpen(true); }}><Plus className="h-4 w-4" /> Record a kill</button>}
+        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => void openAwardPicker()}><Plus className="h-4 w-4" /> Record a kill</button>}
       </div>
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
       <RosterDataIssues issues={roster.flatMap((toon) => toon.dkpIssues ?? [])} />

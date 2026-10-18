@@ -105,6 +105,15 @@ function createSheetsClient() {
   return google.sheets({ version: 'v4', auth, timeout: 20_000 });
 }
 
+async function getRosterSheetId(sheets: ReturnType<typeof google.sheets>) {
+  const response = await withGoogleSheetsRetry(() => sheets.spreadsheets.get({
+    spreadsheetId: getSpreadsheetId(), fields: 'sheets.properties(sheetId,title)',
+  }), true);
+  const sheet = response.data.sheets?.find((entry) => entry.properties?.title === 'DKP_Sheet_automated');
+  if (typeof sheet?.properties?.sheetId !== 'number') throw new DkpIntegrityError('The DKP roster tab could not be found.');
+  return sheet.properties.sheetId;
+}
+
 async function readSheetRows(sheets = createSheetsClient()) {
   const response = await withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({
     spreadsheetId: getSpreadsheetId(), range: `${SHEET_NAME}!A3:I1000`,
@@ -641,6 +650,13 @@ export async function adjustPlayersDKP(
     const sheets = createSheetsClient();
     const rows = await readSheetRows(sheets);
     const roster = rosterFromRows(rows);
+    const operationalTargets = targets.map((target) => {
+      if (typeof target.owner !== 'string' || typeof target.account !== 'string') return target;
+      const identity = { owner: target.owner, account: target.account };
+      const identityMatches = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(identity));
+      if (identityMatches.length !== 1) return target;
+      return { ...target, rowIndex: identityMatches[0].rowIndex };
+    });
     const now = new Date();
     const historical = requestedMode === 'weekly-earned' && options.earnedAt &&
       options.earnedAt < getCurrentDkpWeekStart(now);
@@ -648,7 +664,7 @@ export async function adjustPlayersDKP(
     const holds = mode === 'weekly-earned' ? [] : await AuctionHold.find({ heldPoints: { $ne: 0 } })
       .select('rowIndex owner account heldPoints').lean();
     const holdsByRow = new Map<number, number>();
-    for (const target of targets.filter(({ points }) => points < 0)) {
+    for (const target of operationalTargets.filter(({ points }) => points < 0)) {
       const row = rows[target.rowIndex - 3];
       if (!row) continue; // The accounting validator below reports the missing row.
       const identity = { owner: row[0] ?? '', account: row[1] ?? '' };
@@ -662,7 +678,7 @@ export async function adjustPlayersDKP(
         holdsByRow.set(target.rowIndex, (holdsByRow.get(target.rowIndex) ?? 0) + hold.heldPoints);
       }
     }
-    const updates = targets.flatMap(({ rowIndex, points, owner, account }) => buildDkpAdjustmentUpdates({
+    const updates = operationalTargets.flatMap(({ rowIndex, points, owner, account }) => buildDkpAdjustmentUpdates({
       rowIndex,
       points,
       owner,
@@ -679,12 +695,12 @@ export async function adjustPlayersDKP(
       const activityRoster = roster;
       const correction = buildHistoricalDkpActivityCorrection(
         activityRoster, cache?.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(activityRoster.filter((record) => record.fiveWeekActivity !== null).map((record) => ({ ...record, fiveWeekActivity: record.fiveWeekActivity! }))),
-        targets, options.earnedAt, now, SHEET_NAME,
+        operationalTargets, options.earnedAt, now, SHEET_NAME,
       );
       updates.push(...correction.updates);
       weeklyActivityHistory = correction.weeklyActivityHistory;
     }
-    const identities = targets.map(({ rowIndex }) => {
+    const identities = operationalTargets.map(({ rowIndex }) => {
       const record = roster.find((entry) => entry.rowIndex === rowIndex)!;
       return { rowIndex, owner: record.owner, account: record.account };
     });
@@ -726,13 +742,39 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
   const rows = await readSheetRows(sheets);
   const current = Array.from({ length: 9 }, (_, index) => String(rows[mutation.rowIndex - 3]?.[index] ?? ''));
   const same = (values: Array<string | number>) => values.length === 9 && values.every((value, index) => String(value) === current[index]);
-  if (!same(mutation.after)) {
-    if (!same(mutation.before)) throw new DkpIntegrityError('An interrupted clan toon change no longer matches its Sheet snapshot. Clan leadership must reconcile the row before continuing.');
+  const compaction = mutation.compaction;
+  const currentRows = compaction ? Array.from({ length: compaction.endRow - 2 }, (_, rowOffset) =>
+    Array.from({ length: 9 }, (_, column) => String(rows[rowOffset]?.[column] ?? ''))) : [];
+  const sameRows = (expected: Array<Array<string | number>>) => expected.length === currentRows.length &&
+    expected.every((row, rowIndex) => row.length === 9 && row.every((value, column) => String(value) === currentRows[rowIndex][column]));
+  const alreadyApplied = compaction ? sameRows(compaction.afterRows) : same(mutation.after);
+  if (!alreadyApplied) {
+    const matchesBefore = compaction ? sameRows(compaction.beforeRows) : same(mutation.before);
+    if (!matchesBefore) throw new DkpIntegrityError('An interrupted clan toon change no longer matches its Sheet snapshot. Clan leadership must reconcile the roster before continuing.');
     await assertLedgerLock(spreadsheetId, lockId);
-    await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
-      spreadsheetId, range: `${SHEET_NAME}!A${mutation.rowIndex}:I${mutation.rowIndex}`,
-      valueInputOption: 'RAW', requestBody: { values: [mutation.after] },
-    }), false);
+    if (compaction) {
+      const sheetId = await getRosterSheetId(sheets);
+      const deletedRows = [...compaction.deletedRows].sort((first, second) => second - first);
+      const requests: Array<Record<string, unknown>> = deletedRows.map((rowIndex) => ({
+        deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: rowIndex - 1, endIndex: rowIndex } },
+      }));
+      if (deletedRows.length) requests.push({ appendDimension: { sheetId, dimension: 'ROWS', length: deletedRows.length } });
+      if (mutation.action === 'create') requests.push({
+        updateCells: {
+          range: { sheetId, startRowIndex: mutation.rowIndex - 1, endRowIndex: mutation.rowIndex, startColumnIndex: 0, endColumnIndex: 9 },
+          rows: [{ values: mutation.after.map((value) => typeof value === 'number'
+            ? { userEnteredValue: { numberValue: value } }
+            : { userEnteredValue: { stringValue: String(value) } }) }],
+          fields: 'userEnteredValue',
+        },
+      });
+      await withGoogleSheetsRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } }), false);
+    } else {
+      await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
+        spreadsheetId, range: `${SHEET_NAME}!A${mutation.rowIndex}:I${mutation.rowIndex}`,
+        valueInputOption: 'RAW', requestBody: { values: [mutation.after] },
+      }), false);
+    }
   }
   await assertLedgerLock(spreadsheetId, lockId);
   await withClanAdministrationTransaction(async (session) => {
@@ -743,9 +785,48 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
         ? { $set: { sheetRecords: change.links }, $unset: { sheetRecordName: '' } }
         : { $unset: { sheetRecords: '', sheetRecordName: '' } }, { session });
     }
+    if (pending.compaction?.deletedRows.length) {
+      await AuctionHold.deleteMany({ rowIndex: { $in: pending.compaction.deletedRows }, heldPoints: 0 }, { session });
+    }
+    if (pending.action === 'remove') {
+      await AuctionHold.deleteMany({ $or: [
+        { rowIndex: pending.rowIndex },
+        { owner: pending.owner, account: pending.account },
+      ] }, { session });
+    }
+    for (const move of pending.compaction?.moves ?? []) {
+      await AuctionHold.updateOne(
+        { rowIndex: move.fromRow, $or: [
+          { owner: move.owner, account: move.account },
+          { owner: { $exists: false } },
+        ] },
+        { $set: { rowIndex: move.toRow } }, { session },
+      );
+      await Auction.updateMany({ 'highBid.owner': move.owner, 'highBid.account': move.account },
+        { $set: { 'highBid.rowIndex': move.toRow } }, { session });
+      await Auction.updateMany({ 'winner.owner': move.owner, 'winner.account': move.account },
+        { $set: { 'winner.rowIndex': move.toRow } }, { session });
+      await BossAward.updateMany(
+        { participants: { $elemMatch: { owner: move.owner, account: move.account } } },
+        { $set: { 'participants.$[participant].rowIndex': move.toRow } },
+        { session, arrayFilters: [{ 'participant.owner': move.owner, 'participant.account': move.account }] },
+      );
+      await BossAward.updateMany(
+        { 'pendingChange.participants': { $elemMatch: { owner: move.owner, account: move.account } } },
+        { $set: { 'pendingChange.participants.$[participant].rowIndex': move.toRow } },
+        { session, arrayFilters: [{ 'participant.owner': move.owner, 'participant.account': move.account }] },
+      );
+    }
+    if (pending.compaction?.moves.length) {
+      await User.updateMany({ 'sheetRecords.rowIndex': { $exists: true } },
+        { $unset: { 'sheetRecords.$[].rowIndex': '' } }, { session });
+    }
     const cache = await SheetRosterCache.findOne({ cacheKey: spreadsheetId }).session(session);
     if (!cache || cache.weeklyResetLockId !== lockId || cache.weeklyResetLockUntil.getTime() <= Date.now()) throw new DkpIntegrityError('The roster change lost its ledger lock. Retry the original request.');
-    cache.weeklyActivityHistory = (cache.weeklyActivityHistory ?? []).filter((entry) => entry.rowIndex !== pending.rowIndex && getSheetRecordKey(entry) !== pending.identityKey);
+    const movedRows = new Map((pending.compaction?.moves ?? []).map((move) => [getSheetRecordKey(move), move.toRow]));
+    cache.weeklyActivityHistory = (cache.weeklyActivityHistory ?? [])
+      .filter((entry) => getSheetRecordKey(entry) !== pending.identityKey)
+      .map((entry) => ({ ...entry, rowIndex: movedRows.get(getSheetRecordKey(entry)) ?? entry.rowIndex }));
     cache.fetchedAt = new Date(0); cache.refreshLockUntil = new Date(0); cache.generation += 1;
     await cache.save({ session });
     const toon = { rowIndex: pending.rowIndex, owner: pending.owner, account: pending.account };
@@ -778,6 +859,8 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
     if (input.action === 'create' && (!ITEM_SUBROLES.includes(input.subClass as typeof ITEM_SUBROLES[number]) || input.subClass === 'Everyone')) throw new RequestValidationError('Choose a supported toon subrole.');
     const rows = await readSheetRows();
     const roster = rosterFromRows(rows);
+    const orphanedDataRow = rows.findIndex((row) => !String(row[0] ?? '').trim() && row.some((value) => String(value ?? '').trim()));
+    if (orphanedDataRow >= 0) throw new RequestValidationError(`Roster row ${orphanedDataRow + 3} contains data without an owner. Clear or repair that row before arranging the roster.`, 409);
     const identityKey = getSheetRecordKey(input);
     let rowIndex: number;
     let subClass: string;
@@ -785,19 +868,10 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
       if (roster.some((record) => record.account.trim().toLowerCase() === input.account.toLowerCase())) throw new RequestValidationError('A toon with this name is already in the clan.', 409);
       if (await RosterMutation.exists({ spreadsheetId, identityKey })) throw new RequestValidationError('This toon identity already has a roster lifecycle and cannot be recreated with its old history.', 409);
       if (await BossAward.exists({ participants: { $elemMatch: { owner: input.owner, account: input.account } } }).collation({ locale: 'en', strength: 2 })) throw new RequestValidationError('This owner/toon identity already has clan award history. Reconcile the existing identity instead of creating it as a brand-new toon.', 409);
-      // Never place a new toon on a row still referenced by saved identities,
-      // historical bids, awards, or earlier financial/roster operations.
-      const referenced = await Promise.all([
-        User.distinct('sheetRecords.rowIndex'), Auction.distinct('highBid.rowIndex'), Auction.distinct('winner.rowIndex'),
-        BossAward.distinct('participants.rowIndex'), BossAward.distinct('pendingChange.participants.rowIndex'),
-        DkpSheetMutation.distinct('identities.rowIndex', { spreadsheetId }), RosterMutation.distinct('rowIndex', { spreadsheetId }),
-      ]);
-      const reserved = new Set<number>([...roster.map((record) => record.rowIndex), ...referenced.flat().filter((value): value is number => typeof value === 'number')]);
-      rowIndex = 0;
-      for (let row = 3; row <= 1000; row += 1) {
-        if (!reserved.has(row) && Array.from({ length: 3 }, (_, index) => rows[row - 3]?.[index] ?? '').every((value) => !value.trim())) { rowIndex = row; break; }
-      }
-      if (!rowIndex) throw new RequestValidationError('No unused roster row is available within rows 3–1000. Contact the site owner to expand roster capacity.', 409);
+      // The durable roster mutation compacts all live toons, so the new toon is
+      // appended immediately after the current live roster.
+      rowIndex = roster.length + 3;
+      if (rowIndex > 1000) throw new RequestValidationError('No unused roster row is available within rows 3–1000. Contact the site owner to expand roster capacity.', 409);
       subClass = input.subClass;
     } else {
       rowIndex = input.rowIndex;
@@ -808,6 +882,29 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
     }
     const before = Array.from({ length: 9 }, (_, index) => String(rows[rowIndex - 3]?.[index] ?? ''));
     const after = input.action === 'create' ? [input.owner, input.account, subClass, 0, 0, 0, 0, 0, 0] : Array<string>(9).fill('');
+    const retained = roster
+      .filter((record) => input.action !== 'remove' || getSheetRecordKey(record) !== identityKey)
+      .map((record) => ({
+        record,
+        values: Array.from({ length: 9 }, (_, index) => String(rows[record.rowIndex - 3]?.[index] ?? '')),
+      }));
+    if (input.action === 'create') retained.push({
+      record: { rowIndex, owner: input.owner, account: input.account, subClass, weeklyEarned: 0, weeklySpent: 0, earned: 0, spent: 0, available: 0, fiveWeekActivity: 0, dkpIssues: [] },
+      values: after.map(String),
+    });
+    const lastOccupiedRow = roster.reduce((highest, record) => Math.max(highest, record.rowIndex), 3);
+    const endRow = Math.max(lastOccupiedRow, retained.length + 2, rowIndex);
+    const beforeRows = Array.from({ length: endRow - 2 }, (_, offset) =>
+      Array.from({ length: 9 }, (_, column) => String(rows[offset]?.[column] ?? '')));
+    const afterRows: Array<Array<string | number>> = Array.from({ length: endRow - 2 }, (_, offset) =>
+      retained[offset]?.values ?? Array<string>(9).fill(''));
+    const moves = retained.flatMap(({ record }, index) => record.rowIndex === index + 3 ? [] : [{
+      owner: record.owner, account: record.account, fromRow: record.rowIndex, toRow: index + 3,
+    }]);
+    const deletedRows = Array.from({ length: Math.max(0, lastOccupiedRow - 2) }, (_, index) => index + 3)
+      .filter((candidate) => !String(rows[candidate - 3]?.[0] ?? '').trim() ||
+        (input.action === 'remove' && candidate === input.rowIndex));
+    if (input.action === 'create') rowIndex = retained.length + 2;
     await assertLedgerLock(spreadsheetId, lockId);
     await withClanAdministrationTransaction(async (session) => {
       const actor = await User.findOne({ _id: actorUserId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
@@ -816,6 +913,10 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
       const auctions = await Auction.find({ $or: [{ status: { $in: ['active', 'removing', 'settling', 'settlement-failed'] } }, { status: 'completed', deliveryStatus: 'pending' }] }).select('status deliveryStatus highBid winner').session(session).lean();
       const awards = await BossAward.find({ status: { $in: ['pending', 'updating'] } }).select('participants pendingChange').session(session).lean();
       const users = await User.find().select('_id sheetRecords sheetRecordName').session(session).lean();
+      if (holds.some((hold) => deletedRows.includes(hold.rowIndex) &&
+        !roster.some((record) => record.rowIndex === hold.rowIndex && getSheetRecordKey(record) === getSheetRecordKey({ owner: hold.owner ?? '', account: hold.account ?? '' })))) {
+        throw new RequestValidationError('A DKP reservation is attached to an empty roster row. Reconcile auction holds before arranging the roster.', 409);
+      }
       if (getReservationConflict({ identities: [input], rows: [rowIndex], rejectUnverifiedLegacyHolds: true }, holds, auctions)) throw new RequestValidationError('Resolve this toon’s reserved bids, unfinished auctions or pending delivery before removing it. Its DKP can then be forfeited.', 409);
       if (awards.some((award) => [...award.participants, ...(award.pendingChange?.participants ?? [])].some((participant) => participant.rowIndex === rowIndex || getSheetRecordKey(participant) === identityKey))) throw new RequestValidationError('Finish this toon’s pending boss award or attendance change before changing its roster entry.', 409);
       const linkChanges = users.flatMap((user) => {
@@ -829,6 +930,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
       await RosterMutation.create([{
         _id: id, spreadsheetId, fingerprint, action: input.action, status: 'pending', rowIndex, identityKey,
         owner: input.owner, account: input.account, subClass, before, after,
+        compaction: { endRow, beforeRows, afterRows, deletedRows, moves },
         actorUserId: actor._id, actorNickname: actor.nickname, actorRole: actor.role, linkChanges,
       }], { session });
     });
