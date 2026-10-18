@@ -518,7 +518,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
     if (!response.ok) throw new Error(result.error || 'Unable to remove item.');
     catalogChanged();
     setItems((current) => current.filter((item) => item.id !== itemId));
-    setNotice('Item removed from the catalog. Existing auction history is preserved.');
+    setNotice('Item removed. You can reuse its name; existing auction history and images are preserved.');
     setError('');
   };
 
