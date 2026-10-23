@@ -828,19 +828,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-9 pr-3.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/60"
                     />
                   </label>
-                  {selectedCatalogItem && (
-                    <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/25 bg-emerald-400/5 px-3 py-2">
-                      <span className="truncate text-xs font-semibold text-emerald-200">Selected: {selectedCatalogItem.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedItemId('')}
-                        className="shrink-0 rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
-                        aria-label="Clear selected item"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
                   <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70">
                     {filteredItems.length === 0 ? (
                       <p className="px-3 py-4 text-center text-xs text-slate-500">
@@ -850,8 +837,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                       <button
                         key={item.id}
                         type="button"
+                        aria-pressed={selectedItemId === item.id}
                         onClick={() => setSelectedItemId(item.id)}
-                        className={`flex w-full items-center gap-3 border-b border-slate-800/70 px-3 py-2 text-left last:border-b-0 hover:bg-slate-800/70 ${selectedItemId === item.id ? 'bg-emerald-400/10' : ''}`}
+                        className={`group flex w-full items-center gap-3 border-b border-slate-800/70 px-3 py-2 text-left last:border-b-0 transition-colors ${selectedItemId === item.id ? 'bg-emerald-400/10 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.22)]' : 'hover:bg-slate-800/70'}`}
                       >
                         <AuctionItemImage
                           itemId={item.id}
@@ -861,6 +849,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                         />
                         <span title={item.name} className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-slate-200">{item.name}</span>
                         <span className="max-w-28 shrink-0 break-words text-right text-[10px] leading-snug text-slate-500">{item.requiredRoles.join(' / ') || 'Role not set'} · {item.bossType}</span>
+                        {selectedItemId === item.id && <span aria-label="Chosen for auction" title="Chosen for auction" className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-emerald-300/60 bg-emerald-400/15 text-emerald-200 shadow-[0_0_18px_rgba(52,211,153,0.2)]"><Check className="h-4 w-4" strokeWidth={3} /></span>}
                       </button>
                     ))}
                   </div>
@@ -874,30 +863,12 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                     </button>
                   )}
               </div>
-              {selectedCatalogItem && (
-                <div className={`flex items-center gap-3 rounded-xl border p-2.5 ${
-                  selectedItemRoleIsValid
-                    ? 'border-emerald-400/20 bg-emerald-400/5'
-                    : 'border-amber-400/25 bg-amber-400/5'
-                }`}>
-                  <AuctionItemImage
-                    itemId={selectedItemId}
-                    imageCount={selectedCatalogItem.imageCount}
-                    alt="Saved item"
-                    className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
-                  />
-                  <div className="min-w-0">
-                    <p className="break-words text-sm font-bold leading-snug text-white">{selectedCatalogItem.name}</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">{selectedCatalogItem.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="text-xs text-slate-400">{selectedCatalogItem.bossType}</span></div>
-                    {!selectedItemRoleIsValid && (
-                      <p className="mt-1 text-xs leading-snug text-amber-200">
-                        {selectedCatalogItem.requiredRoles.length
-                          ? 'Choose supported subroles with icons in Items before posting.'
-                          : 'A role must be set for this item in Items before it can be posted.'}
-                      </p>
-                    )}
-                  </div>
-                </div>
+              {selectedCatalogItem && !selectedItemRoleIsValid && (
+                <p role="alert" className="rounded-lg border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-xs leading-snug text-amber-200">
+                  {selectedCatalogItem.requiredRoles.length
+                    ? 'Choose supported subroles with icons in Items before posting.'
+                    : 'A role must be set for this item in Items before it can be posted.'}
+                </p>
               )}
             </div>
             <button
