@@ -141,15 +141,45 @@ function formatRemaining(endsAt: string, now: number) {
 }
 
 function AuctionItemImage({ itemId, imageCount, alt, className }: {itemId:string; imageCount:number; alt:string; className:string}) {
+  const imageContainerRef = useRef<HTMLDivElement>(null);
   const [imageIndex, setImageIndex] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [readyItemId, setReadyItemId] = useState<string | null>(null);
+  const [loadedSource, setLoadedSource] = useState<string | null>(null);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
   const total = Math.max(1,imageCount);
-  useEffect(() => { setImageIndex(0); setLoaded(false); setFailed(false); },[itemId]);
-  const changeImage = (index:number) => { setLoaded(false); setFailed(false); setImageIndex(index); };
+  const source = `/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`;
+  const shouldLoad = readyItemId === itemId;
+  const loaded = loadedSource === source;
+  const failed = failedSource === source;
+
+  useEffect(() => {
+    setImageIndex(0);
+    const container = imageContainerRef.current;
+    if (!container) return;
+    if (!('IntersectionObserver' in window)) {
+      setReadyItemId(itemId);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setReadyItemId(itemId);
+        observer.disconnect();
+      }
+    }, { rootMargin: '220px 0px' });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [itemId]);
+
+  const changeImage = (index:number) => setImageIndex(index);
   return <div className={`${className} relative overflow-hidden`}>
-    {!failed && <img src={`/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`} alt={`${alt}, image ${imageIndex+1}`} loading="lazy" decoding="async" onLoad={() => setLoaded(true)} onError={() => setFailed(true)} className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`} />}
-    {!loaded && !failed && <div className="skeleton pointer-events-none absolute inset-0" />}
+    <div ref={imageContainerRef} className="pointer-events-none absolute inset-0" aria-hidden="true" />
+    {!failed && shouldLoad && <img src={source} alt={`${alt}, image ${imageIndex+1}`} loading="lazy" decoding="async" onLoad={() => setLoadedSource(source)} onError={() => setFailedSource(source)} className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`} />}
+    {!loaded && !failed && <div className="pointer-events-none absolute inset-0 grid place-items-center overflow-hidden bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.2)_0%,rgba(15,23,42,0.92)_58%,rgba(2,6,23,1)_100%)]" aria-hidden="true">
+      <div className="absolute inset-x-[18%] top-1/2 h-px bg-gradient-to-r from-transparent via-amber-200/35 to-transparent" />
+      <div className="relative grid h-9 w-9 place-items-center rounded-2xl border border-amber-200/25 bg-slate-950/55 text-amber-200 shadow-[0_0_28px_rgba(251,191,36,0.16)] animate-pulse">
+        <Sparkles className="h-4 w-4" />
+      </div>
+    </div>}
     {failed && <div role="img" aria-label={`${alt}: image unavailable`} className="flex h-full min-h-10 flex-col items-center justify-center gap-1 text-[9px] text-slate-500"><ImageOff size={17} />Image unavailable</div>}
     {total > 1 && <ImageNavigation imageIndex={imageIndex} imageTotal={total} setImageIndex={changeImage} />}
   </div>;
@@ -1147,10 +1177,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                   </header>
 
                   <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                    <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-slate-950/70">
+                    <div className="order-2 relative aspect-square w-full overflow-hidden rounded-xl bg-slate-950/70 sm:order-1">
                       <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="absolute inset-0 h-full w-full max-w-none rounded-xl bg-slate-950/20 p-0" />
                     </div>
-                    <div className="flex min-w-0 flex-col gap-3 sm:pt-0">
+                    <div className="order-1 flex min-w-0 flex-col gap-3 sm:order-2 sm:pt-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
                       {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}
