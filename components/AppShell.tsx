@@ -84,10 +84,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isCatalog = pathname === '/dashboard' && currentView === 'items';
   const isAdministration = pathname.startsWith('/admin/requests');
   const currentLabel = isAdministration ? 'Clan administration' : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : 'Roster';
-  const navClick = (event: React.MouseEvent) => {
+  const navClick = (event: React.MouseEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
     const link=(event.target as HTMLElement).closest('a');
-    if (link) { const url=new URL(link.href); setCurrentView(url.searchParams.get('view') ?? ''); setMenuOpen(false); }
+    if (link) {
+      const url=new URL(link.href);
+      if (pathname === '/dashboard' && url.pathname === '/dashboard') {
+        event.preventDefault();
+        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+        const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (nextUrl !== currentUrl) window.history.pushState(null, '', nextUrl);
+      }
+      setCurrentView(url.searchParams.get('view') ?? '');
+      setMenuOpen(false);
+    }
   };
   const nav = <>
     <p className="nav-group-label">Workspace</p>
@@ -101,7 +111,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="desktop-sidebar">
       <Link href="/dashboard" className="brand"><span className="brand-mark"><Command size={23} strokeWidth={1.7} /></span><span>CENTURI<span className="brand-subtitle">CLAN COMMAND</span></span></Link>
-      <nav aria-label="Main navigation" className="mt-10" onClick={navClick}>{nav}</nav>
+      <nav aria-label="Main navigation" className="mt-10" onClickCapture={navClick}>{nav}</nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><ShieldCheck className="h-4 w-4 text-indigo-300" /><p>Every raid.<br /><span>Every reward. Together.</span></p></div><div className="profile-card"><span className={`profile-avatar ${user?.role === 'chief' ? 'text-amber-300' : 'text-indigo-300'}`}><RoleIcon role={user?.role} className="h-5 w-5" /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-white">{user?.nickname || 'Clan member'}</p><p className="mt-1 text-xs capitalize text-slate-400">{user?.role || 'Checking session'}</p></div><button type="button" onClick={() => void signOut()} disabled={signingOut} className="icon-button" aria-label="Sign out" title="Sign out"><LogOut size={16} /></button></div></div>
     </aside>
     <div className="workspace-body"><header className="workspace-header"><div className="flex min-w-0 items-center gap-3"><button className="icon-button lg:hidden" type="button" onClick={() => setMenuOpen(true)} aria-label="Open navigation" aria-expanded={menuOpen}><Menu size={20} /></button><span className="text-xs text-slate-500">Centuri</span><span className="text-slate-700">/</span><span className="truncate text-xs font-medium text-slate-200">{currentLabel}</span></div><div className="flex items-center gap-3"><span className="hidden text-xs text-slate-500 sm:block">Celtic Heroes</span>{user && <RoleBadge role={user.role} />}</div></header>
@@ -109,6 +119,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div id="main-content" tabIndex={-1} className="workspace-content">{children}</div>
       <footer className="workspace-footer"><span>Centuri Clan</span><span className="flex items-center gap-1.5"><CircleHelp size={13} /> Need help? Contact your clan leadership.</span></footer>
     </div>
-    {menuOpen && <Dialog labelledBy="mobile-nav-title" onClose={() => setMenuOpen(false)} className="mobile-nav-dialog"><aside className="mobile-sidebar" aria-label="Mobile navigation"><h2 id="mobile-nav-title" className="sr-only">Clan navigation</h2><div className="flex items-center justify-between"><Link href="/dashboard" className="brand"><span className="brand-mark"><Command size={22} /></span>CENTURI</Link><button className="icon-button" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={19} /></button></div><nav className="mt-8" onClick={navClick}>{nav}</nav><div className="mt-auto border-t border-white/10 pt-5">{error && <p role="alert" className="mb-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs leading-5 text-rose-200">{error}</p>}<RoleBadge role={user?.role} /><p className="my-4 text-sm text-white">{user?.nickname}</p><button className="secondary-button w-full" disabled={signingOut} onClick={() => void signOut()}><LogOut size={16} /> Sign out</button></div></aside></Dialog>}
+    {menuOpen && <Dialog labelledBy="mobile-nav-title" onClose={() => setMenuOpen(false)} className="mobile-nav-dialog"><aside className="mobile-sidebar" aria-label="Mobile navigation"><h2 id="mobile-nav-title" className="sr-only">Clan navigation</h2><div className="flex items-center justify-between"><Link href="/dashboard" className="brand"><span className="brand-mark"><Command size={22} /></span>CENTURI</Link><button className="icon-button" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={19} /></button></div><nav className="mt-8" onClickCapture={navClick}>{nav}</nav><div className="mt-auto border-t border-white/10 pt-5">{error && <p role="alert" className="mb-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs leading-5 text-rose-200">{error}</p>}<RoleBadge role={user?.role} /><p className="my-4 text-sm text-white">{user?.nickname}</p><button className="secondary-button w-full" disabled={signingOut} onClick={() => void signOut()}><LogOut size={16} /> Sign out</button></div></aside></Dialog>}
   </div></SessionContext.Provider>;
 }
