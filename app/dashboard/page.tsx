@@ -16,9 +16,9 @@ import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, CheckCircle2, Users, Zap, X, Wallet, Swords } from 'lucide-react';
-const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface /> });
-const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface /> });
-const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface /> });
+const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Every kill. Every contribution." /> });
+const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Find your next upgrade." /> });
+const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Great loot starts here." /> });
 
 type RosterMember = ReadableRosterRecord;
 
@@ -81,23 +81,24 @@ const ROLE_STYLES: Record<string, string> = {
   tank: 'border-pink-400/30 bg-pink-400/10 text-pink-300',
 };
 
-export default function DashboardPage() { return <Suspense fallback={<LoadingSurface />}><Dashboard /></Suspense>; }
+export default function DashboardPage() { return <Suspense fallback={<LoadingSurface fullLayout label="Preparing your dashboard" title="Welcome to Centuri." />}><Dashboard /></Suspense>; }
 
 function Dashboard() {
   const searchParams = useSearchParams();
   const sessionUser = useSessionUser();
   const requestedView = searchParams.get('view');
   const activeView = requestedView === 'auction' || requestedView === 'items' || requestedView === 'boss-history' ? requestedView : 'dkp';
+  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; rosterSync: RosterSyncStatus }>('/api/dkp');
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [refreshing, setRefreshing] = useState(false);
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
-  const [roster, setRoster] = useState<RosterMember[]>([]);
-  const [clanMembers, setClanMembers] = useState<ClanMember[]>([]);
-  const [userSession, setUserSession] = useState<UserSession | null>(null);
-  const [rosterSync, setRosterSync] = useState<RosterSyncStatus | null>(null);
+  const [roster, setRoster] = useState<RosterMember[]>(() => initialDkpData?.roster ?? []);
+  const [clanMembers, setClanMembers] = useState<ClanMember[]>(() => initialDkpData?.clanMembers ?? []);
+  const [userSession, setUserSession] = useState<UserSession | null>(() => initialDkpData?.user ?? null);
+  const [rosterSync, setRosterSync] = useState<RosterSyncStatus | null>(() => initialDkpData?.rosterSync ?? null);
   const [rosterSyncError, setRosterSyncError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !initialDkpData);
   const [selectedBoss, setSelectedBoss] = useState('Base');
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
   const [pickerQuery, setPickerQuery] = useState('');
@@ -105,14 +106,13 @@ function Dashboard() {
   const [memberQuery, setMemberQuery] = useState('');
   const deferredMemberQuery = useDeferredValue(memberQuery);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingAward, setPendingAward] = useState<{ rows: number[]; points: number; bossName: string } | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const router = useRouter();
 
   useEffect(() => {
     activeRef.current = true;
-    const cached = peekData<any>('/api/dkp');
-    if (cached) { setRoster(cached.roster); setClanMembers(cached.clanMembers); setUserSession(cached.user); setRosterSync(cached.rosterSync); setLoading(false); }
-    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setRosterSync(null); setSelectedMembers([]); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
+    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setRosterSync(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { activeRef.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -165,7 +165,8 @@ function Dashboard() {
 
     setSubmitting(true);
     setAwardError('');
-    setStatusMessage('');
+    setStatusMessage('Sending the award and syncing DKP…');
+    setPendingAward({ rows: [...selectedMembers], points: BOSSES.find((boss) => boss.name === selectedBoss)?.points ?? 0, bossName: selectedBoss });
     const payloadKey = JSON.stringify({ bossName: selectedBoss, selectedRows: [...selectedMembers].sort((a,b) => a-b) });
     try {
       const account = sessionUser.id;
@@ -185,14 +186,18 @@ function Dashboard() {
 
       await completeActionRequest(account, 'boss-award', payloadKey);
       setStatusMessage(data.message);
+      setPendingAward(null);
       notifyDkpChanged();
       setSelectedMembers([]);
       setPickerOpen(false);
       setPickerQuery('');
       await fetchData();
     } catch (err: unknown) {
+      setStatusMessage('');
+      setPendingAward(null);
       setAwardError(err instanceof Error ? err.message : 'The award could not be confirmed. Retry with these same participants.');
     } finally {
+      setPendingAward(null);
       setSubmitting(false);
     }
   };
@@ -242,6 +247,7 @@ function Dashboard() {
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
   const ownAvailable = ownToons.some((toon) => toon.available === null) ? null : ownToons.reduce((sum,toon) => sum+toon.available!,0);
+  const ownPendingDkp = pendingAward ? ownToons.filter((toon) => pendingAward.rows.includes(toon.rowIndex)).length * pendingAward.points : 0;
 
   return (
     <div className="space-y-6">
@@ -254,14 +260,14 @@ function Dashboard() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan'],[Wallet,'My available DKP',ownAvailable,'Before active auction holds']].map(([Icon,label,value,caption]) => {
           const I = Icon as typeof Users;
-          return <div key={String(label)} className="surface stat-card last:col-span-2 sm:last:col-span-1"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
+          return <div key={String(label)} className="surface stat-card last:col-span-2 sm:last:col-span-1"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p>{String(label) === 'My available DKP' && ownPendingDkp > 0 && <p className="mt-1 text-[10px] font-medium text-indigo-300">+{ownPendingDkp.toLocaleString()} pending sync</p>}</div></div>;
         })}
       </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
       <main>
         <section id="panel-dkp" aria-label="Roster" hidden={activeView !== 'dkp'}>
           <div className="space-y-8">
-            {canSubmitDkp && statusMessage && <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-3 text-sm text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" />{statusMessage}</div>}
+            {canSubmitDkp && statusMessage && <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${submitting ? 'border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300'}`}>{submitting ? <Zap className="h-4 w-4 shrink-0 animate-pulse" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />}{statusMessage}</div>}
             {!canSubmitDkp && (
               <p className="surface px-4 py-3 text-xs text-slate-400">
                 Your DKP and clan activity are shown below. Clan leadership records boss awards.
@@ -336,7 +342,7 @@ function Dashboard() {
                             </td>
                             <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.earned?.toLocaleString() ?? '—'}</td>
                             <td className="hidden px-3 py-2.5 text-right text-sm tabular-nums text-slate-300 lg:table-cell">{toon.spent?.toLocaleString() ?? '—'}</td>
-                            <td className={`overflow-hidden px-2 py-2.5 text-right text-xs font-semibold tabular-nums sm:px-3 sm:text-sm ${toon.available === null ? 'text-amber-200' : toon.available < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{toon.available?.toLocaleString() ?? '—'}</td>
+                            <td className={`overflow-hidden px-2 py-2.5 text-right text-xs font-semibold tabular-nums sm:px-3 sm:text-sm ${toon.available === null ? 'text-amber-200' : toon.available < 0 ? 'text-rose-300' : 'text-emerald-300'}`}><span>{toon.available?.toLocaleString() ?? '—'}</span>{pendingAward?.rows.includes(toon.rowIndex) && <span className="mt-1 block whitespace-nowrap text-[9px] font-medium text-indigo-300" title={`${pendingAward.bossName} award is being synced`}>+{pendingAward.points} pending</span>}</td>
                           </tr>
                         );
                       })}

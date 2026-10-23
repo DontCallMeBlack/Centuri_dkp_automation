@@ -53,24 +53,25 @@ const ROLE_DETAILS: Record<ClanRole, string> = {
 interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]}
 
 export default function AdminRequestsPage() {
+  const initialAdminData = peekData<AdminData>('/api/admin/requests');
   const mountedRef = useRef(true);
   const loadSequence = useRef(0);
   const dirtyMappings = useRef(new Set<string>());
   const mutationPending = useRef(false);
   const originalMappings = useRef<Record<string, number[]>>({});
   const [section, setSection] = useState<AdminSection>('requests');
-  const [pendingUsers, setPendingUsers] = useState<ClanUser[]>([]);
-  const [members, setMembers] = useState<ClanUser[]>([]);
-  const [auditEvents, setAuditEvents] = useState<ClanAuditEntry[]>([]);
-  const [roster, setRoster] = useState<RosterMember[]>([]);
-  const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>({});
+  const [pendingUsers, setPendingUsers] = useState<ClanUser[]>(() => initialAdminData?.pendingUsers ?? []);
+  const [members, setMembers] = useState<ClanUser[]>(() => initialAdminData?.members ?? []);
+  const [auditEvents, setAuditEvents] = useState<ClanAuditEntry[]>(() => initialAdminData?.auditEvents ?? []);
+  const [roster, setRoster] = useState<RosterMember[]>(() => initialAdminData?.roster ?? []);
+  const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>(() => Object.fromEntries([...(initialAdminData?.pendingUsers ?? []), ...(initialAdminData?.members ?? [])].map((member) => [member._id, member.sheetRecordRows ?? []])));
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
   const [editingToonsFor, setEditingToonsFor] = useState('');
   const [roleEditor, setRoleEditor] = useState<{ memberId: string; selected: ClanRole } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !initialAdminData);
   const [accessRole, setAccessRole] = useState('');
-  const [managerRole, setManagerRole] = useState<ClanRole | ''>('');
-  const [managerId, setManagerId] = useState('');
+  const [managerRole, setManagerRole] = useState<ClanRole | ''>(() => initialAdminData?.managerRole ?? '');
+  const [managerId, setManagerId] = useState(() => initialAdminData?.managerId ?? '');
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -99,8 +100,6 @@ export default function AdminRequestsPage() {
   };
   useEffect(() => {
     mountedRef.current=true;
-    const cached=peekData<AdminData>('/api/admin/requests');
-    if (cached) { applyData(cached); setLoading(false); }
     const clear = () => {
       loadSequence.current += 1; dirtyMappings.current.clear();
       setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
@@ -124,7 +123,27 @@ export default function AdminRequestsPage() {
     mutationPending.current = true;
     setBusyId(userId);
     setError('');
-    setNotice('');
+    setNotice('Applying change to clan records…');
+    const previousPendingUsers = pendingUsers;
+    const previousMembers = members;
+    const target = [...pendingUsers, ...members].find((member) => member._id === userId);
+
+    if (target) {
+      if (action === 'approve') {
+        setPendingUsers((current) => current.filter((member) => member._id !== userId));
+        setMembers((current) => [...current.filter((member) => member._id !== userId), { ...target, role: 'clansman', sheetRecordRows: sheetRecordRows ?? [] }]);
+      } else if (action === 'deny' || action === 'remove') {
+        setPendingUsers((current) => current.filter((member) => member._id !== userId));
+        setMembers((current) => current.filter((member) => member._id !== userId));
+      } else if (action === 'set-role' && role) {
+        setMembers((current) => current.map((member) => member._id === userId ? { ...member, role } : member));
+      } else if (action === 'link' || action === 'unlink') {
+        const nextRows = action === 'unlink'
+          ? (target.sheetRecordRows ?? []).filter((rowIndex) => !sheetRecordRows?.includes(rowIndex))
+          : sheetRecordRows ?? [];
+        setMembers((current) => current.map((member) => member._id === userId ? { ...member, sheetRecordRows: nextRows } : member));
+      }
+    }
     try {
       const res = await fetch('/api/admin/requests', {
         method: 'POST',
@@ -141,9 +160,12 @@ export default function AdminRequestsPage() {
       invalidateData('/api/auth/session');
       invalidateData('/api/auction');
       invalidateData('/api/dkp');
-      await loadData();
+      void loadData();
       return true;
     } catch (actionError) {
+      setPendingUsers(previousPendingUsers);
+      setMembers(previousMembers);
+      setNotice('');
       setError(actionError instanceof Error ? actionError.message : 'The request could not be completed');
       return false;
     } finally {
@@ -297,7 +319,7 @@ export default function AdminRequestsPage() {
   };
 
   if (loading) {
-    return <LoadingSurface label="Preparing clan administration" />;
+    return <LoadingSurface fullLayout label="Preparing clan administration" title="Good people. Stronger clan." />;
   }
 
   if (accessRole) {
@@ -338,7 +360,8 @@ export default function AdminRequestsPage() {
         </nav>
 
         {error && <p role="alert" className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
-        {notice && <p role="status" className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
+        {busyId && <p role="status" aria-live="polite" className="mt-5 flex items-center gap-2 rounded-lg border border-indigo-400/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200"><LoaderCircle size={15} className="animate-spin" />{notice || 'Saving clan changes…'}</p>}
+        {!busyId && notice && <p role="status" className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
 
         <section hidden={section !== 'toons'} aria-label="Manage clan toons"><ClanToonsPanel active={section === 'toons'} accountId={managerId} onChanged={loadData} /></section>
 
