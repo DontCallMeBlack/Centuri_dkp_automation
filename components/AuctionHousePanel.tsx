@@ -56,7 +56,6 @@ interface Auction {
   isWinner: boolean;
   canMarkDelivered: boolean;
   canRemove: boolean;
-  canClose: boolean;
   createdAt: string;
   endsAt: string;
   biddingClosed: boolean;
@@ -107,7 +106,6 @@ function rememberAuctionData(data: AuctionData) {
       isWinner: false,
       canMarkDelivered: false,
       canRemove: false,
-      canClose: false,
       canResolveNoBid: false,
       canRetrySettlement: false,
       highBid: auction.highBid ? { ...auction.highBid, isMine: false } : null,
@@ -470,7 +468,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           isWinner: false,
           canMarkDelivered: false,
           canRemove: true,
-          canClose: true,
           createdAt: createdAt.toISOString(),
           endsAt: new Date(createdAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
           biddingClosed: false,
@@ -583,34 +580,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     }
   };
 
-  const closeAuction = async (auction: Auction) => {
-    const outcome = auction.highBid
-      ? `${auction.highBid.account || auction.highBid.owner} at ${auction.highBid.amount.toLocaleString()} DKP will win.`
-      : 'This auction will close with no bids and can be sent to the bank or reposted.';
-    if (!window.confirm(`Close bidding on ${auction.itemName} now? ${outcome}`)) return;
-
-    setSaving(true);
-    setError('');
-    setNotice('Closing bidding…');
-    try {
-      const response = await fetch('/api/auction', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'close-auction', auctionId: auction.id }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Unable to close auction');
-      setNotice(result.message || 'Bidding closed.');
-      updateAuctionInView(auction.id, { biddingClosed: true, endsAt: new Date().toISOString(), canClose: false });
-      refreshInBackground('Bidding closed.');
-    } catch (closeError) {
-      setNotice('');
-      setError(closeError instanceof Error ? closeError.message : 'Unable to close auction');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const resolveNoBidAuction = async (auction: Auction, resolution: 'banked' | 'repost') => {
     const description = resolution === 'banked'
       ? `Mark ${auction.itemName} as mailed to the bank?`
@@ -649,7 +618,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           isWinner: false,
           canMarkDelivered: false,
           canRemove: true,
-          canClose: true,
           createdAt: resolvedAt.toISOString(),
           endsAt: new Date(resolvedAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
           biddingClosed: false,
@@ -1139,9 +1107,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                         <h4 className="mt-1 break-words text-lg font-black leading-tight text-white">{auction.itemName}</h4>
                       </div>
                     </div>
-                    {isActive && (auction.canRemove || auction.canClose) && (
+                    {isActive && auction.canRemove && (
                       <div className="flex shrink-0 justify-end gap-2">
-                        {auction.canClose && <button className="secondary-button !min-h-9 !px-2.5 !py-1.5 !text-[10px]" type="button" disabled={saving} onClick={() => void closeAuction(auction)}><Clock3 size={12} /> Close</button>}
                         {auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="group/remove inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-400/30 bg-gradient-to-br from-rose-500/20 via-rose-950/60 to-slate-950 text-rose-200 shadow-lg shadow-rose-950/25 transition duration-200 hover:-translate-y-0.5 hover:border-rose-300/70 hover:from-rose-500/40 hover:text-white hover:shadow-xl hover:shadow-rose-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/70 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`} title="Remove auction"><X className="h-4 w-4 transition group-hover/remove:rotate-90" strokeWidth={2.5} /></button>}
                       </div>
                     )}
