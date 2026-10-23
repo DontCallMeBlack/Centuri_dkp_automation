@@ -6,9 +6,8 @@ import Dialog from '@/components/Dialog';
 import RoleBadge from '@/components/RoleBadge';
 import ItemSubrolePicker from '@/components/ItemSubrolePicker';
 import { resolveItemSubroles } from '@/lib/auctionRules';
-import LoadingSurface from '@/components/LoadingSurface';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
-import { ApiError, clearClientData, clientDataVersion, getData, invalidateData } from '@/lib/client/api';
+import { ApiError, clearClientData, clientDataVersion, getData, invalidateData, peekData, rememberData } from '@/lib/client/api';
 import { ImagePlus, LoaderCircle, Package, Save, Search, Trash2, Pencil, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { optimizeImageForUpload } from '@/lib/auctionImageClient';
 
@@ -326,6 +325,7 @@ function ItemEditor({
         )}
       </div>
       <div className="min-w-0 space-y-2">
+        {saving && <p role="status" aria-live="polite" className="flex items-center gap-2 text-xs text-indigo-200"><LoaderCircle size={13} className="animate-spin" />Saving item changes…</p>}
         <label className="sr-only" htmlFor={`item-name-${item.id}`}>Item name</label>
         <input
           id={`item-name-${item.id}`}
@@ -394,21 +394,24 @@ function ItemEditor({
 
 export default function AuctionItemsPanel({ active = true }: { active?: boolean }) {
   const mounted = useRef(true);
-  const [items, setItems] = useState<CatalogItem[]>([]);
+  const [items, setItems] = useState<CatalogItem[]>(() => peekData<{ items: CatalogItem[] }>('/api/auction/items')?.items ?? []);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [requiredRoles, setRequiredRoles] = useState<string[]>([]);
   const [bossType, setBossType] = useState('Prot');
   const [files, setFiles] = useState<File[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !peekData('/api/auction/items'));
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const router = useRouter();
 
   const loadItems = async () => {
     const version = clientDataVersion();
+    setRefreshing(true);
     try {
       const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
       if (!mounted.current || version !== clientDataVersion()) return;
@@ -417,13 +420,13 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
       throw cause;
     } finally {
-      if (mounted.current && version === clientDataVersion()) setLoading(false);
+      if (mounted.current && version === clientDataVersion()) { setLoading(false); setRefreshing(false); }
     }
   };
 
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
+    const clear = () => { setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); setRefreshing(false); };
     window.addEventListener('centuri:clear-data', clear);
     return () => {
       mounted.current = false;
@@ -447,6 +450,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
     setSaving(true);
     setError('');
     setNotice('');
+    setPendingMessage('Preparing images and adding the item…');
     try {
       if (!files.length) throw new Error('Upload at least one image for the new item.');
       if (!requiredRoles.length) throw new Error('Choose at least one role for this item.');
@@ -454,8 +458,13 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
       const response = await fetch('/api/auction/items', { method: 'POST', body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to add saved item.');
+      const createdItem: CatalogItem = { id: result.id, name: name.trim(), requiredRoles, bossType, imageCount: files.length };
+      const nextItems = [...items.filter((item) => item.id !== createdItem.id), createdItem].sort((first, second) => first.name.localeCompare(second.name));
+      const cachedCatalog = peekData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
       catalogChanged();
-      await loadItems();
+      setItems(nextItems);
+      rememberData('/api/auction/items', { items: nextItems, roles: cachedCatalog?.roles ?? [] });
+      void loadItems().catch((cause) => setError(cause instanceof Error ? cause.message : 'The item was added, but the catalog could not be refreshed yet.'));
       setName('');
       setRequiredRoles([]);
       setBossType('Prot');
@@ -466,6 +475,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
       setError(saveError instanceof Error ? saveError.message : 'Unable to add saved item.');
     } finally {
       setSaving(false);
+      setPendingMessage('');
     }
   };
 
@@ -508,7 +518,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p><p role="status" className="mt-2 flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'animate-pulse bg-indigo-300' : error ? 'bg-amber-300' : 'bg-emerald-400'}`} />{refreshing ? 'Refreshing catalog' : error ? 'Showing last loaded catalog' : 'Catalog ready'}</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
@@ -551,10 +561,12 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-400 disabled:opacity-50"
           >
             {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-            Add item
+            {saving ? 'Adding item…' : 'Add item'}
           </button>
         </form>
       </section>}
+
+      {pendingMessage && <p role="status" aria-live="polite" className="flex items-center gap-2 rounded-xl border border-indigo-400/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200"><LoaderCircle size={15} className="animate-spin" />{pendingMessage}</p>}
 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -575,13 +587,17 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
           </label>
         </div>
         {loading ? (
-          <LoadingSurface label="Preparing item catalog" />
-        ) : filteredItems.length === 0 ? (
+          <div role="status" aria-label="Preparing item catalog" aria-busy="true" className="grid gap-3">
+            <span className="sr-only">Preparing item catalog</span>
+            {Array.from({ length: 5 }, (_, index) => <article key={index} className="surface flex items-center gap-4 p-4"><div className="skeleton h-16 w-16 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><div className="skeleton h-4 w-2/5" /><div className="mt-3 flex gap-2"><div className="skeleton h-5 w-20 rounded-full" /><div className="skeleton h-5 w-16 rounded-full" /></div></div><div className="skeleton h-9 w-20 shrink-0 rounded-lg" /></article>)}
+          </div>
+        ) : filteredItems.length === 0 && !saving ? (
           <p className="rounded-2xl border border-dashed border-slate-800 py-10 text-center text-sm text-slate-500">
             {items.length ? 'No items match your search.' : 'No saved items yet.'}
           </p>
         ) : (
           <div className="grid gap-3">
+            {saving && <article role="status" aria-label="Adding item to catalog" className="surface flex items-center gap-4 border-indigo-400/20 p-4"><div className="skeleton h-16 w-16 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><p className="flex items-center gap-2 text-sm font-semibold text-indigo-200"><LoaderCircle size={14} className="animate-spin" />Adding item…</p><p className="mt-2 text-xs text-slate-500">The catalog will update when the upload is confirmed.</p></div></article>}
             {filteredItems.map((item) => (
               <ItemEditor key={item.id} item={item} onSaved={updateItem} onRemoved={removeItem} />
             ))}

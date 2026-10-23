@@ -193,12 +193,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const sessionUser = useSessionUser();
   const activeRef = useRef(active);
   activeRef.current = active;
-  const [data, setData] = useState<AuctionData | null>(null);
+  const initialAuctionData = readAuctionCache();
+  const [data, setData] = useState<AuctionData | null>(() => initialAuctionData);
   const dataRef = useRef<AuctionData | null>(data);
   const fullRefreshCount = useRef(0);
   const liveEpoch = useRef(0);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(() => !initialAuctionData);
+  const [syncing, setSyncing] = useState(() => Boolean(initialAuctionData));
   const [lastSyncedAt, setLastSyncedAt] = useState<number>(0);
   const [localTimeReady, setLocalTimeReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -235,16 +236,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   useEffect(() => {
     setLocalTimeReady(true);
   }, []);
-
-  useEffect(() => {
-    if (data) return;
-    const cachedData = readAuctionCache();
-    if (cachedData) {
-      setData(cachedData);
-      setLoading(false);
-      setSyncing(true);
-    }
-  }, [data]);
 
   useEffect(() => {
     let mounted = true;
@@ -339,8 +330,45 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     }
   };
   useAutoRefresh(refresh, { active, intervalMs: 180_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
+
+  const updateAuctionInView = (auctionId: string, changes: Partial<Auction>) => {
+    setData((current) => {
+      if (!current) return current;
+      const updated = { ...current, auctions: current.auctions.map((auction) => auction.id === auctionId ? { ...auction, ...changes } : auction) };
+      dataRef.current = updated;
+      rememberAuctionData(updated);
+      return updated;
+    });
+    setArchiveAuctions((current) => current.map((auction) => auction.id === auctionId ? { ...auction, ...changes } : auction));
+  };
+
+  const addAuctionToView = (auction: Auction) => {
+    setData((current) => {
+      if (!current || current.auctions.some((entry) => entry.id === auction.id)) return current;
+      const updated = { ...current, auctions: [auction, ...current.auctions] };
+      dataRef.current = updated;
+      rememberAuctionData(updated);
+      return updated;
+    });
+  };
+
+  const removeAuctionFromView = (auctionId: string) => {
+    setData((current) => {
+      if (!current) return current;
+      const updated = { ...current, auctions: current.auctions.filter((auction) => auction.id !== auctionId) };
+      dataRef.current = updated;
+      rememberAuctionData(updated);
+      return updated;
+    });
+    setArchiveAuctions((current) => current.filter((auction) => auction.id !== auctionId));
+  };
+
+  const refreshInBackground = (confirmedAction: string) => {
+    void refresh().catch((cause) => setError(`${confirmedAction} The latest auction view is delayed: ${cause instanceof Error ? cause.message : 'retrying automatically.'}`));
+  };
+
   useEffect(() => {
-    const clear = () => { archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setPostFormOpen(false); setError(''); setNotice(''); };
+    const clear = () => { archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);
@@ -384,7 +412,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     event.preventDefault();
     setSaving(true);
     setError('');
-    setNotice('');
+    setNotice('Posting auction…');
     try {
       if (!sessionUser?.id) throw new Error('Your session is still loading. Try again in a moment.');
       const requestId = await getActionRequestId(sessionUser.id, 'auction-create', selectedItemId);
@@ -396,10 +424,41 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to post auction');
       await completeActionRequest(sessionUser.id, 'auction-create', selectedItemId);
+      const item = dataRef.current?.items.find((entry) => entry.id === selectedItemId);
+      if (item && typeof result.auctionId === 'string') {
+        const createdAt = new Date();
+        addAuctionToView({
+          id: result.auctionId,
+          itemId: item.id,
+          imageCount: item.imageCount,
+          itemName: item.name,
+          bossType: item.bossType,
+          requiredRoles: item.requiredRoles,
+          requiredRole: item.requiredRoles[0],
+          createdBy: sessionUser.nickname,
+          isPoster: true,
+          isWinner: false,
+          canMarkDelivered: false,
+          canRemove: true,
+          canClose: true,
+          createdAt: createdAt.toISOString(),
+          endsAt: new Date(createdAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+          biddingClosed: false,
+          status: 'active',
+          highBid: null,
+          winner: null,
+          deliveryStatus: 'not-required',
+          deliveredBy: null,
+          deliveredAt: null,
+          settlementError: null,
+          canResolveNoBid: false,
+        });
+      }
       setNotice('Auction posted for 24 hours. Bids in the final 5 minutes leave 5 minutes on the clock.');
       setPostFormOpen(false);
-      await refresh();
+      refreshInBackground('Auction posted.');
     } catch (submitError) {
+      setNotice('');
       setError(submitError instanceof Error ? submitError.message : 'Unable to post auction');
     } finally {
       setSaving(false);
@@ -420,7 +479,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     }
     setSaving(true);
     setError('');
-    setNotice('');
+    setNotice('Submitting bid… current bids and balance are being checked.');
     try {
       const response = await fetch('/api/auction', {
         method: 'POST',
@@ -431,22 +490,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (!response.ok) throw new Error(result.error || 'Unable to place bid');
       setNotice(result.message);
       notifyDkpChanged();
-      if (result.highBid) {
-        setData((current) => {
-          if (!current) return current;
-          const updated: AuctionData = {
-            ...current,
-            auctions: current.auctions.map((item) => item.id === auction.id
-              ? { ...item, highBid: result.highBid as AuctionBid, endsAt: result.endsAt ?? item.endsAt }
-              : item),
-          };
-          rememberAuctionData(updated);
-          return updated;
-        });
-      }
+      if (result.highBid) updateAuctionInView(auction.id, { highBid: result.highBid as AuctionBid, endsAt: result.endsAt ?? auction.endsAt });
       setBidAmounts((current) => ({ ...current, [auction.id]: '' }));
-      await refresh();
+      refreshInBackground('Bid placed.');
     } catch (bidError) {
+      setNotice('');
       const failure = bidError instanceof Error ? bidError.message : 'Unable to confirm bid';
       try { await refresh(); setError(failure); }
       catch { setError(`${failure} Current bids could not be refreshed; the displayed balances may have changed.`); }
@@ -458,7 +506,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const markDelivered = async (auctionId: string) => {
     setSaving(true);
     setError('');
-    setNotice('');
+    setNotice('Saving delivery update…');
     try {
       const response = await fetch('/api/auction', {
         method: 'POST',
@@ -468,8 +516,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to update delivery task');
       setNotice(result.message || 'Item marked mailed.');
-      await refresh();
+      updateAuctionInView(auctionId, { deliveryStatus: 'done', deliveredBy: sessionUser?.nickname ?? null, deliveredAt: new Date().toISOString(), canMarkDelivered: false });
+      refreshInBackground('Delivery update saved.');
     } catch (deliveryError) {
+      setNotice('');
       setError(deliveryError instanceof Error ? deliveryError.message : 'Unable to update delivery task');
     } finally {
       setSaving(false);
@@ -483,7 +533,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
     setSaving(true);
     setError('');
-    setNotice('');
+    setNotice('Removing auction…');
     try {
       const response = await fetch('/api/auction', {
         method: 'POST',
@@ -493,8 +543,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to remove auction');
       setNotice(result.message);
-      await refresh();
+      removeAuctionFromView(auction.id);
+      refreshInBackground('Auction removed.');
     } catch (removeError) {
+      setNotice('');
       setError(removeError instanceof Error ? removeError.message : 'Unable to remove auction');
     } finally {
       setSaving(false);
@@ -509,7 +561,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
     setSaving(true);
     setError('');
-    setNotice('');
+    setNotice('Closing bidding…');
     try {
       const response = await fetch('/api/auction', {
         method: 'POST',
@@ -519,19 +571,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to close auction');
       setNotice(result.message || 'Bidding closed.');
-      setData((current) => {
-        if (!current) return current;
-        const updated = {
-          ...current,
-          auctions: current.auctions.map((item) => item.id === auction.id
-            ? { ...item, biddingClosed: true, endsAt: new Date().toISOString() }
-            : item),
-        };
-        rememberAuctionData(updated);
-        return updated;
-      });
-      await refresh();
+      updateAuctionInView(auction.id, { biddingClosed: true, endsAt: new Date().toISOString(), canClose: false });
+      refreshInBackground('Bidding closed.');
     } catch (closeError) {
+      setNotice('');
       setError(closeError instanceof Error ? closeError.message : 'Unable to close auction');
     } finally {
       setSaving(false);
@@ -546,7 +589,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
     setSaving(true);
     setError('');
-    setNotice('');
+    setNotice(resolution === 'banked' ? 'Saving bank delivery…' : 'Reposting auction…');
     try {
       const response = await fetch('/api/auction', {
         method: 'POST',
@@ -560,8 +603,40 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to resolve auction');
       setNotice(result.message);
-      await refresh();
+      const resolvedAt = new Date();
+      updateAuctionInView(auction.id, {
+        deliveryStatus: resolution === 'banked' ? 'banked' : 'reposted',
+        deliveredBy: sessionUser?.nickname ?? null,
+        deliveredAt: resolvedAt.toISOString(),
+        canResolveNoBid: false,
+      });
+      if (resolution === 'repost' && typeof result.auctionId === 'string') {
+        addAuctionToView({
+          ...auction,
+          id: result.auctionId,
+          createdBy: sessionUser?.nickname ?? auction.createdBy,
+          isPoster: true,
+          isWinner: false,
+          canMarkDelivered: false,
+          canRemove: true,
+          canClose: true,
+          createdAt: resolvedAt.toISOString(),
+          endsAt: new Date(resolvedAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+          biddingClosed: false,
+          status: 'active',
+          highBid: null,
+          winner: null,
+          deliveryStatus: 'not-required',
+          deliveredBy: null,
+          deliveredAt: null,
+          settlementError: null,
+          canResolveNoBid: false,
+          canRetrySettlement: false,
+        });
+      }
+      refreshInBackground(resolution === 'banked' ? 'Bank delivery saved.' : 'Auction reposted.');
     } catch (resolveError) {
+      setNotice('');
       setError(resolveError instanceof Error ? resolveError.message : 'Unable to resolve auction');
     } finally {
       setSaving(false);
@@ -570,26 +645,30 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
   const retrySettlement = async (auction: Auction) => {
     if (saving) return;
-    setSaving(true); setError(''); setNotice('');
+    setSaving(true); setError(''); setNotice('Retrying auction settlement…');
     try {
       const response=await fetch('/api/auction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'retry-settlement',auctionId:auction.id})});
       const result=await response.json();
       if (!response.ok) throw new Error(result.error || 'Settlement could not be retried.');
       setNotice(result.message || 'Settlement retry requested.');
-      await refresh(); notifyDkpChanged();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to retry settlement.'); }
+      updateAuctionInView(auction.id, { status: 'settling', canRetrySettlement: false, settlementError: null });
+      refreshInBackground('Settlement retry requested.'); notifyDkpChanged();
+    } catch (cause) { setNotice(''); setError(cause instanceof Error ? cause.message : 'Unable to retry settlement.'); }
     finally { setSaving(false); }
   };
 
   if (loading) {
-    return <LoadingSurface label="Preparing auction house" />;
+    return <LoadingSurface fullLayout label="Preparing auction house" title="Find your next upgrade." />;
   }
 
   if (!data) {
-    return <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300">
-      <p role="alert">{error || 'Unable to load the auction house.'}</p>
-      <button onClick={() => { setLoading(true); void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.')).finally(() => setLoading(false)); }} className="mt-4 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold hover:bg-slate-800">Retry</button>
-    </section>;
+    return <div className="space-y-4">
+      <LoadingSurface fullLayout label="Auction house is waiting for data" title="Find your next upgrade." />
+      <section className="surface flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-slate-300">
+        <p role="alert">{error || 'Auction data is taking longer to arrive.'}</p>
+        <button onClick={() => { setLoading(true); void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.')).finally(() => setLoading(false)); }} className="secondary-button">Retry</button>
+      </section>
+    </div>;
   }
 
   const filteredItems = data.items.filter((item) =>
@@ -679,7 +758,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       )}
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
-      {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
+      {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${saving ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{saving && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
       {data.rosterSync?.stale && (
         <p role="status" className="rounded-xl border border-amber-400/25 bg-amber-400/5 px-4 py-3 text-xs leading-relaxed text-amber-100">
           {data.rosterSync.refreshDelayed

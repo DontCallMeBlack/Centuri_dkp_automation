@@ -35,21 +35,22 @@ interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMembe
 
 export default function BossHistoryPanel({ embedded = false, active = true }: { embedded?: boolean; active?: boolean }) {
   const user = useSessionUser();
+  const initialHistory = peekData<HistoryData>('/api/admin/boss-history');
   const mountedRef = useRef(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [awards, setAwards] = useState<BossAward[]>([]);
-  const [roster, setRoster] = useState<RosterMember[]>([]);
-  const [selectedRows, setSelectedRows] = useState<Record<string, number[]>>({});
+  const [awards, setAwards] = useState<BossAward[]>(() => initialHistory?.awards ?? []);
+  const [roster, setRoster] = useState<RosterMember[]>(() => initialHistory?.roster ?? []);
+  const [selectedRows, setSelectedRows] = useState<Record<string, number[]>>(() => Object.fromEntries((initialHistory?.awards ?? []).map((award) => [award.id, award.selectedRows])));
   const [editingId, setEditingId] = useState('');
   const editingRef = useRef('');
   editingRef.current = editingId;
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !initialHistory);
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [accessDenied, setAccessDenied] = useState(false);
-  const [canManage, setCanManage] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [canManage, setCanManage] = useState(() => initialHistory?.canManage === true);
+  const [nextCursor, setNextCursor] = useState<string | null>(() => initialHistory?.nextCursor ?? null);
   const [loadingMore, setLoadingMore] = useState(false);
   const pageCount = useRef(1);
   const historySequence = useRef(0);
@@ -90,8 +91,6 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   };
   useEffect(() => {
     mountedRef.current=true;
-    const cached=peekData<HistoryData>('/api/admin/boss-history');
-    if (cached) { applyData(cached); setLoading(false); }
     const clear = () => { historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
@@ -138,9 +137,15 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     }
 
     const payloadKey = JSON.stringify({kind:'edit',awardId,selectedRows:[...(selectedRows[awardId] ?? [])].sort((a,b) => a-b)});
+    const previousAwards = awards;
+    const nextSelectedRows = selectedRows[awardId] ?? [];
+    const nextParticipants = roster.filter((member) => nextSelectedRows.includes(member.rowIndex));
+    setAwards((current) => current.map((entry) => entry.id === awardId
+      ? { ...entry, status: 'updating', selectedRows: nextSelectedRows, participants: nextParticipants }
+      : entry));
     setBusyId(awardId);
     setError('');
-    setNotice('');
+    setNotice('Saving attendance and syncing DKP…');
     try {
       if (!user?.id) throw new Error('Your session is still loading. Try again in a moment.');
       const requestId = await getActionRequestId(user.id, 'boss-history', payloadKey);
@@ -156,6 +161,8 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       setEditingId(''); editingRef.current='';
       notifyDkpChanged();
     } catch (saveError) {
+      setAwards(previousAwards);
+      setNotice('');
       setError(saveError instanceof Error ? saveError.message : 'Unable to update boss attendance');
       await loadHistory(false);
     } finally {
@@ -171,9 +178,11 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     }
 
     const payloadKey = JSON.stringify({kind:'delete',awardId:award.id});
+    const previousAwards = awards;
+    setAwards((current) => current.map((entry) => entry.id === award.id ? { ...entry, status: 'updating' } : entry));
     setBusyId(award.id);
     setError('');
-    setNotice('');
+    setNotice('Removing this kill and syncing DKP…');
     try {
       if (!user?.id) throw new Error('Your session is still loading. Try again in a moment.');
       const requestId = await getActionRequestId(user.id, 'boss-history', payloadKey);
@@ -189,6 +198,8 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       setEditingId(''); editingRef.current='';
       notifyDkpChanged();
     } catch (deleteError) {
+      setAwards(previousAwards);
+      setNotice('');
       setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete boss kill');
       await loadHistory(false);
     } finally {
@@ -197,7 +208,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   };
 
   const resumeAward = async (award: BossAward) => {
-    setBusyId(award.id); setError(''); setNotice('');
+    setBusyId(award.id); setError(''); setNotice('Resuming the pending DKP update…');
     const change = award.pendingChange;
     try {
       const result = await readResponse<{message:string}>(await fetch(change ? '/api/admin/boss-history' : '/api/dkp', {
@@ -211,11 +222,11 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
         await completeActionRequest(user.id, change ? 'boss-history' : 'boss-award', payload);
       }
       setNotice(result.message); notifyDkpChanged();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed.'); await loadHistory(false); }
+    } catch (cause) { setNotice(''); setError(cause instanceof Error ? cause.message : 'The operation could not be confirmed.'); await loadHistory(false); }
     finally { setBusyId(''); }
   };
 
-  if (loading) return <LoadingSurface label="Preparing boss history" />;
+  if (loading) return <LoadingSurface fullLayout label="Preparing boss history" title="Every kill. Every contribution." />;
 
   if (accessDenied) {
     return (
@@ -241,7 +252,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
             : 'Boss history is view-only. Only Chiefs, Generals, and Guardians can change records.'}
         </p>
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
-        {notice && <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
+        {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
 
         {awards.length === 0 ? (
           <section className="border-y border-slate-800 py-12 text-center">
@@ -350,7 +361,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                       className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
                     >
                       {busyId === award.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      Save changes
+                      {busyId === award.id ? 'Saving changes…' : 'Save changes'}
                     </button>
                   </div>
                 </div>
