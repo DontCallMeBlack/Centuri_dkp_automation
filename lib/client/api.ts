@@ -1,9 +1,10 @@
 'use client';
 
-type Cached = { value: unknown; savedAt: number };
+type Cached = { value: unknown };
 const cache = new Map<string, Cached>();
 const pending = new Map<string, Promise<unknown>>();
 const versions = new Map<string, number>();
+const MAX_CACHED_RESOURCES = 40;
 let generation = 0;
 export function clientDataVersion() { return generation; }
 
@@ -18,13 +19,24 @@ export async function readResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-// Private data stays in this browser tab's memory and is always revalidated on entry.
+// Private data stays in this tab's memory until refreshed or invalidated, with a 40-resource LRU limit.
 export function peekData<T>(url: string): T | null {
   const entry = cache.get(url);
-  return entry && Date.now() - entry.savedAt < 5 * 60_000 ? entry.value as T : null;
+  if (!entry) return null;
+  cache.delete(url);
+  cache.set(url, entry);
+  return entry.value as T;
 }
 
-export function rememberData<T>(url: string, value: T) { cache.set(url, { value, savedAt: Date.now() }); }
+export function rememberData<T>(url: string, value: T) {
+  cache.delete(url);
+  cache.set(url, { value });
+  while (cache.size > MAX_CACHED_RESOURCES) {
+    const oldestUrl = cache.keys().next().value;
+    if (oldestUrl === undefined) break;
+    cache.delete(oldestUrl);
+  }
+}
 
 export function invalidateData(url: string) {
   versions.set(url, (versions.get(url) ?? 0) + 1);
