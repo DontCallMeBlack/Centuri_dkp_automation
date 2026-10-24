@@ -346,7 +346,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (version === clientDataVersion()) setLoading(false);
     }
   };
-  useAutoRefresh(refresh, { active, intervalMs: 180_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
+  useAutoRefresh(refresh, { active, intervalMs: 60_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
 
   const updateAuctionInView = (auctionId: string, changes: Partial<Auction>) => {
     setData((current) => {
