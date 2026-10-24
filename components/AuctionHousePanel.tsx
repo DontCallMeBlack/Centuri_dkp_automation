@@ -268,17 +268,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   useEffect(() => {
     let mounted = true;
     let pollInFlight = false;
-    let pollFailures = 0;
-    let nextPollAt = 0;
-    let lastIdlePollAt = 0;
     const pollLiveAuctions = async () => {
       const current = dataRef.current;
-      if (!current || pollInFlight || fullRefreshCount.current > 0 || !activeRef.current || document.visibilityState !== 'visible' || navigator.onLine === false || Date.now() < nextPollAt) return;
-      const hasLiveAuctions = current.auctions.some((auction) =>
-        ['active','settling','settlement-failed'].includes(auction.status),
-      );
-      if (!hasLiveAuctions && Date.now() - lastIdlePollAt < 5 * 60_000) return;
-      if (!hasLiveAuctions) lastIdlePollAt = Date.now();
+      if (!current || pollInFlight || fullRefreshCount.current > 0 || !activeRef.current || document.visibilityState !== 'visible' || navigator.onLine === false) return;
       pollInFlight = true;
       const pollGeneration = clientDataVersion();
       const epoch = liveEpoch.current;
@@ -291,7 +283,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         if (!response.ok) throw new Error('Live bid updates are delayed. Retrying automatically.');
         const result = await response.json();
         if (!mounted || pollGeneration !== clientDataVersion() || epoch !== liveEpoch.current) return;
-        pollFailures = 0; nextPollAt = 0;
         setError('');
         setLastSyncedAt(Date.now());
         if (!result.changed || !Array.isArray(result.auctions)) return;
@@ -317,15 +308,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         setLastSyncedAt(Date.now());
         if (personalBalanceChanged) await refresh();
       } catch (cause) {
-        pollFailures += 1;
-        nextPollAt = Date.now() + Math.min(300_000, 30_000 * 2 ** Math.min(pollFailures - 1, 4));
         if (mounted) setError(cause instanceof Error ? cause.message : 'Live updates are delayed. Retrying automatically.');
       } finally {
         pollInFlight = false;
       }
     };
-    // Poll only compact auction state frequently; reload roster/catalog less often.
-    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 30_000 + Math.floor(Math.random() * 5_000));
+    // Poll compact auction state every minute; reload roster/catalog less often.
+    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 60_000);
     const clockTimer = window.setInterval(() => { if (activeRef.current && document.visibilityState === 'visible') setNow(Date.now()); }, 1000);
     return () => {
       mounted = false;
