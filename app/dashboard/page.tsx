@@ -38,12 +38,6 @@ interface UserSession {
   sheetRecordRows: number[];
 }
 
-interface RosterSyncStatus {
-  fetchedAt: string;
-  stale: boolean;
-  refreshDelayed: boolean;
-}
-
 const BOSSES = [
   { name: 'Base', points: 1 },
   { name: 'Prime', points: 2 },
@@ -88,15 +82,13 @@ function Dashboard() {
   const sessionUser = useSessionUser();
   const requestedView = searchParams.get('view');
   const activeView = requestedView === 'auction' || requestedView === 'items' || requestedView === 'boss-history' ? requestedView : 'dkp';
-  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; rosterSync: RosterSyncStatus }>('/api/dkp');
+  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession }>('/api/dkp');
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
-  const [refreshing, setRefreshing] = useState(false);
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
   const [roster, setRoster] = useState<RosterMember[]>(() => initialDkpData?.roster ?? []);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>(() => initialDkpData?.clanMembers ?? []);
   const [userSession, setUserSession] = useState<UserSession | null>(() => initialDkpData?.user ?? null);
-  const [rosterSync, setRosterSync] = useState<RosterSyncStatus | null>(() => initialDkpData?.rosterSync ?? null);
   const [rosterSyncError, setRosterSyncError] = useState('');
   const [loading, setLoading] = useState(() => !initialDkpData);
   const [selectedBoss, setSelectedBoss] = useState('Base');
@@ -112,7 +104,7 @@ function Dashboard() {
 
   useEffect(() => {
     activeRef.current = true;
-    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setRosterSync(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
+    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { activeRef.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -121,12 +113,11 @@ function Dashboard() {
 
 
   const fetchData = async (fresh = false) => {
-    setRefreshing(true);
     try {
-      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; rosterSync: RosterSyncStatus}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp');
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp');
       if (!data.success) throw new Error('The roster could not be refreshed.');
       if (!activeRef.current) return;
-      setRoster(data.roster); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSync(data.rosterSync); setRosterSyncError('');
+      setRoster(data.roster); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSyncError('');
       return data.roster;
     } catch (err) {
       if (!activeRef.current) return;
@@ -134,7 +125,7 @@ function Dashboard() {
       else if (activeRef.current) setRosterSyncError(err instanceof Error ? err.message : 'Unable to load clan data');
       return false;
     } finally {
-      if (activeRef.current) { setLoading(false); setRefreshing(false); }
+      if (activeRef.current) setLoading(false);
     }
   };
   useAutoRefresh(fetchData, { active: activeView === 'dkp' });
@@ -349,7 +340,6 @@ function Dashboard() {
                 </div>
               )}
             </section>
-            <div role="status" className="flex items-center justify-end gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'animate-pulse bg-indigo-400' : rosterSyncError || rosterSync?.stale ? 'bg-amber-300' : rosterSync ? 'bg-emerald-400' : 'bg-slate-600'}`} />{refreshing ? 'Refreshing roster' : rosterSyncError || rosterSync?.stale ? 'Cached roster - refresh needed' : rosterSync ? `Updated ${new Date(rosterSync.fetchedAt).toLocaleTimeString()}` : 'Roster not loaded'}</div>
           </div>
         </section>
         {(activeView === 'auction' || visitedViews.has('auction')) && <section id="panel-auction" aria-label="Auction house" hidden={activeView !== 'auction'}><AuctionHousePanel active={activeView === 'auction'} /></section>}

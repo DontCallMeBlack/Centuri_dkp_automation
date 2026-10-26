@@ -244,7 +244,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
   return (
     <section className="space-y-5 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Review boss rewards and keep attendance accurate.' : 'Explore your clan boss kills and attendance.'}</p></div><span className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${refreshing ? 'animate-pulse' : ''}`} />Automatic updates</span></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Review boss rewards and keep attendance accurate.' : 'Explore your clan boss kills and attendance.'}</p></div></div>
       <div className="space-y-4">
         <p className="text-sm text-slate-400">
           {canManage

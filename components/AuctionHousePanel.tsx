@@ -759,11 +759,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       {data.rosterSync?.stale && (
         <p role="status" className="rounded-xl border border-amber-400/25 bg-amber-400/5 px-4 py-3 text-xs leading-relaxed text-amber-100">
           {data.rosterSync.refreshDelayed
-            ? 'Google Sheets could not refresh; showing the cached roster'
-            : 'Showing the cached roster while Google Sheets refreshes'}
-          {' · Last updated '}
-          {new Date(data.rosterSync.fetchedAt).toLocaleTimeString()}.
-          {' Bids and DKP changes still require a fresh Sheets check.'}
+            ? 'Google Sheets could not refresh; showing the cached roster.'
+            : 'Showing the cached roster.'}
+          {' Bids and DKP changes still require fresh Sheets data.'}
         </p>
       )}
 
@@ -974,7 +972,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p><p className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${syncing ? 'animate-pulse bg-indigo-300' : error || !lastSyncedAt ? 'bg-amber-300' : 'bg-emerald-400'}`} />{syncing ? 'Syncing automatically' : error || !lastSyncedAt ? 'Updates delayed — retrying automatically' : `Last checked ${new Date(lastSyncedAt).toLocaleTimeString()}`}</p></div>
+            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="tablist" aria-label="Auction views">
               <button type="button" role="tab" aria-selected={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" role="tab" aria-selected={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
