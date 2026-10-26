@@ -40,6 +40,9 @@ svg { flex-shrink: 0; }
 .surface { border: 1px solid rgba(160,174,205,.13); border-radius: 22px; background: linear-gradient(145deg,rgba(22,27,43,.94),rgba(13,17,29,.96)); box-shadow: 0 18px 48px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.035); }
 .member-account-card { position: relative; overflow: hidden; border: 1px solid rgba(160,174,205,.12); border-radius: 22px; background: linear-gradient(125deg,rgba(25,30,47,.96),rgba(15,19,31,.96) 62%,rgba(17,18,31,.98)); box-shadow: 0 14px 34px rgba(0,0,0,.17),inset 0 1px 0 rgba(255,255,255,.035); transition: transform .2s ease,border-color .2s ease,box-shadow .2s ease; }
 .member-account-card:hover { transform: translateY(-1px); border-color: rgba(165,166,255,.23); box-shadow: 0 20px 42px rgba(0,0,0,.22),0 0 30px rgba(99,89,195,.06); }
+.item-catalog { width: 100%; min-width: 0; max-width: 100%; }
+.item-catalog > *, .item-catalog article, .item-catalog form, .item-catalog fieldset { min-width: 0; max-width: 100%; }
+.item-catalog fieldset > div, .item-catalog fieldset label { min-width: 0; }
 .stat-card { position: relative; overflow: hidden; padding: 20px 21px; display: flex; align-items: start; gap: 14px; background: radial-gradient(ellipse at 100% 0%,rgba(128,119,255,.12),transparent 50%),linear-gradient(145deg,rgba(23,28,45,.98),rgba(13,17,29,.96)); transition: transform .22s ease,border-color .22s ease,box-shadow .22s ease; }
 .stat-card::before { content: ""; position: absolute; inset: 0 18% auto 0; height: 1px; background: linear-gradient(90deg,rgba(178,172,255,.5),rgba(178,172,255,.08),transparent); }
 .stat-card:hover { transform: translateY(-2px); border-color: rgba(165,166,255,.25); box-shadow: 0 22px 48px rgba(0,0,0,.24),0 0 28px rgba(99,89,195,.07); }
