@@ -106,7 +106,7 @@ function isUndoableActivity(event: ClanAuditEntry) {
 
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
 
-type AdminSection = 'requests' | 'members' | 'toons' | 'activity' | 'archive';
+type AdminSection = 'requests' | 'members' | 'toons' | 'activity';
 const ROLE_DETAILS: Record<ClanRole, string> = {
   chief: 'Full clan administration, member access, DKP awards and auctions.',
   general: 'Manage members, promote Guardians, record kills and manage auctions.',
@@ -363,7 +363,7 @@ export default function AdminRequestsPage() {
   };
 
   const removeMember = (member: ClanUser) => {
-    if (window.confirm(`Remove ${member.nickname}'s account? It can be restored from the Archive.`)) {
+    if (window.confirm(`Remove ${member.nickname}'s account? It can be restored from the Activity log.`)) {
       void sendAdminAction(member._id, 'remove');
     }
   };
@@ -536,7 +536,6 @@ export default function AdminRequestsPage() {
             ['members', 'Members', Users, members.length],
             ['toons', 'Clan toons', Shield, roster.length],
             ['activity', 'Activity log', History, auditEvents.length],
-            ['archive', 'Archive', Undo2, archivedAccounts.length + archivedToons.length],
           ] as const).map(([key, label, Icon, count]) => (
             <button
               key={key}
@@ -688,7 +687,7 @@ export default function AdminRequestsPage() {
           </section>
         )}
 
-        {section === 'archive' && (
+        {section === 'activity' && (
           <section className="tab-panel-content mt-6 space-y-8">
             <div>
               <h2 className="mb-4 text-lg font-bold text-white">Removed toons</h2>
