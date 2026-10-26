@@ -80,22 +80,23 @@ interface ArchivedToon {
 function auditSummary(event: ClanAuditEntry) {
   const toon = event.affectedToon ?? event.addedToons?.[0] ?? event.removedToons?.[0];
   const toonName = toon?.account || toon?.owner || 'Toon';
+  const actor = event.actorNickname || 'A manager';
+  const target = event.targetNickname || 'account';
   switch (event.eventType) {
-    case 'toon-restored': return `Toon restored: ${toonName}`;
-    case 'toon-created': return `Toon added · ${toonName}`;
-    case 'toon-removed': return `Toon removed · ${toonName}`;
-    case 'toon-dkp-wiped': return `DKP wiped · ${event.targetNickname}`;
-    case 'toon-transferred': return `Toon transferred · ${toonName}`;
-    case 'member-removal': return `Member removed · ${event.targetNickname}`;
-    case 'toon-links': return `Toon links changed · ${event.targetNickname}`;
-    case 'toon-reference-refresh': return `Roster links refreshed · ${event.targetNickname}`;
-    case 'account-approval': return `Account approved · ${event.targetNickname}`;
-    case 'account-denial': return `Sign-up denied · ${event.targetNickname}`;
-    case 'promotion': return `Promoted · ${event.targetNickname} · ${event.previousRole} → ${event.newRole}`;
-    case 'demotion': return `Demoted · ${event.targetNickname} · ${event.previousRole} → ${event.newRole}`;
+    case 'toon-restored': return `${actor} restored ${toonName}`;
+    case 'toon-created': return `${actor} added ${toonName}`;
+    case 'toon-removed': return `${actor} removed ${toonName}`;
+    case 'toon-dkp-wiped': return `${actor} wiped ${target} DKP`;
+    case 'toon-transferred': return `${actor} transferred ${toonName} to ${event.transferToNickname || 'another account'}`;
+    case 'member-removal': return `${actor} removed ${target}'s account`;
+    case 'toon-links': return `${actor} updated ${target}'s toon links`;
+    case 'toon-reference-refresh': return `${actor} refreshed ${target}'s toon links`;
+    case 'account-approval': return `${actor} approved ${target} account`;
+    case 'account-denial': return `${actor} denied ${target}'s sign-up`;
+    case 'promotion': return `${actor} promoted ${target} to ${event.newRole || 'a higher role'}`;
+    case 'demotion': return `${actor} demoted ${target} to ${event.newRole || 'a lower role'}`;
   }
 }
-
 function isUndoableActivity(event: ClanAuditEntry) {
   if (event.undoneAt) return false;
   if (event.undoAvailable !== undefined) return event.undoAvailable;
@@ -669,10 +670,7 @@ export default function AdminRequestsPage() {
                     <article key={event.id} className="flex flex-col gap-3 bg-slate-950/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <p className="break-words text-sm font-semibold text-slate-100">{auditSummary(event)}</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {event.actorNickname} · {new Date(event.createdAt).toLocaleString()}
-                          {event.undoneAt && <span className="ml-2 text-amber-300">Undone by {event.undoneByNickname || 'manager'}</span>}
-                        </p>
+                        <p className="mt-1 text-xs text-slate-500">{new Date(event.createdAt).toLocaleString()}</p>
                         {event.eventType === 'toon-transferred' && event.transferStatus === 'pending' && <button type="button" disabled={busyId !== ''} onClick={() => void resumePendingTransfer(event)} className="mt-2 inline-flex min-h-8 items-center gap-2 rounded-lg border border-amber-300/20 bg-amber-300/[.06] px-3 text-xs font-semibold text-amber-100 hover:bg-amber-300/[.12] disabled:opacity-40"><ArrowRightLeft size={13} />Resume transfer</button>}
                       </div>
                       <button type="button" onClick={() => void undoActivity(event)} disabled={!isUndoableActivity(event) || busyId !== ''}
