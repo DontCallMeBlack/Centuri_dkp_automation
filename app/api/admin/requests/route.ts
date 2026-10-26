@@ -4,13 +4,14 @@ import User from '@/lib/models/User';
 import AuthSession from '@/lib/models/AuthSession';
 import Auction, { type IAuction } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
+import AuctionBidHistory from '@/lib/models/AuctionBidHistory';
 import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
 import RosterMutation from '@/lib/models/RosterMutation';
 import ToonDkpReset from '@/lib/models/ToonDkpReset';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { CLAN_ROLES, canChangeMemberRole, isClanRole, validRosterRows } from '@/lib/auth/permissions';
-import { getSheetRoster, resetToonDkp, withDkpLedgerLock } from '@/lib/googleSheets';
+import { changeClanToon, getSheetRoster, resetToonDkp, withDkpLedgerLock } from '@/lib/googleSheets';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { withdrawToonOpenAuctionBids } from '@/lib/auctionBidWithdrawal';
 import { getLinkedSheetRecordRows, getSheetRecordKey, type SheetRecordIdentity } from '@/lib/sheetRecordLinks';
@@ -120,18 +121,126 @@ async function releaseStaleRowReferences(actorId: string, targetId: string, rows
   });
 }
 
+async function undoActivity(actorId: string, eventId: string, requestId: string) {
+  const eventPreview = await ClanAuditEvent.findById(eventId).lean();
+  if (!eventPreview) throw new RequestValidationError('Activity entry not found.', 404);
+  if (eventPreview.undoneAt) {
+    if (eventPreview.undoRequestId === requestId) return { success: true, message: 'Change undone.' };
+    throw new RequestValidationError('This activity has already been undone.', 409);
+  }
+  if (eventPreview.eventType === 'toon-created') {
+    const toon = eventPreview.addedToons?.[0];
+    if (!toon) throw new RequestValidationError('This toon creation cannot be undone safely.', 409);
+    const roster = await getSheetRoster({ fresh: true });
+    const current = roster.find((record) => getSheetRecordKey(record) === getSheetRecordKey(toon));
+    if (!current) throw new RequestValidationError('This toon is no longer on the roster.', 409);
+    await changeClanToon(actorId, requestId, {
+      action: 'remove', rowIndex: current.rowIndex, owner: current.owner, account: current.account,
+      undoCreatedEventId: eventId,
+    });
+    return { success: true, message: 'Toon creation undone.' };
+  }
+
+  return withDkpLedgerLock((roster) => withClanAdministrationTransaction(async (session) => {
+    const manager = await User.findOne({ _id: actorId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
+    if (!manager) throw new RequestValidationError('Your permissions changed. Refresh and try again.', 403);
+    const latest = await ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).select('_id').session(session).lean();
+    if (!latest.some((entry) => entry._id.toString() === eventId)) throw new RequestValidationError('Only the latest 100 activity entries can be undone.', 409);
+    const event = await ClanAuditEvent.findById(eventId).session(session);
+    if (!event) throw new RequestValidationError('Activity entry not found.', 404);
+    if (event.undoneAt) {
+      if (event.undoRequestId === requestId) return { success: true, message: 'Change undone.' };
+      throw new RequestValidationError('This activity has already been undone.', 409);
+    }
+    if (!['promotion', 'demotion', 'toon-links', 'account-approval'].includes(event.eventType)) {
+      throw new RequestValidationError('This change cannot be undone safely.', 409);
+    }
+    const target = event.targetUserId ? await User.findById(event.targetUserId).session(session) : null;
+    if (!target) throw new RequestValidationError('The account no longer exists.', 409);
+    const laterChange = await ClanAuditEvent.exists({
+      targetUserId: target._id, createdAt: { $gt: event.createdAt },
+    }).session(session);
+    if (laterChange) throw new RequestValidationError('This account has later activity and cannot be safely undone.', 409);
+
+    if (event.eventType === 'promotion' || event.eventType === 'demotion') {
+      if (target.status !== 'approved' || target.role !== event.newRole || !canChangeMemberRole(manager.role, target.role, event.previousRole, target._id.equals(manager._id),
+        target.role === 'chief' ? await User.countDocuments({ status: 'approved', role: 'chief' }).session(session) : 0)) {
+        throw new RequestValidationError('The rank has changed or you cannot restore its previous value.', 409);
+      }
+      target.role = event.previousRole as typeof target.role;
+      await target.save({ session });
+    } else {
+      const added = event.addedToons ?? [];
+      const removed = event.removedToons ?? [];
+      if (!added.length && !removed.length) throw new RequestValidationError('This entry has no toon link changes to undo.', 409);
+      if (target.status !== 'approved' || target.sheetRecordName?.trim()) throw new RequestValidationError('This account uses legacy toon links and cannot be safely undone.', 409);
+      const linkedRows = getLinkedSheetRecordRows(target, roster);
+      const linkedKeys = new Set(roster.filter((record) => linkedRows.includes(record.rowIndex)).map(getSheetRecordKey));
+      const addedKeys = new Set(added.map(getSheetRecordKey));
+      const removedRecords = removed.map((toon) => roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(toon)));
+      if (removedRecords.some((matches) => matches.length !== 1) || added.some((toon) => !linkedKeys.has(getSheetRecordKey(toon))) ||
+        [...addedKeys].some((key) => roster.filter((record) => getSheetRecordKey(record) === key).length !== 1) ||
+        removed.some((toon) => linkedKeys.has(getSheetRecordKey(toon))) ||
+        target.sheetRecords?.some((saved) => !roster.some((record) => getSheetRecordKey(record) === getSheetRecordKey(saved)))) {
+        throw new RequestValidationError('The toon links have changed since this activity.', 409);
+      }
+      const restored = removedRecords.map((matches) => matches[0]);
+      const otherUsers = await User.find({ _id: { $ne: target._id } }).select('sheetRecords sheetRecordName').session(session).lean();
+      const changedRecords = [...restored, ...roster.filter((record) => addedKeys.has(getSheetRecordKey(record)))];
+      if (otherUsers.some((user) => changedRecords.some((record) => getLinkedSheetRecordRows(user, roster).includes(record.rowIndex)))) {
+        throw new RequestValidationError('A toon from this change is linked to another account now.', 409);
+      }
+      const addedRecords = roster.filter((record) => addedKeys.has(getSheetRecordKey(record)));
+      await assertLinksUnreserved([
+        { identities: addedRecords },
+        { identities: restored, rejectUnverifiedLegacyHolds: true },
+      ], session);
+      const nextRows = roster.filter((record) => linkedRows.includes(record.rowIndex) && !addedKeys.has(getSheetRecordKey(record)))
+        .map((record) => record.rowIndex);
+      for (const record of restored) if (!nextRows.includes(record.rowIndex)) nextRows.push(record.rowIndex);
+      const byRow = new Map(roster.map((record) => [record.rowIndex, record]));
+      const selected = nextRows.map((row) => byRow.get(row)).filter((record) => record !== undefined);
+      target.sheetRecords = selected.length ? selected.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })) : undefined;
+      target.sheetRecordName = undefined;
+      if (event.eventType === 'account-approval') {
+        if (await AuctionBidHistory.exists({ userId: target._id }).session(session) ||
+          await Auction.exists({ createdByUserId: target._id }).session(session)) {
+          throw new RequestValidationError('This account has auction history and cannot be safely returned to pending.', 409);
+        }
+        target.status = 'pending';
+        await AuthSession.deleteMany({ userId: target._id }).session(session);
+      }
+      await target.save({ session });
+    }
+    event.undoneAt = new Date();
+    event.undoneByUserId = manager._id;
+    event.undoneByNickname = manager.nickname;
+    event.undoRequestId = requestId;
+    await event.save({ session });
+    return { success: true, message: 'Change undone.' };
+  }));
+}
+
 export async function POST(request: Request) {
   const denied = guardMutationRequest(request);
   if (denied) return denied;
   try {
     const body = await readJsonObject(request);
     const { action, userId } = body;
-    if (typeof action !== 'string' || !['approve', 'deny', 'link', 'unlink', 'remove', 'set-role', 'transfer'].includes(action) || typeof userId !== 'string' || !/^[a-f0-9]{24}$/i.test(userId)) {
+    if (typeof action !== 'string' || !['approve', 'deny', 'link', 'unlink', 'remove', 'set-role', 'transfer', 'undo-activity'].includes(action)) {
       throw new RequestValidationError('Invalid administration request.');
     }
     const initialManager = await getSessionUser();
     if (!initialManager) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageClan(initialManager.role)) throw new RequestValidationError('Permission denied.', 403);
+    if (action === 'undo-activity') {
+      if (typeof body.eventId !== 'string' || !/^[a-f0-9]{24}$/i.test(body.eventId) || !isDkpRequestId(body.requestId)) {
+        throw new RequestValidationError('Choose a valid activity entry to undo.');
+      }
+      const result = await undoActivity(initialManager._id.toString(), body.eventId, body.requestId);
+      return NextResponse.json(result, { headers: privateHeaders });
+    }
+    if (typeof userId !== 'string' || !/^[a-f0-9]{24}$/i.test(userId)) throw new RequestValidationError('Invalid administration request.');
     if (action === 'transfer') {
       const toUserId = body.toUserId;
       const rowIndex = body.rowIndex;

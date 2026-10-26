@@ -76,6 +76,7 @@ export async function POST(request: Request) {
           await ClanAuditEvent.create([{
             eventType: 'toon-dkp-wiped', actorUserId: manager._id, actorNickname: manager.nickname,
             actorRole: manager.role, targetNickname: record.account || record.owner, previousRole: 'toon',
+            affectedToon: { rowIndex: record.rowIndex, owner: record.owner, account: record.account },
             operationKey: `${manager._id.toString()}:${body.requestId}`,
             dkpBefore: [record.weeklyEarned, record.weeklySpent, record.earned, record.spent, record.available, record.fiveWeekActivity]
               .map((value) => value === null ? 'unavailable' : String(value)),

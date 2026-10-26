@@ -23,6 +23,8 @@ export interface RosterMutationRecord {
   actorUserId: mongoose.Types.ObjectId;
   actorNickname: string;
   actorRole: string;
+  undoEventId?: string;
+  undoRequestId?: string;
   linkChanges: Array<{ userId: string; links: Array<{ owner: string; account: string; rowIndex?: number }> }>;
   createdAt: Date;
 }
@@ -35,6 +37,7 @@ const schema = new Schema<RosterMutationRecord>({
   before: { type: [String], required: true }, after: { type: Schema.Types.Mixed, required: true },
   compaction: { type: Schema.Types.Mixed },
   actorUserId: { type: Schema.Types.ObjectId, required: true }, actorNickname: { type: String, required: true }, actorRole: { type: String, required: true },
+  undoEventId: { type: String }, undoRequestId: { type: String },
   linkChanges: { type: Schema.Types.Mixed, required: true },
 }, { timestamps: true });
 schema.index({ spreadsheetId: 1, status: 1 });

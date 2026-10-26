@@ -9,7 +9,7 @@ import Dialog from '@/components/Dialog';
 import ClanToonsPanel from '@/components/ClanToonsPanel';
 import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
-import { ArrowDown, ArrowRightLeft, ArrowUp, Check, ClipboardList, Eraser, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Unlink, UserCheck, Users, X } from 'lucide-react';
+import { ArrowDown, ArrowRightLeft, ArrowUp, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Undo2, UserCheck, Users, X } from 'lucide-react';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 
 interface ClanUser {
@@ -48,6 +48,32 @@ interface ClanAuditEntry {
   dkpBefore?: string[];
   withdrawnBids?: number;
   promotedBids?: number;
+  undoneAt?: string;
+  undoneByNickname?: string;
+}
+
+function auditSummary(event: ClanAuditEntry) {
+  const toon = event.addedToons?.[0] ?? event.removedToons?.[0];
+  const toonName = toon?.account || toon?.owner || 'Toon';
+  switch (event.eventType) {
+    case 'toon-created': return `Toon added · ${toonName}`;
+    case 'toon-removed': return `Toon removed · ${toonName}`;
+    case 'toon-dkp-wiped': return `DKP wiped · ${event.targetNickname}`;
+    case 'toon-transferred': return `Toon transferred · ${toonName}`;
+    case 'member-removal': return `Member removed · ${event.targetNickname}`;
+    case 'toon-links': return `Toon links changed · ${event.targetNickname}`;
+    case 'toon-reference-refresh': return `Roster links refreshed · ${event.targetNickname}`;
+    case 'account-approval': return `Account approved · ${event.targetNickname}`;
+    case 'account-denial': return `Sign-up denied · ${event.targetNickname}`;
+    case 'promotion': return `Promoted · ${event.targetNickname} · ${event.previousRole} → ${event.newRole}`;
+    case 'demotion': return `Demoted · ${event.targetNickname} · ${event.previousRole} → ${event.newRole}`;
+  }
+}
+
+function isUndoableActivity(event: ClanAuditEntry) {
+  if (event.undoneAt) return false;
+  if (event.eventType === 'promotion' || event.eventType === 'demotion' || event.eventType === 'account-approval' || event.eventType === 'toon-created') return true;
+  return event.eventType === 'toon-links' && Boolean(event.addedToons?.length || event.removedToons?.length);
 }
 
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
@@ -367,6 +393,32 @@ export default function AdminRequestsPage() {
     } finally { mutationPending.current = false; setBusyId(''); }
   };
 
+  const undoActivity = async (event: ClanAuditEntry) => {
+    if (!managerId || !isUndoableActivity(event) || mutationPending.current) return;
+    const summary = auditSummary(event);
+    if (!window.confirm(`Undo “${summary}”?`)) return;
+    const payload = { eventId: event.id };
+    mutationPending.current = true;
+    setBusyId(`undo:${event.id}`); setError(''); setNotice('Undoing change…');
+    try {
+      const requestId = await getActionRequestId(managerId, 'undo-activity', payload);
+      const response = await fetch('/api/admin/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'undo-activity', ...payload, requestId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The change could not be undone.');
+      await completeActionRequest(managerId, 'undo-activity', payload);
+      setNotice(result.message || 'Change undone.');
+      for (const url of ['/api/admin/requests', '/api/auth/session', '/api/auction', '/api/dkp']) invalidateData(url);
+      void loadData();
+    } catch (cause) {
+      setNotice('');
+      setError(cause instanceof Error ? cause.message : 'The change could not be undone.');
+      invalidateData('/api/admin/requests');
+      void loadData();
+    } finally { mutationPending.current = false; setBusyId(''); }
+  };
+
   const updateRole = (member: ClanUser, role: ClanRole) => {
     setError('');
     setRoleEditor({ memberId: member._id, selected: role });
@@ -527,67 +579,32 @@ export default function AdminRequestsPage() {
 
         {section === 'activity' && (
           <section className="tab-panel-content mt-6">
-            <div className="mb-5">
-              <h2 className="text-lg font-bold text-white">Member access history</h2>
-              <p className="mt-1 text-sm text-slate-400">The latest 100 actions: new and removed clan toons, account links, approvals, and rank changes.</p>
-            </div>
+            <h2 className="mb-5 text-lg font-bold text-white">Activity</h2>
             {auditEvents.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-800 py-12 text-center">
                 <History className="mx-auto h-6 w-6 text-slate-600" />
-                <p className="mt-3 text-sm text-slate-400">No member access changes have been logged yet.</p>
+                <p className="mt-3 text-sm text-slate-400">No activity yet.</p>
               </div>
             ) : (
               <div className="overflow-hidden rounded-xl border border-slate-800">
                 <div className="divide-y divide-slate-800">
                   {auditEvents.map((event) => (
-                    <article key={event.id} className="flex flex-col gap-2 bg-slate-950/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                          event.eventType === 'promotion' || event.eventType === 'toon-created'
-                            ? 'bg-emerald-500/10 text-emerald-300'
-                            : event.eventType === 'demotion' || event.eventType === 'toon-dkp-wiped'
-                              ? 'bg-amber-500/10 text-amber-300'
-                              : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' || event.eventType === 'account-approval' || event.eventType === 'toon-transferred'
-                                ? 'bg-indigo-500/10 text-indigo-300' : 'bg-red-500/10 text-red-300'
-                        }`}>
-                          {event.eventType === 'toon-created' ? <Plus className="h-4 w-4" /> : event.eventType === 'toon-transferred' ? <ArrowRightLeft className="h-4 w-4" /> : event.eventType === 'toon-dkp-wiped' ? <Eraser className="h-4 w-4" /> : event.eventType === 'promotion'
-                            ? <ArrowUp className="h-4 w-4" />
-                            : event.eventType === 'demotion'
-                              ? <ArrowDown className="h-4 w-4" />
-                              : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' ? <Link2 className="h-4 w-4" />
-                                : event.eventType === 'account-approval' ? <UserCheck className="h-4 w-4" />
-                                  : <Trash2 className="h-4 w-4" />}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="break-words text-sm font-semibold text-slate-100">
-                            {event.eventType === 'toon-created' ? <><span className="text-white">{event.targetNickname}</span> · New clan toon created with zero DKP</>
-                              : event.eventType === 'toon-dkp-wiped' ? <><span className="text-white">{event.targetNickname}</span> · Available DKP wiped</>
-                                : event.eventType === 'toon-transferred' ? <><span className="text-white">{event.removedToons?.[0]?.account || event.removedToons?.[0]?.owner || 'Toon'}</span> · {event.transferStatus === 'completed' ? 'transferred' : 'transfer pending'} from {event.targetNickname} to {event.transferToNickname || 'new account'}; DKP reset</>
-                              : event.eventType === 'toon-removed' ? <><span className="text-white">{event.targetNickname}</span> · Toon permanently removed; DKP forfeited</>
-                              : event.eventType === 'member-removal'
-                              ? <><span className="text-white">{event.targetNickname}</span> was removed from the clan</>
-                              : event.eventType === 'toon-links' ? <><span className="text-white">{event.targetNickname}</span> · Toon links updated</>
-                                : event.eventType === 'toon-reference-refresh' ? <><span className="text-white">{event.targetNickname}</span> · Stale roster references refreshed; toon ownership unchanged</>
-                                : event.eventType === 'account-approval' ? <><span className="text-white">{event.targetNickname}</span> · Account approved</>
-                                  : event.eventType === 'account-denial' ? <><span className="text-white">{event.targetNickname}</span> · Sign-up denied</>
-                                    : <><span className="text-white">{event.targetNickname}</span> {event.eventType === 'promotion' ? 'promoted' : 'demoted'} from <span className="capitalize text-slate-300">{event.previousRole}</span> to <span className="capitalize text-slate-300">{event.newRole}</span></>}
-                          </p>
-                          {!!event.addedToons?.length && event.eventType !== 'toon-transferred' && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald-300"><Link2 size={13} className="mt-0.5" /><span>{event.eventType === 'toon-created' ? 'Created (unlinked)' : 'Linked'}: {event.addedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
-                          {!!event.removedToons?.length && event.eventType !== 'toon-transferred' && <p className="mt-1 flex items-start gap-1.5 text-xs text-rose-300"><Unlink size={13} className="mt-0.5" /><span>{event.eventType === 'toon-removed' ? 'Removed' : 'Unlinked'}: {event.removedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
-                          {event.forfeitedDkp && <p className="mt-1 text-xs text-rose-300">DKP at removal · Available: {event.forfeitedDkp[4] || '0'} · Weekly earned: {event.forfeitedDkp[0] || '0'}</p>}
-                          {event.dkpBefore && <p className="mt-1 text-xs text-amber-200">Before reset · Available: {event.dkpBefore[4] || '0'} · Earned: {event.dkpBefore[2] || '0'} · Spent: {event.dkpBefore[3] || '0'}</p>}
-                          {(event.withdrawnBids !== undefined || event.promotedBids !== undefined) && <p className="mt-1 text-xs text-slate-400">Open bids withdrawn: {event.withdrawnBids ?? 0} · Next bids promoted: {event.promotedBids ?? 0}</p>}
-                          {event.eventType === 'toon-transferred' && event.transferStatus === 'pending' && <button type="button" disabled={busyId !== ''} onClick={() => void resumePendingTransfer(event)} className="mt-2 inline-flex min-h-8 items-center gap-2 rounded-lg border border-amber-300/20 bg-amber-300/[.06] px-3 text-xs font-semibold text-amber-100 hover:bg-amber-300/[.12] disabled:opacity-40"><ArrowRightLeft size={13} />Resume transfer</button>}
-                          <p className="mt-1 text-xs text-slate-500">
-                            By <span className="text-slate-300">{event.actorNickname}</span>
-                            <span className="capitalize"> · {event.actorRole}</span>
-                            {event.eventType === 'member-removal' && <span className="capitalize"> · Was {event.previousRole}</span>}
-                          </p>
-                        </div>
+                    <article key={event.id} className="flex flex-col gap-3 bg-slate-950/40 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="break-words text-sm font-semibold text-slate-100">{auditSummary(event)}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {event.actorNickname} · {new Date(event.createdAt).toLocaleString()}
+                          {event.undoneAt && <span className="ml-2 text-amber-300">Undone by {event.undoneByNickname || 'manager'}</span>}
+                        </p>
+                        {event.eventType === 'toon-transferred' && event.transferStatus === 'pending' && <button type="button" disabled={busyId !== ''} onClick={() => void resumePendingTransfer(event)} className="mt-2 inline-flex min-h-8 items-center gap-2 rounded-lg border border-amber-300/20 bg-amber-300/[.06] px-3 text-xs font-semibold text-amber-100 hover:bg-amber-300/[.12] disabled:opacity-40"><ArrowRightLeft size={13} />Resume transfer</button>}
                       </div>
-                      <time className="shrink-0 pl-11 text-xs text-slate-500 sm:pl-0" dateTime={event.createdAt}>
-                        {new Date(event.createdAt).toLocaleString()}
-                      </time>
+                      <button type="button" onClick={() => void undoActivity(event)} disabled={!isUndoableActivity(event) || busyId !== ''}
+                        title={event.undoneAt ? 'Already undone' : isUndoableActivity(event) ? 'Undo this change' : 'Cannot be undone safely'}
+                        aria-label={`Undo ${auditSummary(event)}`}
+                        className={`inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed ${event.undoneAt ? 'border-amber-300/15 bg-amber-300/[.04] text-amber-200/60' : isUndoableActivity(event) ? 'border-indigo-300/20 bg-indigo-400/[.08] text-indigo-100 hover:bg-indigo-400/[.16] disabled:opacity-40' : 'border-white/5 bg-white/[.02] text-slate-600'}`}>
+                        {busyId === `undo:${event.id}` ? <LoaderCircle size={14} className="animate-spin" /> : <Undo2 size={14} />}
+                        {event.undoneAt ? 'Undone' : 'Undo'}
+                      </button>
                     </article>
                   ))}
                 </div>
