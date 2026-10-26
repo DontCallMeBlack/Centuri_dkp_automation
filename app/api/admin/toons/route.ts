@@ -1,5 +1,5 @@
 import { getSessionUser, canManageClan } from '@/lib/auth/session';
-import { changeClanToon, ensureWeeklyDkpReset, getSheetRoster } from '@/lib/googleSheets';
+import { changeClanToon, ensureWeeklyDkpReset, getSheetRoster, resetToonDkp } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { ITEM_SUBROLES } from '@/lib/auctionRules';
 import { isDkpRequestId } from '@/lib/bossDkp';
@@ -8,6 +8,9 @@ import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestVali
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import RosterMutation from '@/lib/models/RosterMutation';
 import User from '@/lib/models/User';
+import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
+import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
+import { withdrawToonOpenAuctionBids } from '@/lib/auctionBidWithdrawal';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,7 +53,7 @@ export async function POST(request: Request) {
     }
     if (!isDkpRequestId(body.requestId)) throw new RequestValidationError('A valid request ID is required. Reload this page.');
     const owner = name(body.owner, 'owner');
-    const account = name(body.account, 'toon name', body.action === 'remove');
+    const account = name(body.account, 'toon name', body.action === 'remove' || body.action === 'wipe');
     let result;
     if (body.action === 'create') {
       const subClass = ITEM_SUBROLES.find((role) => role !== 'Everyone' && role === body.subClass);
@@ -60,6 +63,32 @@ export async function POST(request: Request) {
       if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) throw new RequestValidationError('Select a valid roster entry.');
       if (body.forfeitConfirmed !== true) throw new RequestValidationError('Confirm permanent removal and DKP forfeiture.');
       result = await changeClanToon(actor._id.toString(), body.requestId, { action: 'remove', rowIndex: body.rowIndex, owner, account });
+    } else if (body.action === 'wipe') {
+      if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) throw new RequestValidationError('Select a valid roster entry.');
+      if (body.wipeConfirmed !== true) throw new RequestValidationError('Confirm the Available DKP wipe.');
+      let bidChanges = { withdrawnBids: 0, promotedBids: 0 };
+      result = await resetToonDkp({
+        actorUserId: actor._id.toString(), requestId: body.requestId,
+        identity: { owner, account }, mode: 'available', fingerprintData: { rowIndex: body.rowIndex },
+        mutate: async (session, record, manager, roster) => {
+          const rosterWithWeeklyEarned = await getRosterWithWeeklyEarned(roster, session);
+          bidChanges = await withdrawToonOpenAuctionBids(record, roster, rosterWithWeeklyEarned, session);
+          await ClanAuditEvent.create([{
+            eventType: 'toon-dkp-wiped', actorUserId: manager._id, actorNickname: manager.nickname,
+            actorRole: manager.role, targetNickname: record.account || record.owner, previousRole: 'toon',
+            operationKey: `${manager._id.toString()}:${body.requestId}`,
+            dkpBefore: [record.weeklyEarned, record.weeklySpent, record.earned, record.spent, record.available, record.fiveWeekActivity]
+              .map((value) => value === null ? 'unavailable' : String(value)),
+            withdrawnBids: bidChanges.withdrawnBids, promotedBids: bidChanges.promotedBids,
+          }], { session });
+        },
+      });
+      if (result.replayed) {
+        const audit = await ClanAuditEvent.findOne({ operationKey: `${actor._id.toString()}:${body.requestId}` }).select('withdrawnBids promotedBids').lean();
+        bidChanges = { withdrawnBids: audit?.withdrawnBids ?? 0, promotedBids: audit?.promotedBids ?? 0 };
+      }
+      return Response.json({ success: true, ...result, ...bidChanges,
+        message: `Available DKP reset to 0. ${bidChanges.withdrawnBids} open auction bid(s) withdrawn; ${bidChanges.promotedBids} next bid(s) promoted.` });
     } else throw new RequestValidationError('Unknown clan toon action.');
     return Response.json({ success: true, ...result, message: body.action === 'create' ? 'Toon added with zero DKP and no account link.' : 'Toon permanently removed. Its remaining DKP was forfeited and its account links were cleared.' });
   } catch (error) {

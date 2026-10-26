@@ -9,7 +9,8 @@ import Dialog from '@/components/Dialog';
 import ClanToonsPanel from '@/components/ClanToonsPanel';
 import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
-import { ArrowDown, ArrowUp, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Unlink, UserCheck, Users, X } from 'lucide-react';
+import { ArrowDown, ArrowRightLeft, ArrowUp, Check, ClipboardList, Eraser, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Unlink, UserCheck, Users, X } from 'lucide-react';
+import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 
 interface ClanUser {
   _id: string;
@@ -29,7 +30,10 @@ interface RosterMember {
 
 interface ClanAuditEntry {
   id: string;
-  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-removed';
+  targetUserId?: string;
+  transferToUserId?: string;
+  operationKey?: string;
+  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-removed' | 'toon-dkp-wiped' | 'toon-transferred';
   actorNickname: string;
   actorRole: string;
   targetNickname: string;
@@ -37,8 +41,13 @@ interface ClanAuditEntry {
   newRole?: string;
   createdAt: string;
   addedToons?: Array<{owner:string; account:string}>;
-  removedToons?: Array<{owner:string; account:string}>;
+  removedToons?: Array<{rowIndex?:number; owner:string; account:string}>;
   forfeitedDkp?: string[];
+  transferToNickname?: string;
+  transferStatus?: 'pending' | 'completed';
+  dkpBefore?: string[];
+  withdrawnBids?: number;
+  promotedBids?: number;
 }
 
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
@@ -67,6 +76,9 @@ export default function AdminRequestsPage() {
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>(() => Object.fromEntries([...(initialAdminData?.pendingUsers ?? []), ...(initialAdminData?.members ?? [])].map((member) => [member._id, member.sheetRecordRows ?? []])));
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
   const [editingToonsFor, setEditingToonsFor] = useState('');
+  const [toonTransfer, setToonTransfer] = useState<{ source: ClanUser; toon: RosterMember } | null>(null);
+  const [transferDestination, setTransferDestination] = useState('');
+  const [transferConfirmed, setTransferConfirmed] = useState(false);
   const [roleEditor, setRoleEditor] = useState<{ memberId: string; selected: ClanRole } | null>(null);
   const [loading, setLoading] = useState(() => !initialAdminData);
   const [accessRole, setAccessRole] = useState('');
@@ -103,6 +115,7 @@ export default function AdminRequestsPage() {
       setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
       setSelectedMappings({}); setMappingQueries({}); setEditingToonsFor('');
       setRoleEditor(null);
+      setToonTransfer(null); setTransferDestination(''); setTransferConfirmed(false);
       setManagerRole(''); setManagerId(''); setAccessRole(''); setBusyId('');
       setError(''); setNotice(''); setLoading(true);
     };
@@ -304,6 +317,56 @@ export default function AdminRequestsPage() {
     }
   };
 
+  const transferToon = async () => {
+    if (!toonTransfer || !transferDestination || mutationPending.current || !managerId) return;
+    const { source, toon } = toonTransfer;
+    const payload = { toUserId: transferDestination, rowIndex: toon.rowIndex, owner: toon.owner, account: toon.account };
+    mutationPending.current = true;
+    setBusyId(source._id); setError(''); setNotice('Resetting DKP, moving the toon and updating open bids…');
+    try {
+      const requestId = await getActionRequestId(managerId, 'toon-transfer', payload);
+      const response = await fetch('/api/admin/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: source._id, action: 'transfer', ...payload, requestId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The toon could not be transferred.');
+      await completeActionRequest(managerId, 'toon-transfer', payload);
+      setNotice(result.message || 'Toon transferred and its DKP reset to 0.');
+      setToonTransfer(null); setTransferDestination(''); setTransferConfirmed(false);
+      for (const url of ['/api/admin/requests', '/api/auth/session', '/api/auction', '/api/dkp']) invalidateData(url);
+      void loadData();
+    } catch (cause) {
+      setNotice('');
+      setError(cause instanceof Error ? cause.message : 'The transfer could not be confirmed. Retry the same action.');
+      invalidateData('/api/admin/requests');
+      void loadData();
+    } finally { mutationPending.current = false; setBusyId(''); }
+  };
+
+  const resumePendingTransfer = async (event: ClanAuditEntry) => {
+    const toon = event.removedToons?.[0];
+    const operationParts = event.operationKey?.split(':') ?? [];
+    if (mutationPending.current || !managerId || !toon || typeof toon.rowIndex !== 'number' || !event.targetUserId || !event.transferToUserId ||
+      operationParts.length !== 3 || operationParts[0] !== 'transfer') return;
+    const payload = { toUserId: event.transferToUserId, rowIndex: toon.rowIndex, owner: toon.owner, account: toon.account };
+    const requestId = operationParts[2];
+    mutationPending.current = true; setBusyId(event.targetUserId); setError(''); setNotice('Resuming toon transfer…');
+    try {
+      const response = await fetch('/api/admin/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: event.targetUserId, action: 'transfer', ...payload, requestId, resumeOperationKey: event.operationKey }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The transfer could not be resumed.');
+      await completeActionRequest(managerId, 'toon-transfer', payload);
+      setNotice(result.message || 'Toon transfer completed and DKP reset to 0.');
+      for (const url of ['/api/admin/requests', '/api/auth/session', '/api/auction', '/api/dkp']) invalidateData(url);
+      void loadData();
+    } catch (cause) {
+      setNotice(''); setError(cause instanceof Error ? cause.message : 'The transfer could not be resumed.');
+      invalidateData('/api/admin/requests'); void loadData();
+    } finally { mutationPending.current = false; setBusyId(''); }
+  };
+
   const updateRole = (member: ClanUser, role: ClanRole) => {
     setError('');
     setRoleEditor({ memberId: member._id, selected: role });
@@ -431,6 +494,7 @@ export default function AdminRequestsPage() {
                             if (!record) return [];
                             return <span key={rowIndex} className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-white/[.07] bg-slate-950/45 py-1.5 pl-3 pr-1.5 text-xs font-medium text-slate-200 shadow-inner shadow-black/10">
                               <span className="max-w-40 truncate">{record.account || record.owner}</span>
+                              {members.length > 1 && <button type="button" onClick={() => { setToonTransfer({ source: member, toon: record }); setTransferDestination(''); setTransferConfirmed(false); setError(''); }} disabled={busyId !== ''} aria-label={`Transfer ${record.account || record.owner} from ${member.nickname}`} title="Transfer toon" className="grid h-6 w-6 place-items-center rounded-lg text-indigo-300/70 transition hover:bg-indigo-400/10 hover:text-indigo-100 disabled:opacity-40"><ArrowRightLeft className="h-3.5 w-3.5" /></button>}
                               <button type="button" onClick={() => unlinkToon(member, record)} disabled={busyId === member._id} aria-label={`Unlink ${record.account || record.owner} from ${member.nickname}`} title="Unlink toon" className="grid h-6 w-6 place-items-center rounded-lg text-slate-500 transition hover:bg-rose-400/10 hover:text-rose-200 disabled:opacity-40"><X className="h-3.5 w-3.5" /></button>
                             </span>;
                           })}
@@ -481,12 +545,12 @@ export default function AdminRequestsPage() {
                         <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                           event.eventType === 'promotion' || event.eventType === 'toon-created'
                             ? 'bg-emerald-500/10 text-emerald-300'
-                            : event.eventType === 'demotion'
+                            : event.eventType === 'demotion' || event.eventType === 'toon-dkp-wiped'
                               ? 'bg-amber-500/10 text-amber-300'
-                              : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' || event.eventType === 'account-approval'
+                              : event.eventType === 'toon-links' || event.eventType === 'toon-reference-refresh' || event.eventType === 'account-approval' || event.eventType === 'toon-transferred'
                                 ? 'bg-indigo-500/10 text-indigo-300' : 'bg-red-500/10 text-red-300'
                         }`}>
-                          {event.eventType === 'toon-created' ? <Plus className="h-4 w-4" /> : event.eventType === 'promotion'
+                          {event.eventType === 'toon-created' ? <Plus className="h-4 w-4" /> : event.eventType === 'toon-transferred' ? <ArrowRightLeft className="h-4 w-4" /> : event.eventType === 'toon-dkp-wiped' ? <Eraser className="h-4 w-4" /> : event.eventType === 'promotion'
                             ? <ArrowUp className="h-4 w-4" />
                             : event.eventType === 'demotion'
                               ? <ArrowDown className="h-4 w-4" />
@@ -497,6 +561,8 @@ export default function AdminRequestsPage() {
                         <div className="min-w-0">
                           <p className="break-words text-sm font-semibold text-slate-100">
                             {event.eventType === 'toon-created' ? <><span className="text-white">{event.targetNickname}</span> · New clan toon created with zero DKP</>
+                              : event.eventType === 'toon-dkp-wiped' ? <><span className="text-white">{event.targetNickname}</span> · Available DKP wiped</>
+                                : event.eventType === 'toon-transferred' ? <><span className="text-white">{event.removedToons?.[0]?.account || event.removedToons?.[0]?.owner || 'Toon'}</span> · {event.transferStatus === 'completed' ? 'transferred' : 'transfer pending'} from {event.targetNickname} to {event.transferToNickname || 'new account'}; DKP reset</>
                               : event.eventType === 'toon-removed' ? <><span className="text-white">{event.targetNickname}</span> · Toon permanently removed; DKP forfeited</>
                               : event.eventType === 'member-removal'
                               ? <><span className="text-white">{event.targetNickname}</span> was removed from the clan</>
@@ -506,9 +572,12 @@ export default function AdminRequestsPage() {
                                   : event.eventType === 'account-denial' ? <><span className="text-white">{event.targetNickname}</span> · Sign-up denied</>
                                     : <><span className="text-white">{event.targetNickname}</span> {event.eventType === 'promotion' ? 'promoted' : 'demoted'} from <span className="capitalize text-slate-300">{event.previousRole}</span> to <span className="capitalize text-slate-300">{event.newRole}</span></>}
                           </p>
-                          {!!event.addedToons?.length && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald-300"><Link2 size={13} className="mt-0.5" /><span>{event.eventType === 'toon-created' ? 'Created (unlinked)' : 'Linked'}: {event.addedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
-                          {!!event.removedToons?.length && <p className="mt-1 flex items-start gap-1.5 text-xs text-rose-300"><Unlink size={13} className="mt-0.5" /><span>{event.eventType === 'toon-removed' ? 'Removed' : 'Unlinked'}: {event.removedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
+                          {!!event.addedToons?.length && event.eventType !== 'toon-transferred' && <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald-300"><Link2 size={13} className="mt-0.5" /><span>{event.eventType === 'toon-created' ? 'Created (unlinked)' : 'Linked'}: {event.addedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
+                          {!!event.removedToons?.length && event.eventType !== 'toon-transferred' && <p className="mt-1 flex items-start gap-1.5 text-xs text-rose-300"><Unlink size={13} className="mt-0.5" /><span>{event.eventType === 'toon-removed' ? 'Removed' : 'Unlinked'}: {event.removedToons.map((toon) => `${toon.account || 'Unnamed toon'} (${toon.owner})`).join(', ')}</span></p>}
                           {event.forfeitedDkp && <p className="mt-1 text-xs text-rose-300">DKP at removal · Available: {event.forfeitedDkp[4] || '0'} · Weekly earned: {event.forfeitedDkp[0] || '0'}</p>}
+                          {event.dkpBefore && <p className="mt-1 text-xs text-amber-200">Before reset · Available: {event.dkpBefore[4] || '0'} · Earned: {event.dkpBefore[2] || '0'} · Spent: {event.dkpBefore[3] || '0'}</p>}
+                          {(event.withdrawnBids !== undefined || event.promotedBids !== undefined) && <p className="mt-1 text-xs text-slate-400">Open bids withdrawn: {event.withdrawnBids ?? 0} · Next bids promoted: {event.promotedBids ?? 0}</p>}
+                          {event.eventType === 'toon-transferred' && event.transferStatus === 'pending' && <button type="button" disabled={busyId !== ''} onClick={() => void resumePendingTransfer(event)} className="mt-2 inline-flex min-h-8 items-center gap-2 rounded-lg border border-amber-300/20 bg-amber-300/[.06] px-3 text-xs font-semibold text-amber-100 hover:bg-amber-300/[.12] disabled:opacity-40"><ArrowRightLeft size={13} />Resume transfer</button>}
                           <p className="mt-1 text-xs text-slate-500">
                             By <span className="text-slate-300">{event.actorNickname}</span>
                             <span className="capitalize"> · {event.actorRole}</span>
@@ -559,6 +628,19 @@ export default function AdminRequestsPage() {
           </div>
         </Dialog>;
       })()}
+      {toonTransfer && <Dialog labelledBy="toon-transfer-title" onClose={() => { if (!mutationPending.current) { setToonTransfer(null); setError(''); } }} busy={busyId !== ''} className="!max-w-lg">
+        <div className="bg-gradient-to-br from-indigo-500/10 via-transparent to-violet-500/5 p-5 sm:p-7">
+          <header className="mb-5 flex items-start justify-between gap-4">
+            <div><p className="page-kicker">Move toon</p><h2 id="toon-transfer-title" className="mt-1 break-all text-xl font-bold text-white">Transfer {toonTransfer.toon.account || toonTransfer.toon.owner}</h2><p className="mt-2 text-xs text-slate-400">From {toonTransfer.source.nickname}</p></div>
+            <button type="button" className="icon-button" aria-label="Close transfer dialog" disabled={busyId !== ''} onClick={() => { setToonTransfer(null); setError(''); }}><X size={19} /></button>
+          </header>
+          <label className="block space-y-2 text-xs font-semibold text-slate-300"><span>New account</span><select value={transferDestination} onChange={(event) => setTransferDestination(event.target.value)} disabled={busyId !== ''} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none focus:border-indigo-400"><option value="">Choose an account</option>{members.filter((member) => member._id !== toonTransfer.source._id).map((member) => <option key={member._id} value={member._id}>{member.nickname}</option>)}</select></label>
+          <p className="mt-4 rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] p-3 text-xs leading-5 text-slate-300">All DKP fields reset to 0. Open auction bids are withdrawn and the next eligible bid is promoted. Completed auctions and pending mail stay unchanged.</p>
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 p-3 text-xs leading-5 text-slate-300"><input type="checkbox" checked={transferConfirmed} disabled={busyId !== ''} onChange={(event) => setTransferConfirmed(event.target.checked)} className="mt-1 accent-indigo-400" /><span>I confirm this transfer and full DKP reset.</span></label>
+          {error && <p role="alert" className="mt-4 rounded-xl border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p>}
+          <footer className="mt-6 flex justify-end gap-2 border-t border-white/5 pt-5"><button type="button" className="secondary-button" disabled={busyId !== ''} onClick={() => { setToonTransfer(null); setError(''); }}>Cancel</button><button type="button" className="primary-button" disabled={busyId !== '' || !transferDestination || !transferConfirmed} onClick={() => void transferToon()}>{busyId ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />}{busyId ? 'Transferring…' : 'Transfer & reset DKP'}</button></footer>
+        </div>
+      </Dialog>}
       {editingToonsFor && (() => {
         const member = members.find((entry) => entry._id === editingToonsFor);
         if (!member) return null;
