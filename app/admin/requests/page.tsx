@@ -82,6 +82,14 @@ function auditSummary(event: ClanAuditEntry) {
   const toonName = toon?.account || toon?.owner || 'Toon';
   const actor = event.actorNickname || 'A manager';
   const target = event.targetNickname || 'account';
+  const joinNames = (records: Array<{ owner: string; account: string }> | undefined) => {
+    const names = (records ?? []).map((record) => record.account || record.owner).filter(Boolean);
+    if (names.length < 2) return names[0] ?? '';
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+  };
+  const linkedNames = joinNames(event.addedToons);
+  const unlinkedNames = joinNames(event.removedToons);
   switch (event.eventType) {
     case 'toon-restored': return `${actor} restored ${toonName}`;
     case 'toon-created': return `${actor} added ${toonName}`;
@@ -89,7 +97,11 @@ function auditSummary(event: ClanAuditEntry) {
     case 'toon-dkp-wiped': return `${actor} wiped ${target} DKP`;
     case 'toon-transferred': return `${actor} transferred ${toonName} to ${event.transferToNickname || 'another account'}`;
     case 'member-removal': return `${actor} removed ${target}'s account`;
-    case 'toon-links': return `${actor} updated ${target}'s toon links`;
+    case 'toon-links':
+      if (linkedNames && unlinkedNames) return `${actor} linked ${linkedNames} and unlinked ${unlinkedNames} for ${target}`;
+      if (linkedNames) return `${actor} linked ${linkedNames} to ${target}'s toons`;
+      if (unlinkedNames) return `${actor} unlinked ${unlinkedNames} from ${target}'s toons`;
+      return `${actor} updated ${target}'s toon links`;
     case 'toon-reference-refresh': return `${actor} refreshed ${target}'s toon links`;
     case 'account-approval': return `${actor} approved ${target} account`;
     case 'account-denial': return `${actor} denied ${target}'s sign-up`;
