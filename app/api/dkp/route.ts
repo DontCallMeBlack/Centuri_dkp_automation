@@ -13,7 +13,8 @@ import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import RosterMutation from '@/lib/models/RosterMutation';
 import { RequestValidationError } from '@/lib/security/request';
 import ToonRoleChange from '@/lib/models/ToonRoleChange';
-import { getEffectiveToonRole } from '@/lib/toonRoleChanges';
+import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
+import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 
 
 export async function GET(req: Request) {
@@ -30,12 +31,26 @@ export async function GET(req: Request) {
         .lean(),
     ]);
     const roster = rosterSnapshot.roster;
-    const roleChanges = await ToonRoleChange.find({ identityKey: { $in: roster.map(getSheetRecordKey) } }).lean();
+    const identities = roster.map(getSheetRecordKey);
+    const [roleChanges, roleApprovals] = await Promise.all([
+      ToonRoleChange.find({ identityKey: { $in: identities } }).lean(),
+      ToonRoleChangeRequest.find({
+        identityKey: { $in: identities }, status: { $in: ['approved', 'applied'] },
+        decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
+      }).sort({ createdAt: -1 }).lean(),
+    ]);
     const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
-    const effectiveRoster = roster.map((record) => ({
-      ...record,
-      subClass: getEffectiveToonRole(record.subClass, roleChangesByIdentity.get(getSheetRecordKey(record))),
-    }));
+    const roleApprovalsByIdentity = new Map<string, typeof roleApprovals>();
+    for (const approval of roleApprovals) {
+      roleApprovalsByIdentity.set(approval.identityKey, [...(roleApprovalsByIdentity.get(approval.identityKey) ?? []), approval]);
+    }
+    const roleReadAt = new Date();
+    const effectiveRoster = roster.map((record) => {
+      const identityKey = getSheetRecordKey(record);
+      const change = roleChangesByIdentity.get(identityKey);
+      const approval = roleApprovalsByIdentity.get(identityKey)?.find((candidate) => isApprovedToonRoleSchedule(change, candidate));
+      return { ...record, subClass: getEffectiveToonRole(record.subClass, change, roleReadAt, approval) };
+    });
     const recordsByRow = new Map(effectiveRoster.map((record) => [record.rowIndex, record]));
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
     const clanMembers = activeUsers.map((member) => ({
