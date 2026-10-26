@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Activity, ArrowRight, CalendarClock, Check, CircleAlert, Clock3, LoaderCircle, RotateCcw, Search, UserCheck, UsersRound, X } from 'lucide-react';
+import { Activity, ArrowRight, CalendarClock, Check, CircleAlert, Clock3, LoaderCircle, RotateCcw, Search, UsersRound, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
 import { useSessionUser } from '@/components/AppShell';
@@ -134,6 +134,9 @@ export default function RoleChangesPage() {
     `${toon.owner} ${toon.account} ${toon.currentRole} ${toon.request?.requestedRole ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()),
   );
   const pendingRequests = data?.toons.filter((toon) => toon.request?.status === 'pending') ?? [];
+  const displayedToons = data?.isGeneral
+    ? [...filteredToons].sort((first, second) => Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') || first.rowIndex - second.rowIndex)
+    : filteredToons;
 
   return <div className="space-y-6">
     <header className="relative overflow-hidden rounded-3xl border border-indigo-300/15 bg-gradient-to-br from-indigo-950 via-slate-900 to-violet-950 p-5 shadow-xl shadow-indigo-950/20 sm:flex sm:items-center sm:justify-between sm:gap-5 sm:p-7">
@@ -152,27 +155,15 @@ export default function RoleChangesPage() {
     {error && <p role="alert" className="flex items-start gap-2 rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-200"><CircleAlert size={16} className="mt-0.5 shrink-0" />{error}</p>}
     {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-sm text-emerald-200"><Check size={16} />{notice}</p>}
 
-    {data?.isGeneral && <section className="surface overflow-hidden" aria-labelledby="review-queue-title">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[.06] p-5 sm:p-6"><div className="flex items-center gap-3"><span className="rounded-xl border border-amber-300/15 bg-amber-300/10 p-2.5 text-amber-200"><UserCheck size={17} /></span><div><p className="page-kicker">General review</p><h2 id="review-queue-title" className="mt-1 text-base font-semibold text-white">Requests waiting for a decision</h2></div></div><span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-xs font-bold tabular-nums text-amber-100">{pendingRequests.length} pending</span></div>
-      {loading ? <div className="p-4"><LoadingSurface rows={2} label="Loading requests" /></div> : pendingRequests.length === 0 ? <p className="p-6 text-sm text-slate-500">No pending requests.</p> : <div className="divide-y divide-white/[.05]">{pendingRequests.map((toon) => {
-        const request = toon.request!;
-        const busy = busyKey === request.id;
-        return <article key={request.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <div className="min-w-0"><p className="truncate text-sm font-semibold text-white">{toon.account || toon.owner}<span className="ml-2 text-xs font-normal text-slate-500">· {toon.owner}</span></p><p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-400"><span>{request.requestedByNickname} requested</span><RoleBadge role={toon.currentRole} gameClass compact /><ArrowRight size={12} /><RoleBadge role={request.requestedRole} gameClass compact /><span>· review by {dateLabel(request.effectiveAt)}</span></p></div>
-          <div className="flex shrink-0 gap-2"><button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('deny', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <X size={14} />}Deny</button><button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('approve', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/20 transition hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Check size={14} />}Approve</button></div>
-        </article>;
-      })}</div>}
-    </section>}
-
     <section className="space-y-4" aria-labelledby="roster-role-title">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div><h2 id="roster-role-title" className="text-xl font-semibold text-white">{data?.isGeneral ? 'Clan toons' : 'Your toons'}</h2></div>
+        <div className="flex items-center gap-3"><h2 id="roster-role-title" className="text-xl font-semibold text-white">{data?.isGeneral ? 'Clan toons' : 'Your toons'}</h2>{data?.isGeneral && pendingRequests.length > 0 && <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-[10px] font-bold text-amber-100">{pendingRequests.length} pending</span>}</div>
         <label className="relative w-full sm:max-w-xs"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search owner, toon, or role" aria-label="Search clan toons" className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-9 pr-3 text-xs text-slate-100 placeholder:text-slate-600 outline-none focus:border-indigo-400/50" /></label>
       </div>
 
       {loading ? <LoadingSurface rows={5} label="Loading role request status" /> : filteredToons.length === 0 ? (
         <div className="surface rounded-2xl border-dashed p-10 text-center"><UsersRound className="mx-auto h-7 w-7 text-slate-600" /><p className="mt-3 text-sm font-semibold text-slate-300">{data?.toons.length ? 'No toons match this search.' : 'No linked toons found. Ask a General to link your account to the roster.'}</p></div>
-      ) : <div className="grid gap-4 xl:grid-cols-2">{filteredToons.map((toon) => {
+      ) : <div className="grid gap-4 xl:grid-cols-2">{displayedToons.map((toon) => {
         const request = toon.request;
         const pending = request?.status === 'pending';
         const scheduled = request?.status === 'approved';
@@ -200,7 +191,7 @@ export default function RoleChangesPage() {
               <button type="button" disabled={!canSubmitRequest || Boolean(busyKey)} onClick={() => void mutate('request', toon)} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-40">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CalendarClock size={14} />}Request {alternateRole}</button>
             </div>}
             {toon.canRequest && !request && !alternateRole && <p className="mt-4 border-t border-white/[.06] pt-4 text-[10px] text-slate-500">Only subrole</p>}
-            {pending && request && <div className="mt-4 flex justify-end border-t border-white/[.06] pt-4">{toon.canCancel && <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />}Cancel request</button>}</div>}
+            {pending && request && <div className="mt-4 flex justify-end gap-2 border-t border-white/[.06] pt-4">{data?.isGeneral ? <><button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('deny', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <X size={14} />}Deny</button><button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('approve', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/20 transition hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Check size={14} />}Approve</button></> : toon.canCancel && <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />}Cancel request</button>}</div>}
             {scheduled && request && <div className="mt-4 flex justify-end border-t border-white/[.06] pt-4">{toon.canCancel && <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />}Cancel scheduled change</button>}</div>}
           </>}
         </article>;
