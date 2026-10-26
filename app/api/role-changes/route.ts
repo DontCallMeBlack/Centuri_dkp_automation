@@ -178,6 +178,7 @@ export async function GET() {
           decidedByNickname: request.decidedByNickname ?? null,
           effectiveAt: request.effectiveAt.toISOString(),
         } : null,
+        isOwned: linkedRows.has(toon.rowIndex),
         canRequest: linkedRows.has(toon.rowIndex) && !request,
         canCancel: Boolean(request && (canApprove || linkedRows.has(toon.rowIndex))),
         duplicateIdentity: (countsByIdentity.get(identityKey) ?? 0) > 1,
