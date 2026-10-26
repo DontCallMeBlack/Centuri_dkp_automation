@@ -613,33 +613,30 @@ export default function AdminRequestsPage() {
                   return (
                   <article key={member._id} className="group member-account-card p-4 sm:p-5">
                     <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-indigo-400/[.06] blur-3xl transition group-hover:bg-indigo-300/[.1]" />
-                    <div className="relative grid min-w-0 gap-5 md:grid-cols-[minmax(12rem,.8fr)_minmax(0,1.2fr)] md:items-center 2xl:grid-cols-[minmax(14rem,.85fr)_minmax(0,1.15fr)_auto]">
-                      <div className="min-w-0">
+                    <div className="relative flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
                         <h3 className="truncate text-lg font-bold tracking-tight text-white sm:text-xl">{member.nickname}</h3>
                         <div className="mt-2"><RoleBadge role={member.role} /></div>
-                      </div>
-
-                      <div className="min-w-0">
-                        <div className="flex min-h-9 flex-wrap items-center gap-2">
+                        <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
                           {(member.sheetRecordRows ?? []).flatMap((rowIndex) => {
                             const record = roster.find((entry) => entry.rowIndex === rowIndex);
                             if (!record) return [];
-                            return <span key={rowIndex} className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-white/[.07] bg-slate-950/45 py-1.5 pl-3 pr-1.5 text-xs font-medium text-slate-200 shadow-inner shadow-black/10">
+                            return <span key={rowIndex} className="inline-flex max-w-full items-center gap-1 rounded-xl border border-white/[.07] bg-slate-950/45 py-1.5 pl-3 pr-1.5 text-xs font-medium text-slate-200 shadow-inner shadow-black/10">
                               <span className="max-w-40 truncate">{record.account || record.owner}</span>
                               {members.length > 1 && <button type="button" onClick={() => { setToonTransfer({ source: member, toon: record }); setTransferDestination(''); setTransferConfirmed(false); setError(''); }} disabled={busyId !== ''} aria-label={`Transfer ${record.account || record.owner} from ${member.nickname}`} title="Transfer toon" className="grid h-6 w-6 place-items-center rounded-lg text-indigo-300/70 transition hover:bg-indigo-400/10 hover:text-indigo-100 disabled:opacity-40"><ArrowRightLeft className="h-3.5 w-3.5" /></button>}
                             </span>;
                           })}
                         </div>
-                        <button type="button" aria-haspopup="dialog" disabled={busyId !== ''} onClick={() => editToons(member)} className="mt-2.5 inline-flex min-h-9 items-center gap-2 rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] px-3.5 text-xs font-semibold text-indigo-200 transition hover:border-indigo-300/35 hover:bg-indigo-400/[.1] disabled:cursor-wait disabled:opacity-40">
-                          <Link2 className="h-3.5 w-3.5" />{(member.sheetRecordRows ?? []).length ? 'Manage toons' : 'Link toons'}
-                        </button>
                       </div>
 
-                      <div className="flex min-w-0 flex-wrap items-center gap-2 md:col-span-2 md:justify-end 2xl:col-span-1">
-                        {canManageRole && <button type="button" disabled={busyId === member._id || !suggestedRole} onClick={() => suggestedRole && updateRole(member, suggestedRole)} title="Change member role" className="inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] px-3.5 text-xs font-semibold text-indigo-200 transition hover:border-indigo-300/35 hover:bg-indigo-400/[.1] disabled:cursor-not-allowed disabled:opacity-40">
+                      <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2 self-end sm:self-auto">
+                        <button type="button" aria-haspopup="dialog" disabled={busyId !== ''} onClick={() => editToons(member)} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] px-2.5 text-[11px] font-semibold text-indigo-200 transition hover:border-indigo-300/35 hover:bg-indigo-400/[.1] disabled:cursor-wait disabled:opacity-40">
+                          <Link2 className="h-3.5 w-3.5" />{(member.sheetRecordRows ?? []).length ? 'Manage toons' : 'Link toons'}
+                        </button>
+                        {canManageRole && <button type="button" disabled={busyId === member._id || !suggestedRole} onClick={() => suggestedRole && updateRole(member, suggestedRole)} title="Change member role" className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] px-2.5 text-[11px] font-semibold text-indigo-200 transition hover:border-indigo-300/35 hover:bg-indigo-400/[.1] disabled:cursor-not-allowed disabled:opacity-40">
                           {busyId === member._id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RoleIcon role={member.role} className="h-3.5 w-3.5" />}<span>Change role</span>
                         </button>}
-                        {(member.role === 'clansman' || member.role === 'guardian') && <button type="button" disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} aria-label={`Remove ${member.nickname} from the clan`} className="grid h-9 w-9 place-items-center rounded-xl border border-rose-400/20 bg-rose-400/[.04] text-rose-200 transition hover:border-rose-300/40 hover:bg-rose-400/[.1] disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>}
+                        {(member.role === 'clansman' || member.role === 'guardian') && <button type="button" disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} aria-label={`Remove ${member.nickname} from the clan`} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-rose-400/20 bg-rose-400/[.04] text-rose-200 transition hover:border-rose-300/40 hover:bg-rose-400/[.1] disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>}
                       </div>
                     </div>
                   </article>
