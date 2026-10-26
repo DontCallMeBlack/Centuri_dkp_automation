@@ -130,9 +130,9 @@ export async function GET() {
     await expireUnverifiedApprovedSchedules(now);
     const roster = await getSheetRoster();
     await expireInvalidPendingRequests(roster, now);
-    const isGeneral = user.role === 'general';
+    const canApprove = user.role === 'general' || user.role === 'chief';
     const linkedRows = new Set(getLinkedSheetRecordRows(user, roster));
-    const visibleToons = isGeneral ? roster : roster.filter((toon) => linkedRows.has(toon.rowIndex));
+    const visibleToons = canApprove ? roster : roster.filter((toon) => linkedRows.has(toon.rowIndex));
     const identities = [...new Set(visibleToons.map(getSheetRecordKey))];
     const [changes, requests, scheduleApprovals] = await Promise.all([
       ToonRoleChange.find({ identityKey: { $in: identities } }).lean(),
@@ -144,7 +144,7 @@ export async function GET() {
         decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
       }).sort({ createdAt: -1 }).lean(),
     ]);
-    const auditQuery = isGeneral ? {} : { identityKey: { $in: identities } };
+    const auditQuery = canApprove ? {} : { identityKey: { $in: identities } };
     const audit = await ToonRoleChangeAudit.find(auditQuery).sort({ createdAt: -1 }).limit(100).lean();
     const changesByIdentity = new Map(changes.map((change) => [change.identityKey, change] as const));
     const requestsByIdentity = new Map(requests.map((request) => [request.identityKey, request] as const));
@@ -174,18 +174,18 @@ export async function GET() {
         effectiveAt: request?.status === 'approved' ? request.effectiveAt.toISOString() : null,
         request: request ? {
           id: request._id.toString(), status: request.status, requestedRole: request.requestedRole,
-          requestedByNickname: request.requestedByNickname, createdAt: request.createdAt.toISOString(),
+          createdAt: request.createdAt.toISOString(),
           decidedByNickname: request.decidedByNickname ?? null,
           effectiveAt: request.effectiveAt.toISOString(),
         } : null,
         canRequest: linkedRows.has(toon.rowIndex) && !request,
-        canCancel: Boolean(request && (isGeneral || linkedRows.has(toon.rowIndex))),
+        canCancel: Boolean(request && (canApprove || linkedRows.has(toon.rowIndex))),
         duplicateIdentity: (countsByIdentity.get(identityKey) ?? 0) > 1,
       };
     });
 
     return NextResponse.json({
-      isGeneral,
+      canApprove,
       toons,
       nextChangeAt: getNextRoleChangeAt(now).toISOString(),
       timeZone: 'EST (UTC-05:00)',
@@ -279,7 +279,9 @@ export async function POST(request: Request) {
       }
 
       if (action === 'approve' || action === 'deny') {
-        if (actor.role !== 'general') throw new RequestValidationError('Only General accounts can approve or deny role requests.', 403);
+        if (actor.role !== 'general' && actor.role !== 'chief') {
+          throw new RequestValidationError('Only General or Chief accounts can approve or deny role requests.', 403);
+        }
         if (roleRequest.status !== 'pending' || roleRequest.effectiveAt.getTime() <= now.getTime()) {
           throw new RequestValidationError('This request is no longer waiting for review.', 409);
         }
@@ -328,9 +330,9 @@ export async function POST(request: Request) {
           await roleRequest.save({ session });
         }
       } else {
-        const isGeneral = actor.role === 'general';
+        const canApprove = actor.role === 'general' || actor.role === 'chief';
         const linked = getLinkedSheetRecordRows(actor, roster).includes(toon.rowIndex);
-        if (!isGeneral && !linked) throw new RequestValidationError('You can only cancel a request for one of your linked toons.', 403);
+        if (!canApprove && !linked) throw new RequestValidationError('You can only cancel a request for one of your linked toons.', 403);
         if ((roleRequest.status !== 'pending' && roleRequest.status !== 'approved') || roleRequest.effectiveAt.getTime() <= now.getTime()) {
           throw new RequestValidationError('Only an upcoming request or scheduled change can be cancelled.', 409);
         }
