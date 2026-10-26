@@ -28,6 +28,7 @@ import { ITEM_SUBROLES, normalizeAuctionRole } from '@/lib/auctionRules';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
 import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
+import { isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -437,9 +438,15 @@ export async function applyDueToonRoleChanges(at?: Date) {
 
   return withWeeklyResetLock(spreadsheetId, async (lockId) => {
     const now = at ?? new Date();
-    const dueChanges = await ToonRoleChange.find({
+    const unverifiedDueChanges = await ToonRoleChange.find({
       scheduledRole: { $exists: true, $nin: ['', null] }, effectiveAt: { $lte: now },
     }).sort({ effectiveAt: 1 }).lean();
+    const scheduleApprovals = unverifiedDueChanges.length ? await ToonRoleChangeRequest.find({
+      identityKey: { $in: unverifiedDueChanges.map((change) => change.identityKey) },
+      status: { $in: ['approved', 'applied'] }, decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
+    }).sort({ createdAt: -1 }).lean() : [];
+    const dueChanges = unverifiedDueChanges.filter((change) => scheduleApprovals.some((approval) =>
+      approval.identityKey === change.identityKey && isApprovedToonRoleSchedule(change, approval)));
     const sheets = createSheetsClient();
     const rows = dueChanges.length ? await readSheetRows(sheets) : [];
     const roster = dueChanges.length ? rosterFromRows(rows) : [];

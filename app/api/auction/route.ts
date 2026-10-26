@@ -6,6 +6,7 @@ import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
 import ToonRoleChange from '@/lib/models/ToonRoleChange';
+import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
 import AuctionCreationRequest from '@/lib/models/AuctionCreationRequest';
 import { isDkpRequestId } from '@/lib/bossDkp';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
@@ -22,7 +23,7 @@ import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, is
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { requireRosterValues } from '@/lib/sheetRoster';
-import { getEffectiveToonRole } from '@/lib/toonRoleChanges';
+import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 import {
   AUCTION_DURATION_MS,
   AUCTION_WEEKLY_MINIMUM,
@@ -105,7 +106,15 @@ export async function GET(request: Request) {
     const nextCursor = includeArchive && recentResults.length > HISTORY_PAGE_SIZE ? historyCursor(recentAuctions[recentAuctions.length - 1]) : null;
     const roster = rosterSnapshot.roster;
     const roleChanges = await ToonRoleChange.find({ identityKey: { $in: roster.map(getSheetRecordKey) } }).lean();
+    const roleApprovals = await ToonRoleChangeRequest.find({
+      identityKey: { $in: roster.map(getSheetRecordKey) }, status: { $in: ['approved', 'applied'] },
+      decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
+    }).sort({ createdAt: -1 }).lean();
     const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
+    const roleApprovalsByIdentity = new Map<string, typeof roleApprovals>();
+    for (const approval of roleApprovals) {
+      roleApprovalsByIdentity.set(approval.identityKey, [...(roleApprovalsByIdentity.get(approval.identityKey) ?? []), approval]);
+    }
     const roleReadAt = new Date();
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
@@ -135,11 +144,13 @@ export async function GET(request: Request) {
       .filter((record) => linkedRowSet.has(record.rowIndex))
       .map((record) => {
         const roleChange = roleChangesByIdentity.get(getSheetRecordKey(record));
-        const effectiveRole = getEffectiveToonRole(record.subClass, roleChange, roleReadAt);
+        const scheduleApproval = roleApprovalsByIdentity.get(getSheetRecordKey(record))?.find((approval) =>
+          isApprovedToonRoleSchedule(roleChange, approval));
+        const effectiveRole = getEffectiveToonRole(record.subClass, roleChange, roleReadAt, scheduleApproval);
         return {
           ...record,
           subClass: effectiveRole,
-          roleChange: roleChange?.scheduledRole && roleChange.effectiveAt && roleChange.effectiveAt.getTime() > roleReadAt.getTime()
+          roleChange: scheduleApproval && roleChange?.scheduledRole && roleChange.effectiveAt && roleChange.effectiveAt.getTime() > roleReadAt.getTime()
             ? { scheduledRole: roleChange.scheduledRole, effectiveAt: roleChange.effectiveAt.toISOString() }
             : null,
           heldPoints: holds.filter((hold) => holdMatchesIdentity(hold, record) ||
@@ -598,7 +609,14 @@ export async function POST(req: Request) {
           const scheduledRole = toon
             ? await ToonRoleChange.findOne({ identityKey: getSheetRecordKey(toon) }).session(session).lean()
             : null;
-          const effectiveRole = toon ? getEffectiveToonRole(toon.subClass, scheduledRole, bidAt) : '';
+          const scheduleApproval = toon && scheduledRole
+            ? await ToonRoleChangeRequest.findOne({
+              identityKey: getSheetRecordKey(toon), status: { $in: ['approved', 'applied'] },
+              requestedRole: scheduledRole.scheduledRole, effectiveAt: scheduledRole.effectiveAt,
+              decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
+            }).session(session).lean()
+            : null;
+          const effectiveRole = toon ? getEffectiveToonRole(toon.subClass, scheduledRole, bidAt, scheduleApproval) : '';
           if (!toon || !canRoleBid(effectiveRole, auctionRoles)) {
             throw new RequestValidationError(`Only a linked ${auctionRoles.join(' or ')} toon can bid.`, 403);
           }
