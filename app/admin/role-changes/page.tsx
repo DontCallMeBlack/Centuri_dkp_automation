@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Activity, ArrowRight, CalendarClock, Check, CircleAlert, Clock3, LoaderCircle, RotateCcw, Search, ShieldCheck, Sparkles, UserCheck, UsersRound, X } from 'lucide-react';
+import { Activity, ArrowRight, CalendarClock, Check, CircleAlert, Clock3, LoaderCircle, RotateCcw, Search, ShieldCheck, UserCheck, UsersRound, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clearClientData, getData, invalidateData, notifyDkpChanged, readResponse } from '@/lib/client/api';
-import { normalizeAuctionRole, TOON_ROLE_GROUPS } from '@/lib/auctionRules';
+import { getAlternateToonSubrole } from '@/lib/auctionRules';
 import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 
@@ -70,7 +70,6 @@ export default function RoleChangesPage() {
   const [data, setData] = useState<RoleChangeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState('');
-  const [selectedRoles, setSelectedRoles] = useState<Record<number, string>>({});
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -81,7 +80,6 @@ export default function RoleChangesPage() {
       const result = await getData<RoleChangeData>('/api/role-changes');
       if (!mounted.current) return;
       setData(result);
-      setSelectedRoles((current) => Object.fromEntries(result.toons.map((toon) => [toon.rowIndex, current[toon.rowIndex] ?? ''])));
       setError('');
       return true;
     } catch (cause) {
@@ -96,7 +94,7 @@ export default function RoleChangesPage() {
 
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setData(null); setSelectedRoles({}); setQuery(''); setLoading(true); setBusyKey(''); setError(''); setNotice(''); };
+    const clear = () => { setData(null); setQuery(''); setLoading(true); setBusyKey(''); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mounted.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -116,7 +114,7 @@ export default function RoleChangesPage() {
         credentials: 'same-origin',
         body: JSON.stringify({
           action,
-          ...(action === 'request' ? { rowIndex: toon.rowIndex, subrole: selectedRoles[toon.rowIndex] } : { requestId }),
+          ...(action === 'request' ? { rowIndex: toon.rowIndex } : { requestId }),
         }),
       });
       const result = await readResponse<{ message: string }>(response);
@@ -143,8 +141,8 @@ export default function RoleChangesPage() {
       <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
           <p className="page-kicker flex items-center gap-2"><CalendarClock size={14} /> Monthly role changes</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">{data?.isGeneral ? 'Review the next role changes.' : 'Plan your toon’s next path.'}</h1>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">{data?.isGeneral ? 'Review member requests, approve or deny them, and keep the whole roster’s schedule in view.' : 'Request a subclass change for one of your linked toons. A General must approve it before it takes effect.'}</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">{data?.isGeneral ? 'Review subrole changes.' : 'Switch a toon’s subrole.'}</h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">{data?.isGeneral ? 'Approve or deny member requests. Approved switches appear here until they take effect.' : 'Request the other subrole for one of your toons. A General must approve it before the monthly cutoff.'}</p>
         </div>
         <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-950/35 px-4 py-3 backdrop-blur">
           <span className="rounded-xl border border-indigo-300/15 bg-indigo-300/10 p-2.5 text-indigo-200"><Clock3 size={18} /></span>
@@ -152,9 +150,9 @@ export default function RoleChangesPage() {
         </div>
       </div>
       <div className="relative mt-7 grid gap-2 rounded-2xl border border-white/[.08] bg-slate-950/30 p-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-        <div><span className="text-[9px] font-bold uppercase tracking-[.16em] text-indigo-200/70">Before the 1st</span><p className="mt-1 text-xs text-slate-200">Your current subclass remains eligible while a request is pending.</p></div>
+        <div><span className="text-[9px] font-bold uppercase tracking-[.16em] text-indigo-200/70">Until the 1st</span><p className="mt-1 text-xs text-slate-200">The current subrole stays active while a request is pending.</p></div>
         <ArrowRight className="hidden text-indigo-300/70 sm:block" size={17} />
-        <div className="sm:text-right"><span className="text-[9px] font-bold uppercase tracking-[.16em] text-emerald-200/70">After General approval</span><p className="mt-1 text-xs text-slate-200">The approved subclass becomes the only matching role for new bids.</p></div>
+        <div className="sm:text-right"><span className="text-[9px] font-bold uppercase tracking-[.16em] text-emerald-200/70">After approval and cutoff</span><p className="mt-1 text-xs text-slate-200">The new subrole becomes active for bids.</p></div>
       </div>
     </header>
 
@@ -185,15 +183,15 @@ export default function RoleChangesPage() {
         const request = toon.request;
         const pending = request?.status === 'pending';
         const scheduled = request?.status === 'approved';
-        const selected = selectedRoles[toon.rowIndex] ?? '';
-        const canSubmitRequest = toon.canRequest && Boolean(selected) && normalizeAuctionRole(selected) !== normalizeAuctionRole(toon.currentRole) && !toon.duplicateIdentity;
+        const alternateRole = getAlternateToonSubrole(toon.currentRole);
+        const canSubmitRequest = toon.canRequest && Boolean(alternateRole) && !toon.duplicateIdentity;
         const busy = busyKey === (request?.id ?? `request:${toon.rowIndex}`);
         return <article key={toon.rowIndex} className="surface relative overflow-hidden p-5 sm:p-6">
           {(pending || scheduled) && <div className={`pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent ${scheduled ? 'via-emerald-300/70' : 'via-amber-300/70'} to-transparent`} />}
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">{toon.owner}</p><h3 className="mt-1 truncate text-lg font-semibold text-white">{toon.account || toon.owner}</h3></div>
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${scheduled ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-200' : pending ? 'border-amber-300/20 bg-amber-300/10 text-amber-100' : 'border-slate-700 bg-slate-900 text-slate-400'}`}>
-              {scheduled ? 'Scheduled' : pending ? 'Awaiting review' : 'Current role'}
+              {scheduled ? 'Scheduled' : pending ? 'Waiting for approval' : 'Current subrole'}
             </span>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-white/[.06] bg-slate-950/45 p-3">
@@ -204,17 +202,11 @@ export default function RoleChangesPage() {
           </div>
 
           {toon.duplicateIdentity ? <p className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/5 p-3 text-xs text-amber-100">This owner and toon name appear more than once. Reconcile the duplicate before requesting a change.</p> : <>
-            {toon.canRequest && !request && <>
-              <div className="mt-5 flex items-center gap-2"><Sparkles size={15} className="text-indigo-300" /><p className="text-xs font-semibold text-slate-300">Choose a subclass to request</p></div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">{TOON_ROLE_GROUPS.map((group) => <fieldset key={group.name} className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/45 p-3">
-                <legend className="px-1 text-[9px] font-bold uppercase tracking-[.15em] text-slate-500">{group.name}</legend>
-                <div className="flex flex-wrap gap-1.5">{group.subroles.map((subrole) => {
-                  const pressed = selected === subrole;
-                  return <button key={subrole} type="button" aria-pressed={pressed} disabled={Boolean(busyKey)} onClick={() => setSelectedRoles((current) => ({ ...current, [toon.rowIndex]: subrole }))} className={`rounded-lg border px-2.5 py-2 text-[10px] font-semibold transition ${pressed ? 'border-indigo-300/50 bg-indigo-400/15 text-indigo-100 shadow-[0_0_16px_rgba(99,102,241,.1)]' : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-600 hover:text-slate-200'}`}>{subrole}</button>;
-                })}</div>
-              </fieldset>)}</div>
-              <div className="mt-4 flex flex-col-reverse gap-2 border-t border-white/[.06] pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-[10px] leading-5 text-slate-500">If unanswered by {dateLabel(data?.nextChangeAt)}, the request expires automatically.</p><button type="button" disabled={!canSubmitRequest || Boolean(busyKey)} onClick={() => void mutate('request', toon)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-40">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CalendarClock size={14} />}Send request</button></div>
-            </>}
+            {toon.canRequest && !request && alternateRole && <div className="mt-4 flex flex-col gap-3 border-t border-white/[.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0"><p className="text-xs font-semibold text-slate-200">Switch to</p><div className="mt-2 flex items-center gap-2"><RoleBadge role={toon.currentRole} compact /><ArrowRight size={13} className="text-slate-500" /><RoleBadge role={alternateRole} compact /></div><p className="mt-2 text-[10px] text-slate-500">A General must approve by {dateLabel(data?.nextChangeAt)}.</p></div>
+              <button type="button" disabled={!canSubmitRequest || Boolean(busyKey)} onClick={() => void mutate('request', toon)} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-40">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CalendarClock size={14} />}Request {alternateRole}</button>
+            </div>}
+            {toon.canRequest && !request && !alternateRole && <p className="mt-4 border-t border-white/[.06] pt-4 text-xs text-slate-500">Ranger has one subrole, so there is no switch to request.</p>}
             {pending && request && <div className="mt-4 flex flex-col gap-2 border-t border-white/[.06] pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-[10px] leading-5 text-slate-500">Waiting for a General · expires {dateLabel(request.effectiveAt)} if unanswered.</p>{toon.canCancel && <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />}Cancel request</button>}</div>}
             {scheduled && request && <div className="mt-4 flex flex-col gap-2 border-t border-white/[.06] pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-[10px] leading-5 text-slate-500">Current role stays active until the approved date. New bids then use only {request.requestedRole}.</p>{toon.canCancel && <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <RotateCcw size={14} />}Cancel scheduled change</button>}</div>}
             {!toon.canRequest && !request && data?.isGeneral && <p className="mt-4 border-t border-white/[.06] pt-4 text-[10px] text-slate-500">No active request. Members can request changes for their linked toons.</p>}
