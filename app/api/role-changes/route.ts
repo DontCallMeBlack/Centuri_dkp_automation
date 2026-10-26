@@ -175,7 +175,6 @@ export async function GET() {
         request: request ? {
           id: request._id.toString(), status: request.status, requestedRole: request.requestedRole,
           createdAt: request.createdAt.toISOString(),
-          decidedByNickname: request.decidedByNickname ?? null,
           effectiveAt: request.effectiveAt.toISOString(),
         } : null,
         isOwned: linkedRows.has(toon.rowIndex),
