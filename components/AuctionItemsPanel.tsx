@@ -402,7 +402,6 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   const [bossType, setBossType] = useState('Prot');
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(() => !peekData('/api/auction/items'));
-  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
@@ -411,7 +410,6 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
 
   const loadItems = async () => {
     const version = clientDataVersion();
-    setRefreshing(true);
     try {
       const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
       if (!mounted.current || version !== clientDataVersion()) return;
@@ -420,13 +418,13 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
       throw cause;
     } finally {
-      if (mounted.current && version === clientDataVersion()) { setLoading(false); setRefreshing(false); }
+      if (mounted.current && version === clientDataVersion()) setLoading(false);
     }
   };
 
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); setRefreshing(false); };
+    const clear = () => { setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => {
       mounted.current = false;
@@ -518,7 +516,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p><p role="status" className="mt-2 flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full ${refreshing ? 'animate-pulse bg-indigo-300' : error ? 'bg-amber-300' : 'bg-emerald-400'}`} />{refreshing ? 'Refreshing catalog' : error ? 'Showing last loaded catalog' : 'Catalog ready'}</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}

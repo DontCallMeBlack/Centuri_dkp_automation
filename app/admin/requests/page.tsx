@@ -76,7 +76,6 @@ export default function AdminRequestsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [memberQuery, setMemberQuery] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
 
   const applyData = (data:AdminData) => {
@@ -87,7 +86,6 @@ export default function AdminRequestsPage() {
   const loadData = async () => {
     if (!mountedRef.current) return;
     const sequence = ++loadSequence.current;
-    setRefreshing(true);
     try { const data=await getData<AdminData>('/api/admin/requests'); if (mountedRef.current && sequence === loadSequence.current) { applyData(data); setAccessRole(''); setError(''); } }
     catch (cause) {
       if (!mountedRef.current || sequence !== loadSequence.current) return;
@@ -96,7 +94,7 @@ export default function AdminRequestsPage() {
       else if (cause instanceof ApiError && cause.status === 403) setAccessRole(typeof cause.details?.role === 'string' ? cause.details.role : 'member');
       else setError(cause instanceof Error ? cause.message : 'Clan administration could not be refreshed. Showing the last known data.');
       return false;
-    } finally { if (mountedRef.current && sequence === loadSequence.current) { setLoading(false); setRefreshing(false); } }
+    } finally { if (mountedRef.current && sequence === loadSequence.current) setLoading(false); }
   };
   useEffect(() => {
     mountedRef.current=true;
@@ -106,7 +104,7 @@ export default function AdminRequestsPage() {
       setSelectedMappings({}); setMappingQueries({}); setEditingToonsFor('');
       setRoleEditor(null);
       setManagerRole(''); setManagerId(''); setAccessRole(''); setBusyId('');
-      setError(''); setNotice(''); setLoading(true); setRefreshing(false);
+      setError(''); setNotice(''); setLoading(true);
     };
     window.addEventListener('centuri:clear-data',clear);
     return () => { mountedRef.current=false; loadSequence.current += 1; window.removeEventListener('centuri:clear-data',clear); };
@@ -337,7 +335,7 @@ export default function AdminRequestsPage() {
 
   return (
     <main className="space-y-6 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Good people. Stronger clan.</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div><span className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${refreshing ? 'animate-pulse' : ''}`} />Automatic updates</span></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Good people. Stronger clan.</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div></div>
       <div className="grid grid-cols-3 gap-3">{[[UserCheck,'Awaiting approval',pendingUsers.length],[Users,'Clan members',members.length],[ClipboardList,'Recorded actions',auditEvents.length]].map(([Icon,label,count]) => { const I=Icon as typeof Users; return <div key={String(label)} className="surface stat-card"><span className="stat-icon hidden sm:block"><I size={17} /></span><div><p className="stat-label">{String(label)}</p><p className="stat-value">{Number(count)}</p></div></div>; })}</div>
       <div className="surface p-5 sm:p-6">
         <nav aria-label="Administration sections" className="section-tabs !mt-0">
