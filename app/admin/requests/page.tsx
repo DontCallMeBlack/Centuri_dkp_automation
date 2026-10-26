@@ -416,7 +416,7 @@ export default function AdminRequestsPage() {
                     !(member.role === 'chief' && members.filter((entry) => entry.role === 'chief').length <= 1);
 
                   return (
-                  <article key={member._id} className="group relative overflow-hidden rounded-2xl border border-white/[.07] bg-gradient-to-br from-slate-900/85 via-slate-900/60 to-slate-950/80 p-4 shadow-lg shadow-black/10 transition duration-200 hover:-translate-y-px hover:border-indigo-300/20 hover:shadow-indigo-950/15 sm:p-5">
+                  <article key={member._id} className="group member-account-card p-4 sm:p-5">
                     <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-indigo-400/[.06] blur-3xl transition group-hover:bg-indigo-300/[.1]" />
                     <div className="relative grid min-w-0 gap-5 md:grid-cols-[minmax(12rem,.8fr)_minmax(0,1.2fr)] md:items-center 2xl:grid-cols-[minmax(14rem,.85fr)_minmax(0,1.15fr)_auto]">
                       <div className="flex min-w-0 items-center gap-4">
