@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Check, CircleAlert, LoaderCircle } from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, CalendarDays, Check, CircleAlert, LoaderCircle, ShieldCheck, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
 import { useSessionUser } from '@/components/AppShell';
@@ -16,7 +16,6 @@ interface ToonRequest {
   id: string;
   status: RequestStatus;
   requestedRole: string;
-  decidedByNickname: string | null;
   createdAt: string;
   effectiveAt: string;
 }
@@ -85,7 +84,7 @@ export default function RoleChangesPage() {
   useAutoRefresh(load, { active: Boolean(user), onError: (cause) => setError(cause instanceof Error ? cause.message : 'Role requests could not be refreshed.') });
 
   const mutate = async (action: MutationAction, toon: ManagedToon, requestId?: string) => {
-    const key = requestId ?? `${action}:${toon.rowIndex}`;
+    const key = `${action}:${requestId ?? toon.rowIndex}`;
     if (busyKey) return;
     setBusyKey(key);
     setError('');
@@ -121,58 +120,61 @@ export default function RoleChangesPage() {
       Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') ||
       first.rowIndex - second.rowIndex);
 
-  return <div className="mx-auto max-w-4xl space-y-4">
-    <header className="flex flex-wrap items-end justify-between gap-2 border-b border-white/[.08] pb-4">
-      <h1 className="text-2xl font-semibold text-white">Subrole changes</h1>
-      <p className="text-xs text-slate-400">Next cutoff: {data ? `${dateLabel(data.nextChangeAt, { month: 'short', day: 'numeric', year: 'numeric' })} · 12:00 AM EST` : 'Loading…'}</p>
+  return <div className="mx-auto max-w-5xl space-y-6">
+    <header className="relative isolate flex flex-col gap-4 overflow-hidden rounded-3xl border border-indigo-300/15 bg-gradient-to-br from-indigo-500/[.12] via-slate-900/90 to-violet-500/[.08] p-5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:flex-row sm:items-center sm:justify-between sm:p-7 [&>p]:inline-flex [&>p]:w-fit [&>p]:items-center [&>p]:gap-2 [&>p]:rounded-xl [&>p]:border [&>p]:border-white/10 [&>p]:bg-slate-950/45 [&>p]:px-3.5 [&>p]:py-2.5 [&>p]:shadow-inner [&>p]:shadow-black/20 [&>p]:backdrop-blur">
+      <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-20 -z-10 h-64 w-64 rounded-full bg-indigo-400/15 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -bottom-28 left-1/3 -z-10 h-52 w-52 rounded-full bg-violet-400/10 blur-3xl" />
+      <div className="flex items-center gap-4"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-indigo-200/20 bg-indigo-300/10 text-indigo-100 shadow-[inset_0_1px_0_rgba(255,255,255,.1),0_0_32px_rgba(129,140,248,.12)]"><ArrowLeftRight size={21} /></span><h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">Subrole changes</h1></div>
+      <p className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-slate-950/45 px-3.5 py-2.5 text-xs text-slate-300 shadow-inner shadow-black/20 backdrop-blur"><CalendarDays size={15} className="text-indigo-200" /><span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cutoff</span><span className="font-semibold text-slate-200">{data ? `${dateLabel(data.nextChangeAt, { month: 'short', day: 'numeric', year: 'numeric' })} · 12 AM EST` : 'Loading…'}</span></p>
     </header>
 
     {error && <p role="alert" className="flex items-start gap-2 rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-200"><CircleAlert size={16} className="mt-0.5 shrink-0" />{error}</p>}
     {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-sm text-emerald-200"><Check size={16} />{notice}</p>}
 
-    {data?.canApprove && <section className="rounded-2xl border border-amber-300/15 bg-amber-300/[.035] p-4" aria-labelledby="approval-queue-title">
-      <div className="mb-3 flex items-center justify-between gap-2"><h2 id="approval-queue-title" className="text-sm font-semibold text-white">Approvals</h2><span className="text-xs text-amber-100">{pendingRequests.length}</span></div>
-      {loading ? <LoadingSurface rows={1} label="Loading approvals" /> : pendingRequests.length === 0 ? <p className="text-xs text-slate-500">No pending requests.</p> : <div className="divide-y divide-white/[.06]">{pendingRequests.map((toon) => {
+    {data?.canApprove && <section className="relative overflow-hidden rounded-3xl border border-amber-300/20 bg-gradient-to-br from-amber-300/[.09] via-slate-900/90 to-slate-950/80 shadow-xl shadow-black/20" aria-labelledby="approval-queue-title">
+      <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-20 h-56 w-56 rounded-full bg-amber-200/[.08] blur-3xl" />
+      <header className="relative flex items-center justify-between gap-3 border-b border-white/[.07] px-4 py-4 sm:px-5"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl border border-amber-200/20 bg-amber-200/[.08] text-amber-100"><ShieldCheck size={19} /></span><div><h2 id="approval-queue-title" className="text-sm font-bold text-white">Approvals</h2><p className="mt-0.5 text-[10px] text-slate-500">Review subrole requests</p></div></div><span className="grid min-h-8 min-w-8 place-items-center rounded-full border border-amber-200/20 bg-amber-200/10 px-2 text-xs font-bold tabular-nums text-amber-100">{pendingRequests.length}</span></header>
+      {loading ? <div className="p-4"><LoadingSurface rows={1} label="Loading approvals" /></div> : pendingRequests.length === 0 ? <div className="m-3 rounded-2xl border border-dashed border-white/10 bg-slate-950/25 px-4 py-8 text-center sm:m-4"><ShieldCheck size={21} className="mx-auto text-slate-600" /><p className="mt-2 text-xs font-medium text-slate-400">No pending requests</p></div> : <div className="grid gap-2.5 p-3 sm:p-4">{pendingRequests.map((toon) => {
         const request = toon.request!;
-        const busy = busyKey === request.id;
-        return <article key={request.id} className="rounded-xl border border-white/[.07] bg-slate-950/40 p-3 transition-colors hover:border-indigo-300/20 sm:p-4">
+        const busyDeny = busyKey === `deny:${request.id}`;
+        const busyApprove = busyKey === `approve:${request.id}`;
+        return <article key={request.id} className="group rounded-2xl border border-white/[.07] bg-slate-950/55 p-3.5 shadow-lg shadow-black/10 transition duration-200 hover:-translate-y-px hover:border-amber-200/20 hover:bg-slate-950/75 sm:p-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 space-y-2">
-              <p className="truncate text-sm font-semibold text-white">{toon.account || 'Unnamed toon'}</p>
+              <p className="truncate text-sm font-semibold tracking-wide text-white">{toon.account || 'Unnamed toon'}</p>
               <div className="flex flex-wrap items-center gap-2">
                 <RoleBadge role={toon.currentRole} gameClass />
-                <ArrowRight size={14} className="text-slate-500" />
+                <span className="grid h-6 w-6 place-items-center rounded-full border border-white/[.07] bg-white/[.025] text-slate-500"><ArrowRight size={12} /></span>
                 <RoleBadge role={request.requestedRole} gameClass />
               </div>
             </div>
             <div className="flex shrink-0 justify-end gap-2">
-              <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('deny', toon, request.id)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-rose-400/40 hover:bg-rose-400/[.06] disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Deny'}</button>
-              <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('approve', toon, request.id)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Approve'}</button>
+              <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('deny', toon, request.id)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-rose-300/15 bg-rose-400/[.04] px-3.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/35 hover:bg-rose-400/10 disabled:cursor-wait disabled:opacity-45">{busyDeny ? <LoaderCircle size={14} className="animate-spin" /> : <><X size={14} />Deny</>}</button>
+              <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('approve', toon, request.id)} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 text-xs font-bold text-white shadow-lg shadow-emerald-950/30 transition hover:from-emerald-500 hover:to-green-500 hover:shadow-emerald-900/30 disabled:cursor-wait disabled:opacity-45">{busyApprove ? <LoaderCircle size={14} className="animate-spin" /> : <><Check size={14} />Approve</>}</button>
             </div>
           </div>
         </article>;
       })}</div>}
     </section>}
 
-    <section aria-labelledby="active-toons-title">
-      <h2 id="active-toons-title" className="mb-2 text-sm font-semibold text-slate-300">{data?.canApprove ? 'Your toons & open changes' : 'Your toons'}</h2>
+    <section className="overflow-hidden rounded-3xl border border-white/[.07] bg-gradient-to-br from-slate-900/75 via-slate-950/50 to-slate-950/80 shadow-xl shadow-black/15" aria-labelledby="active-toons-title">
+      <header className="flex items-center justify-between gap-3 border-b border-white/[.07] px-4 py-4 sm:px-5"><div><p className="page-kicker">Subroles</p><h2 id="active-toons-title" className="mt-1 text-sm font-bold text-white">{data?.canApprove ? 'Your toons & open changes' : 'Your toons'}</h2></div>{!loading && <span className="rounded-full border border-white/[.08] bg-white/[.03] px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-400">{orderedToons.length}</span>}</header>
       {loading ? <LoadingSurface rows={4} label="Loading toons" /> : orderedToons.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-800 p-6 text-sm text-slate-500">{data?.canApprove ? 'No open changes.' : 'No linked toons.'}</div>
-      ) : <div className="divide-y divide-white/[.08]">{orderedToons.map((toon) => {
+        <div className="m-3 rounded-2xl border border-dashed border-white/10 bg-slate-950/25 px-4 py-10 text-center text-xs font-medium text-slate-400 sm:m-4">{data?.canApprove ? 'No open changes' : 'No linked toons'}</div>
+      ) : <div className="grid gap-2.5 p-3 sm:p-4">{orderedToons.map((toon) => {
         const request = toon.request;
         const pending = request?.status === 'pending';
         const scheduled = request?.status === 'approved';
         const alternateRole = getAlternateToonSubrole(toon.currentRole);
         const canSubmitRequest = toon.canRequest && Boolean(alternateRole) && !toon.duplicateIdentity;
-        const busy = busyKey === (request?.id ?? `request:${toon.rowIndex}`);
-        return <article key={toon.rowIndex} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0"><h3 className="truncate text-sm font-medium text-white">{toon.account || 'Unnamed toon'}</h3><div className="mt-2 flex flex-wrap items-center gap-2"><RoleBadge role={toon.currentRole} gameClass />{request && <><ArrowRight size={12} className="text-slate-500" /><RoleBadge role={request.requestedRole} gameClass /><span className="text-[10px] text-slate-500">{pending ? 'Pending' : `Starts ${dateLabel(request.effectiveAt, { month: 'short', day: 'numeric' })}${request.decidedByNickname ? ` · approved by ${request.decidedByNickname}` : ''}`}</span></>}</div></div>
+        const busy = busyKey === `request:${toon.rowIndex}` || busyKey === `cancel:${request?.id}`;
+        return <article key={toon.rowIndex} className="group relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-white/[.06] bg-slate-950/35 p-3.5 transition duration-200 hover:border-indigo-300/20 hover:bg-slate-950/65 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+          <div className="min-w-0"><h3 className="truncate text-sm font-medium text-white">{toon.account || 'Unnamed toon'}</h3><div className="mt-2 flex flex-wrap items-center gap-2"><RoleBadge role={toon.currentRole} gameClass />{request && <><ArrowRight size={12} className="text-slate-500" /><RoleBadge role={request.requestedRole} gameClass /><span className={`rounded-full border px-2 py-1 text-[9px] font-semibold ${pending ? 'border-amber-200/15 bg-amber-200/[.06] text-amber-100' : 'border-indigo-200/15 bg-indigo-200/[.06] text-indigo-100'}`}>{pending ? 'Pending' : `Starts ${dateLabel(request.effectiveAt, { month: 'short', day: 'numeric' })}`}</span></>}</div></div>
           <div className="flex shrink-0 items-center gap-2">
             {toon.duplicateIdentity ? <span className="text-xs text-amber-200">Duplicate toon</span>
-              : pending && request && toon.canCancel && !data?.canApprove ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Cancel request'}</button>
-              : scheduled && request && toon.canCancel ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Cancel change'}</button>
-              : !request && canSubmitRequest ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('request', toon)} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : `Request ${alternateRole}`}</button>
-              : !request && toon.canRequest && !alternateRole ? <span className="text-xs text-slate-500">No alternate subrole</span>
+              : pending && request && toon.canCancel && !data?.canApprove ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[.025] px-3.5 text-xs font-semibold text-slate-300 transition hover:border-rose-300/25 hover:bg-rose-400/[.06] hover:text-rose-100 disabled:opacity-45">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Cancel request'}</button>
+              : scheduled && request && toon.canCancel ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/10 bg-white/[.025] px-3.5 text-xs font-semibold text-slate-300 transition hover:border-rose-300/25 hover:bg-rose-400/[.06] hover:text-rose-100 disabled:opacity-45">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Cancel change'}</button>
+              : !request && canSubmitRequest ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('request', toon)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 text-xs font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:from-indigo-400 hover:to-violet-400 hover:shadow-indigo-900/30 disabled:cursor-wait disabled:opacity-45">{busy ? <LoaderCircle size={14} className="animate-spin" /> : <><ArrowLeftRight size={14} />Request {alternateRole}</>}</button>
               : null}
           </div>
         </article>;
