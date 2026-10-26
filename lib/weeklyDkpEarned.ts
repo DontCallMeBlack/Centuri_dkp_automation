@@ -25,9 +25,10 @@ export function addWeeklyEarnedFromAwards<T extends WeeklyRosterRecord>(roster: 
       if (!record || creditedRows.has(record.rowIndex)) continue;
       creditedRows.add(record.rowIndex);
 
+      const currentWeeklyEarned = weeklyEarnedByRow.get(record.rowIndex) ?? 0;
       weeklyEarnedByRow.set(
         record.rowIndex,
-        (weeklyEarnedByRow.get(record.rowIndex) ?? 0) + award.points,
+        currentWeeklyEarned + award.points,
       );
     }
   }
