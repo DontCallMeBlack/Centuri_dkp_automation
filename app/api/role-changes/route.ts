@@ -10,7 +10,7 @@ import { getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
-import { normalizeAuctionRole, TOON_SUBROLES } from '@/lib/auctionRules';
+import { getAlternateToonSubrole } from '@/lib/auctionRules';
 import { getEffectiveToonRole, getNextRoleChangeAt, ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
@@ -94,7 +94,6 @@ export async function GET() {
     return NextResponse.json({
       isGeneral,
       toons,
-      availableRoles: TOON_SUBROLES,
       nextChangeAt: getNextRoleChangeAt(now).toISOString(),
       timeZone: 'EST (UTC-05:00)',
       audit: audit.map((entry) => ({
@@ -127,8 +126,6 @@ export async function POST(request: Request) {
       if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) {
         throw new RequestValidationError('Choose one of your linked toons.');
       }
-      const requestedRole = TOON_SUBROLES.find((role) => role === body.subrole);
-      if (!requestedRole) throw new RequestValidationError('Choose one of the supported toon subclasses.');
       const roster = await getSheetRoster({ fresh: true });
       const toon = roster.find((record) => record.rowIndex === body.rowIndex);
       if (!toon) throw new RequestValidationError('This toon is no longer in the roster. Refresh and try again.', 409);
@@ -150,9 +147,8 @@ export async function POST(request: Request) {
         if (existing) throw new RequestValidationError('This toon already has an open request or scheduled change.', 409);
         const change = await ToonRoleChange.findOne({ identityKey }).session(session);
         const currentRole = getEffectiveToonRole(toon.subClass, change, now).trim();
-        if (normalizeAuctionRole(currentRole) === normalizeAuctionRole(requestedRole)) {
-          throw new RequestValidationError('Choose a subclass different from this toon’s current role.');
-        }
+        const requestedRole = getAlternateToonSubrole(currentRole);
+        if (!requestedRole) throw new RequestValidationError('This toon has no alternate subclass within its current class.');
         const effectiveAt = getNextRoleChangeAt(now);
         const [created] = await ToonRoleChangeRequest.create([{
           identityKey, owner: toon.owner, account: toon.account, currentRole, requestedRole,
@@ -163,9 +159,9 @@ export async function POST(request: Request) {
           previousRole: currentRole, scheduledRole: requestedRole, effectiveAt,
           actorUserId: actor._id, actorNickname: actor.nickname, actorRole: actor.role,
         }], { session });
-        return { requestId: created._id.toString(), effectiveAt };
+        return { requestId: created._id.toString(), requestedRole, effectiveAt };
       });
-      return NextResponse.json({ success: true, ...result, message: `Request sent to clan Generals. It expires if not reviewed by ${result.effectiveAt.toLocaleDateString('en-US', { timeZone: ROLE_CHANGE_TIME_ZONE, month: 'long', day: 'numeric', year: 'numeric' })}.` }, { headers: privateHeaders });
+      return NextResponse.json({ success: true, ...result, message: `Request for ${result.requestedRole} sent to clan Generals. It expires if not reviewed by ${result.effectiveAt.toLocaleDateString('en-US', { timeZone: ROLE_CHANGE_TIME_ZONE, month: 'long', day: 'numeric', year: 'numeric' })}.` }, { headers: privateHeaders });
     }
 
     if (typeof body.requestId !== 'string' || !mongoose.isValidObjectId(body.requestId)) {
@@ -193,8 +189,8 @@ export async function POST(request: Request) {
         if (action === 'approve') {
           const currentChange = await ToonRoleChange.findOne({ identityKey: roleRequest.identityKey }).session(session);
           const currentRole = getEffectiveToonRole(toon.subClass, currentChange, now).trim();
-          if (normalizeAuctionRole(currentRole) === normalizeAuctionRole(roleRequest.requestedRole)) {
-            throw new RequestValidationError('The toon already has this subclass. Refresh the request before approving it.', 409);
+          if (getAlternateToonSubrole(currentRole) !== roleRequest.requestedRole) {
+            throw new RequestValidationError('The requested subclass no longer matches this toon’s class. Ask the member to submit a new request.', 409);
           }
           if (currentChange) {
             currentChange.owner = toon.owner;
