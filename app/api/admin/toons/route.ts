@@ -1,4 +1,5 @@
 import { getSessionUser, canManageClan } from '@/lib/auth/session';
+import { createHash } from 'node:crypto';
 import { changeClanToon, ensureWeeklyDkpReset, getSheetRoster, resetToonDkp } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { ITEM_SUBROLES } from '@/lib/auctionRules';
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
             actorRole: manager.role, targetNickname: record.account || record.owner, previousRole: 'toon',
             affectedToon: { rowIndex: record.rowIndex, owner: record.owner, account: record.account },
             operationKey: `${manager._id.toString()}:${body.requestId}`,
+            dkpOperationKey: createHash('sha256').update(`toon-dkp:${process.env.GOOGLE_SHEET_ID?.trim()}:${manager._id.toString()}:${body.requestId}`).digest('hex'),
             dkpBefore: [record.weeklyEarned, record.weeklySpent, record.earned, record.spent, record.available, record.fiveWeekActivity]
               .map((value) => value === null ? 'unavailable' : String(value)),
             withdrawnBids: bidChanges.withdrawnBids, promotedBids: bidChanges.promotedBids,

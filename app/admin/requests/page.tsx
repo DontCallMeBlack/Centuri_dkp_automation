@@ -33,7 +33,7 @@ interface ClanAuditEntry {
   targetUserId?: string;
   transferToUserId?: string;
   operationKey?: string;
-  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-removed' | 'toon-dkp-wiped' | 'toon-transferred';
+  eventType: 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-restored' | 'toon-removed' | 'toon-dkp-wiped' | 'toon-transferred';
   actorNickname: string;
   actorRole: string;
   targetNickname: string;
@@ -42,6 +42,7 @@ interface ClanAuditEntry {
   createdAt: string;
   addedToons?: Array<{owner:string; account:string}>;
   removedToons?: Array<{rowIndex?:number; owner:string; account:string}>;
+  affectedToon?: {rowIndex?:number; owner:string; account:string};
   forfeitedDkp?: string[];
   transferToNickname?: string;
   transferStatus?: 'pending' | 'completed';
@@ -50,12 +51,37 @@ interface ClanAuditEntry {
   promotedBids?: number;
   undoneAt?: string;
   undoneByNickname?: string;
+  undoAvailable?: boolean;
+}
+
+interface ArchivedAccount {
+  id: string;
+  auditEventId: string;
+  nickname: string;
+  role: string;
+  originalStatus: 'approved' | 'pending';
+  archiveReason: 'member-removal' | 'account-denial';
+  linkedToons: Array<{ owner: string; account: string }>;
+  archivedAt: string;
+  archivedByNickname: string;
+}
+
+interface ArchivedToon {
+  id: string;
+  eventId?: string;
+  owner: string;
+  account: string;
+  subClass: string;
+  available: string;
+  archivedAt: string;
+  archivedByNickname: string;
 }
 
 function auditSummary(event: ClanAuditEntry) {
-  const toon = event.addedToons?.[0] ?? event.removedToons?.[0];
+  const toon = event.affectedToon ?? event.addedToons?.[0] ?? event.removedToons?.[0];
   const toonName = toon?.account || toon?.owner || 'Toon';
   switch (event.eventType) {
+    case 'toon-restored': return `Toon restored: ${toonName}`;
     case 'toon-created': return `Toon added · ${toonName}`;
     case 'toon-removed': return `Toon removed · ${toonName}`;
     case 'toon-dkp-wiped': return `DKP wiped · ${event.targetNickname}`;
@@ -72,20 +98,21 @@ function auditSummary(event: ClanAuditEntry) {
 
 function isUndoableActivity(event: ClanAuditEntry) {
   if (event.undoneAt) return false;
+  if (event.undoAvailable !== undefined) return event.undoAvailable;
   if (event.eventType === 'promotion' || event.eventType === 'demotion' || event.eventType === 'account-approval' || event.eventType === 'toon-created') return true;
   return event.eventType === 'toon-links' && Boolean(event.addedToons?.length || event.removedToons?.length);
 }
 
 type ClanRole = 'chief' | 'general' | 'guardian' | 'clansman';
 
-type AdminSection = 'requests' | 'members' | 'toons' | 'activity';
+type AdminSection = 'requests' | 'members' | 'toons' | 'activity' | 'archive';
 const ROLE_DETAILS: Record<ClanRole, string> = {
   chief: 'Full clan administration, member access, DKP awards and auctions.',
   general: 'Manage members, promote Guardians, record kills and manage auctions.',
   guardian: 'Record boss kills, manage catalog items and post auctions.',
   clansman: 'View the roster and bid using linked toons.',
 };
-interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]}
+interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]; archivedAccounts:ArchivedAccount[]; archivedToons:ArchivedToon[]}
 
 export default function AdminRequestsPage() {
   const initialAdminData = peekData<AdminData>('/api/admin/requests');
@@ -99,6 +126,8 @@ export default function AdminRequestsPage() {
   const [members, setMembers] = useState<ClanUser[]>(() => initialAdminData?.members ?? []);
   const [auditEvents, setAuditEvents] = useState<ClanAuditEntry[]>(() => initialAdminData?.auditEvents ?? []);
   const [roster, setRoster] = useState<RosterMember[]>(() => initialAdminData?.roster ?? []);
+  const [archivedAccounts, setArchivedAccounts] = useState<ArchivedAccount[]>(() => initialAdminData?.archivedAccounts ?? []);
+  const [archivedToons, setArchivedToons] = useState<ArchivedToon[]>(() => initialAdminData?.archivedToons ?? []);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>(() => Object.fromEntries([...(initialAdminData?.pendingUsers ?? []), ...(initialAdminData?.members ?? [])].map((member) => [member._id, member.sheetRecordRows ?? []])));
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
   const [editingToonsFor, setEditingToonsFor] = useState('');
@@ -119,6 +148,7 @@ export default function AdminRequestsPage() {
   const applyData = (data:AdminData) => {
     setManagerRole(data.managerRole ?? ''); setManagerId(data.managerId ?? '');
     setPendingUsers(data.pendingUsers); setMembers(data.members); setAuditEvents(data.auditEvents); setRoster(data.roster);
+    setArchivedAccounts(data.archivedAccounts ?? []); setArchivedToons(data.archivedToons ?? []);
     setSelectedMappings((current) => Object.fromEntries([...data.pendingUsers,...data.members].map((member) => [member._id,dirtyMappings.current.has(member._id) ? current[member._id] ?? member.sheetRecordRows ?? [] : member.sheetRecordRows ?? []])));
   };
   const loadData = async () => {
@@ -139,6 +169,7 @@ export default function AdminRequestsPage() {
     const clear = () => {
       loadSequence.current += 1; dirtyMappings.current.clear();
       setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
+      setArchivedAccounts([]); setArchivedToons([]);
       setSelectedMappings({}); setMappingQueries({}); setEditingToonsFor('');
       setRoleEditor(null);
       setToonTransfer(null); setTransferDestination(''); setTransferConfirmed(false);
@@ -331,7 +362,7 @@ export default function AdminRequestsPage() {
   };
 
   const removeMember = (member: ClanUser) => {
-    if (window.confirm(`Remove ${member.nickname}'s account from the app? This cannot be undone.`)) {
+    if (window.confirm(`Remove ${member.nickname}'s account? It can be restored from the Archive.`)) {
       void sendAdminAction(member._id, 'remove');
     }
   };
@@ -396,7 +427,10 @@ export default function AdminRequestsPage() {
   const undoActivity = async (event: ClanAuditEntry) => {
     if (!managerId || !isUndoableActivity(event) || mutationPending.current) return;
     const summary = auditSummary(event);
-    if (!window.confirm(`Undo “${summary}”?`)) return;
+    const confirmation = event.eventType === 'toon-transferred'
+      ? `Undo “${summary}”? Its saved DKP will be restored; withdrawn auction bids will stay withdrawn.`
+      : `Undo “${summary}”?`;
+    if (!window.confirm(confirmation)) return;
     const payload = { eventId: event.id };
     mutationPending.current = true;
     setBusyId(`undo:${event.id}`); setError(''); setNotice('Undoing change…');
@@ -416,6 +450,48 @@ export default function AdminRequestsPage() {
       setError(cause instanceof Error ? cause.message : 'The change could not be undone.');
       invalidateData('/api/admin/requests');
       void loadData();
+    } finally { mutationPending.current = false; setBusyId(''); }
+  };
+
+  const restoreArchivedAccount = async (archive: ArchivedAccount) => {
+    if (!managerId || mutationPending.current || !window.confirm(`Restore ${archive.nickname}'s account and saved credentials?`)) return;
+    const payload = { eventId: archive.auditEventId };
+    mutationPending.current = true; setBusyId(`restore-account:${archive.id}`); setError(''); setNotice('Restoring account…');
+    try {
+      const requestId = await getActionRequestId(managerId, 'restore-account', payload);
+      const response = await fetch('/api/admin/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore-account', ...payload, requestId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The account could not be restored.');
+      await completeActionRequest(managerId, 'restore-account', payload);
+      setNotice(result.message || 'Account restored.');
+      for (const url of ['/api/admin/requests', '/api/auth/session', '/api/auction', '/api/dkp']) invalidateData(url);
+      void loadData();
+    } catch (cause) {
+      setNotice(''); setError(cause instanceof Error ? cause.message : 'The account could not be restored.');
+      invalidateData('/api/admin/requests'); void loadData();
+    } finally { mutationPending.current = false; setBusyId(''); }
+  };
+
+  const restoreArchivedToon = async (archive: ArchivedToon) => {
+    if (!managerId || mutationPending.current || !window.confirm(`Restore ${archive.account || archive.owner} with its saved DKP? Auction bids will stay withdrawn.`)) return;
+    const payload = { archiveMutationId: archive.id };
+    mutationPending.current = true; setBusyId(`restore-toon:${archive.id}`); setError(''); setNotice('Restoring toon…');
+    try {
+      const requestId = await getActionRequestId(managerId, 'restore-archived-toon', payload);
+      const response = await fetch('/api/admin/requests', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore-toon', ...payload, requestId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The toon could not be restored.');
+      await completeActionRequest(managerId, 'restore-archived-toon', payload);
+      setNotice(result.message || 'Toon restored.');
+      for (const url of ['/api/admin/requests', '/api/auth/session', '/api/auction', '/api/dkp']) invalidateData(url);
+      void loadData();
+    } catch (cause) {
+      setNotice(''); setError(cause instanceof Error ? cause.message : 'The toon could not be restored.');
+      invalidateData('/api/admin/requests'); void loadData();
     } finally { mutationPending.current = false; setBusyId(''); }
   };
 
@@ -459,6 +535,7 @@ export default function AdminRequestsPage() {
             ['members', 'Members', Users, members.length],
             ['toons', 'Clan toons', Shield, roster.length],
             ['activity', 'Activity log', History, auditEvents.length],
+            ['archive', 'Archive', Undo2, archivedAccounts.length + archivedToons.length],
           ] as const).map(([key, label, Icon, count]) => (
             <button
               key={key}
@@ -610,6 +687,43 @@ export default function AdminRequestsPage() {
                 </div>
               </div>
             )}
+          </section>
+        )}
+
+        {section === 'archive' && (
+          <section className="tab-panel-content mt-6 space-y-8">
+            <div>
+              <h2 className="mb-4 text-lg font-bold text-white">Removed toons</h2>
+              {archivedToons.length === 0 ? <p className="border-y border-slate-800 py-8 text-center text-sm text-slate-500">No removed toons.</p> : (
+                <div className="divide-y divide-slate-800 rounded-xl border border-slate-800">
+                  {archivedToons.map((toon) => <article key={toon.id} className="flex flex-col gap-3 bg-slate-950/40 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0"><h3 className="truncate font-semibold text-white">{toon.account || toon.owner}</h3>
+                      <p className="mt-1 text-xs text-slate-400">{toon.owner}{toon.subClass ? ` · ${toon.subClass}` : ''} · {toon.available} Available DKP</p>
+                      <p className="mt-1 text-xs text-slate-600">Removed by {toon.archivedByNickname} · {new Date(toon.archivedAt).toLocaleDateString()}</p>
+                    </div>
+                    <button type="button" disabled={busyId !== ''} onClick={() => void restoreArchivedToon(toon)} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-indigo-300/20 bg-indigo-400/[.08] px-3 text-xs font-semibold text-indigo-100 hover:bg-indigo-400/[.16] disabled:opacity-40">
+                      {busyId === `restore-toon:${toon.id}` ? <LoaderCircle size={14} className="animate-spin" /> : <Undo2 size={14} />} Restore toon
+                    </button>
+                  </article>)}
+                </div>
+              )}
+            </div>
+            <div>
+              <h2 className="mb-4 text-lg font-bold text-white">Removed accounts and denied sign-ups</h2>
+              {archivedAccounts.length === 0 ? <p className="border-y border-slate-800 py-8 text-center text-sm text-slate-500">No archived accounts.</p> : (
+                <div className="divide-y divide-slate-800 rounded-xl border border-slate-800">
+                  {archivedAccounts.map((account) => <article key={account.id} className="flex flex-col gap-3 bg-slate-950/40 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0"><h3 className="truncate font-semibold text-white">{account.nickname}</h3>
+                      <p className="mt-1 text-xs capitalize text-slate-400">{account.archiveReason === 'account-denial' ? 'Denied sign-up' : 'Removed member'} · {account.role} · {account.linkedToons.length} toon(s)</p>
+                      <p className="mt-1 text-xs text-slate-600">Removed by {account.archivedByNickname} · {new Date(account.archivedAt).toLocaleDateString()}</p>
+                    </div>
+                    <button type="button" disabled={busyId !== ''} onClick={() => void restoreArchivedAccount(account)} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-indigo-300/20 bg-indigo-400/[.08] px-3 text-xs font-semibold text-indigo-100 hover:bg-indigo-400/[.16] disabled:opacity-40">
+                      {busyId === `restore-account:${account.id}` ? <LoaderCircle size={14} className="animate-spin" /> : <Undo2 size={14} />} Restore account
+                    </button>
+                  </article>)}
+                </div>
+              )}
+            </div>
           </section>
         )}
 

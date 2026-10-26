@@ -1,41 +1,57 @@
 import { NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import type { ClientSession } from 'mongoose';
 import User from '@/lib/models/User';
 import AuthSession from '@/lib/models/AuthSession';
 import Auction, { type IAuction } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionBidHistory from '@/lib/models/AuctionBidHistory';
+import SheetRosterCache from '@/lib/models/SheetRosterCache';
+import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
 import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
+import ClanAccountArchive from '@/lib/models/ClanAccountArchive';
 import RosterMutation from '@/lib/models/RosterMutation';
 import ToonDkpReset from '@/lib/models/ToonDkpReset';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
+import { readDkpCell } from '@/lib/dkpAccounting';
 import { CLAN_ROLES, canChangeMemberRole, isClanRole, validRosterRows } from '@/lib/auth/permissions';
-import { changeClanToon, getSheetRoster, resetToonDkp, withDkpLedgerLock } from '@/lib/googleSheets';
+import { adjustPlayersDKP, changeClanToon, getSheetRoster, resetToonDkp, restoreToonDkpSnapshot, withDkpLedgerLock } from '@/lib/googleSheets';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { withdrawToonOpenAuctionBids } from '@/lib/auctionBidWithdrawal';
 import { getLinkedSheetRecordRows, getSheetRecordKey, type SheetRecordIdentity } from '@/lib/sheetRecordLinks';
 import { getChangedLinkIdentities, getReservationConflict, type ReservationSubject } from '@/lib/auth/reservationProtection';
 import { planStaleRowReferenceRelease } from '@/lib/auth/staleRowReferences';
 import { isDkpRequestId } from '@/lib/bossDkp';
+import { normalizeNickname } from '@/lib/auth/validation';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
 const unfinished: IAuction['status'][] = ['active', 'settling', 'settlement-failed', 'removing'];
+const snapshotUserLinks = (user: { sheetRecords?: Array<{ rowIndex?: number; owner: string; account: string }>; sheetRecordName?: string }, roster: Awaited<ReturnType<typeof getSheetRoster>>, rows: number[]) => ({
+  ...(user.sheetRecords?.length ? { sheetRecords: user.sheetRecords.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })) } : {}),
+  ...(user.sheetRecordName?.trim() ? { sheetRecordName: user.sheetRecordName } : {}),
+  linkedToons: roster.filter((record) => rows.includes(record.rowIndex)).map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })),
+});
 
 export async function GET(request: Request) {
   try {
     const manager = await getSessionUser();
     if (!manager) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageClan(manager.role)) return NextResponse.json({ error: 'This page is limited to Chief and General accounts', role: manager.role }, { status: 403 });
-    const [pendingUsers, members, roster, recentAuditEvents, pendingTransfers] = await Promise.all([
+    const [pendingUsers, members, roster, recentAuditEvents, pendingTransfers, archivedAccounts, archivedToons] = await Promise.all([
       User.find({ status: 'pending' }).select('_id nickname role status sheetRecordName sheetRecords').sort({ createdAt: 1 }).lean(),
       User.find({ status: 'approved' }).select('_id nickname role status sheetRecordName sheetRecords').sort({ nickname: 1 }).lean(),
       getSheetRoster(), ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).lean(),
       ClanAuditEvent.find({ eventType: 'toon-transferred', transferStatus: 'pending' }).sort({ createdAt: -1 }).lean(),
+      ClanAccountArchive.find({ status: 'archived' }).select('auditEventId nickname role originalStatus archiveReason linkedToons archivedAt archivedByNickname').sort({ archivedAt: -1 }).limit(500).lean(),
+      RosterMutation.find({ action: 'remove', status: 'applied', restoredAt: { $exists: false } })
+        .select('_id owner account subClass before actorNickname createdAt removalEventId').sort({ createdAt: -1 }).limit(500).lean(),
     ]);
     const auditEvents = [...new Map([...recentAuditEvents, ...pendingTransfers].map((event) => [event._id.toString(), event])).values()]
       .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime());
+    const accountArchiveEvents = new Set(archivedAccounts.map((archive) => archive.auditEventId.toString()));
+    const toonArchiveEvents = new Set(archivedToons.flatMap((archive) => archive.removalEventId ? [archive.removalEventId.toString()] : []));
     const includeRows = (user: (typeof members)[number]) => {
       const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
       const needsLinkRefresh = Boolean(user.sheetRecords?.some((saved) => saved.rowIndex === undefined ||
@@ -69,7 +85,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, managerRole: manager.role, managerId: manager._id.toString(),
       pendingUsers: pendingUsers.map(includeRows), members: members.map(includeRows), roster,
       ...(linkDiagnostics ? { linkDiagnostics } : {}),
-      auditEvents: auditEvents.map(({ _id, ...event }) => ({ ...event, id: _id.toString(), targetUserId: event.targetUserId?.toString(), transferToUserId: event.transferToUserId?.toString(), actorUserId: event.actorUserId.toString() })),
+      auditEvents: auditEvents.map(({ _id, ...event }) => ({ ...event, id: _id.toString(), targetUserId: event.targetUserId?.toString(), transferToUserId: event.transferToUserId?.toString(), actorUserId: event.actorUserId.toString(),
+        undoAvailable: ['promotion', 'demotion', 'toon-links', 'account-approval', 'toon-created'].includes(event.eventType) ||
+          (['member-removal', 'account-denial'].includes(event.eventType) && accountArchiveEvents.has(_id.toString())) ||
+          (event.eventType === 'toon-removed' && toonArchiveEvents.has(_id.toString())) ||
+          (event.eventType === 'toon-dkp-wiped' && Boolean(event.affectedToon && event.dkpBefore?.[4])) ||
+          (event.eventType === 'toon-transferred' && Boolean(event.sourceLinksBefore?.linkedToons && event.sourceLinksAfter?.linkedToons && event.destinationLinksBefore?.linkedToons && event.destinationLinksAfter?.linkedToons && event.dkpBefore?.length === 6 && Array.isArray(event.activityWeeksBefore) && typeof event.hadPriorDkpReset === 'boolean' && (!event.hadPriorDkpReset || (event.priorDkpResetAt && event.priorDkpResetByUserId && event.priorDkpResetByNickname)))),
+      })),
+      archivedAccounts: archivedAccounts.map(({ _id, ...archive }) => ({ ...archive, id: _id.toString(), auditEventId: archive.auditEventId.toString() })),
+      archivedToons: archivedToons.map(({ _id, before, ...archive }) => ({
+        id: _id, eventId: archive.removalEventId?.toString(), owner: archive.owner, account: archive.account,
+        subClass: archive.subClass, available: String(before[7] ?? '0'), archivedAt: archive.createdAt, archivedByNickname: archive.actorNickname,
+      })),
     }, { headers: privateHeaders });
   } catch (error) { return requestErrorResponse(error, 'Unable to load clan administration. Please retry.'); }
 }
@@ -91,6 +118,18 @@ async function assertLinksUnreserved(subjects: ReservationSubject[], session: Cl
     }
     if (conflict) throw new RequestValidationError('A selected toon has a reserved bid or pending delivery. Resolve its auctions before changing links.', 409);
   }
+}
+
+async function archiveAccount(target: InstanceType<typeof User>, manager: InstanceType<typeof User>, eventId: string,
+  archiveReason: 'member-removal' | 'account-denial', linkedToons: SheetRecordIdentity[], session: ClientSession) {
+  await ClanAccountArchive.create([{
+    userId: target._id, auditEventId: eventId, nickname: target.nickname,
+    nicknameKey: target.nicknameKey || normalizeNickname(target.nickname), passwordHash: target.passwordHash,
+    role: target.role, originalStatus: target.status,
+    linkedToons: [...new Map(linkedToons.map((toon) => [getSheetRecordKey(toon), { owner: toon.owner, account: toon.account }])).values()],
+    createdAt: target.createdAt, archiveReason, archivedAt: new Date(),
+    archivedByUserId: manager._id, archivedByNickname: manager.nickname, status: 'archived',
+  }], { session });
 }
 
 async function releaseStaleRowReferences(actorId: string, targetId: string, rows: number[], roster: Awaited<ReturnType<typeof getSheetRoster>>, action: string) {
@@ -121,12 +160,207 @@ async function releaseStaleRowReferences(actorId: string, targetId: string, rows
   });
 }
 
+async function assertRecentActivity(eventId: string, session: ClientSession) {
+  const latest = await ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).select('_id').session(session).lean();
+  if (!latest.some((entry) => entry._id.toString() === eventId)) throw new RequestValidationError('Only the latest 100 activity entries can be undone here.', 409);
+}
+
+async function assertLatestToonActivity(event: { _id: unknown }, identity: SheetRecordIdentity, session: ClientSession) {
+  const related = await ClanAuditEvent.find({ $or: [
+    { 'affectedToon.owner': identity.owner, 'affectedToon.account': identity.account },
+    { addedToons: { $elemMatch: { owner: identity.owner, account: identity.account } } },
+    { removedToons: { $elemMatch: { owner: identity.owner, account: identity.account } } },
+  ] }).sort({ createdAt: 1, _id: 1 }).select('_id').collation({ locale: 'en', strength: 2 }).session(session).lean();
+  if (!related.length || related[related.length - 1]._id.toString() !== String(event._id)) {
+    throw new RequestValidationError('This toon has later DKP or roster activity. Undo the newer action first.', 409);
+  }
+}
+
+async function restoreArchivedAccount(actorId: string, eventId: string, requestId: string, requireRecent = true) {
+  return withDkpLedgerLock((roster) => withClanAdministrationTransaction(async (session) => {
+    const manager = await User.findOne({ _id: actorId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
+    if (!manager) throw new RequestValidationError('Your permissions changed. Refresh and try again.', 403);
+    const event = await ClanAuditEvent.findById(eventId).session(session);
+    if (!event || !['member-removal', 'account-denial'].includes(event.eventType) || !event.targetUserId) {
+      throw new RequestValidationError('This account archive is unavailable.', 404);
+    }
+    if (requireRecent) await assertRecentActivity(eventId, session);
+    const archive = await ClanAccountArchive.findOne({ auditEventId: event._id }).session(session);
+    if (!archive) throw new RequestValidationError('This older account action has no saved credentials to restore.', 409);
+    if (archive.status === 'restored') {
+      if (archive.restoreRequestId === requestId) return { success: true, message: 'Account restored.' };
+      throw new RequestValidationError('This archived account was already restored.', 409);
+    }
+    if (archive.userId.toString() !== event.targetUserId.toString() || !archive.passwordHash) {
+      throw new RequestValidationError('The account archive is incomplete and cannot be restored safely.', 409);
+    }
+    if (await User.exists({ $or: [
+      { _id: archive.userId }, { nicknameKey: archive.nicknameKey }, { nickname: archive.nickname },
+    ] }).session(session)) throw new RequestValidationError('An account with this ID or nickname already exists.', 409);
+    const matches = archive.linkedToons.map((identity) => roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(identity)));
+    if (matches.some((entries) => entries.length !== 1)) throw new RequestValidationError('One of this account’s saved toons is no longer on the roster.', 409);
+    const linked = matches.map((entries) => entries[0]);
+    const otherUsers = await User.find().select('_id sheetRecords sheetRecordName').session(session).lean();
+    if (otherUsers.some((user) => linked.some((record) => getLinkedSheetRecordRows(user, roster).includes(record.rowIndex)))) {
+      throw new RequestValidationError('A saved toon is linked to another account. Unlink it before restoring this account.', 409);
+    }
+    await assertLinksUnreserved([{ identities: linked, rejectUnverifiedLegacyHolds: true }], session);
+    await User.create([{
+      _id: archive.userId, nickname: archive.nickname, nicknameKey: archive.nicknameKey,
+      passwordHash: archive.passwordHash, role: archive.role, status: archive.originalStatus,
+      createdAt: archive.createdAt,
+      ...(linked.length ? { sheetRecords: linked.map(({ rowIndex, owner, account }) => ({ rowIndex, owner, account })) } : {}),
+    }], { session });
+    archive.status = 'restored'; archive.passwordHash = undefined; archive.restoredAt = new Date();
+    archive.restoredByUserId = manager._id; archive.restoredByNickname = manager.nickname; archive.restoreRequestId = requestId;
+    await archive.save({ session });
+    event.undoneAt = new Date(); event.undoneByUserId = manager._id;
+    event.undoneByNickname = manager.nickname; event.undoRequestId = requestId;
+    await event.save({ session });
+    return { success: true, message: 'Account restored. It must sign in again.' };
+  }));
+}
+
+async function undoWipedDkp(actorId: string, eventId: string, requestId: string) {
+  const event = await ClanAuditEvent.findById(eventId).lean();
+  if (!event || event.eventType !== 'toon-dkp-wiped' || !event.dkpBefore?.[4]) throw new RequestValidationError('The wiped Available DKP snapshot is unavailable.', 409);
+  const requestParts = event.operationKey?.split(':') ?? [];
+  const operationKey = event.dkpOperationKey ?? (requestParts.length === 2
+    ? createHash('sha256').update(`toon-dkp:${process.env.GOOGLE_SHEET_ID?.trim()}:${event.actorUserId.toString()}:${requestParts[1]}`).digest('hex')
+    : '');
+  const originalMutation = operationKey ? await DkpSheetMutation.findOne({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), operationKey }).lean() : null;
+  const toon = event.affectedToon ?? originalMutation?.identities?.[0];
+  if (!toon?.owner || typeof toon.account !== 'string') throw new RequestValidationError('The wiped toon identity is unavailable.', 409);
+  const restoredAvailable = readDkpCell(event.dkpBefore[4], 'H', toon.rowIndex ?? 3);
+  if (!Number.isFinite(restoredAvailable) || restoredAvailable < 0) throw new RequestValidationError('The saved Available DKP amount is invalid.', 409);
+  await adjustPlayersDKP([{ rowIndex: toon.rowIndex ?? 3, owner: toon.owner, account: toon.account, points: restoredAvailable }], {
+    mode: 'available', actorUserId: actorId, idempotencyKey: `undo-wipe:${eventId}:${requestId}`,
+    mutate: async (session) => {
+      const manager = await User.findOne({ _id: actorId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
+      if (!manager) throw new RequestValidationError('Your permissions changed. Refresh and try again.', 403);
+      await assertRecentActivity(eventId, session);
+      const current = await ClanAuditEvent.findOne({ _id: eventId, eventType: 'toon-dkp-wiped', undoneAt: { $exists: false } }).session(session);
+      if (!current) throw new RequestValidationError('This wipe was already undone or changed.', 409);
+      await assertLatestToonActivity(current, toon, session);
+      current.undoneAt = new Date(); current.undoneByUserId = manager._id;
+      current.undoneByNickname = manager.nickname; current.undoRequestId = requestId;
+      await current.save({ session });
+    },
+  });
+  return { success: true, message: 'Wiped Available DKP added back. Auction bids were not restored.' };
+}
+
+async function undoTransfer(actorId: string, eventId: string, requestId: string) {
+  const preview = await ClanAuditEvent.findOne({ _id: eventId, eventType: 'toon-transferred' }).lean();
+  if (!preview || preview.transferStatus !== 'completed' || !preview.removedToons?.[0]) {
+    throw new RequestValidationError('This transfer is not complete.', 409);
+  }
+  const toon = preview.removedToons[0];
+  if (preview.dkpBefore?.length !== 6 || !Array.isArray(preview.activityWeeksBefore) || typeof preview.hadPriorDkpReset !== 'boolean') {
+    throw new RequestValidationError('This transfer has no complete DKP recovery snapshot.', 409);
+  }
+  const sourceBefore = preview.sourceLinksBefore?.linkedToons;
+  const sourceAfter = preview.sourceLinksAfter?.linkedToons;
+  const destinationBefore = preview.destinationLinksBefore?.linkedToons;
+  const destinationAfter = preview.destinationLinksAfter?.linkedToons;
+  if (!sourceBefore || !sourceAfter || !destinationBefore || !destinationAfter || !preview.targetUserId || !preview.transferToUserId) {
+    throw new RequestValidationError('This transfer has no complete ownership snapshot.', 409);
+  }
+  if (preview.hadPriorDkpReset && (!preview.priorDkpResetAt || !preview.priorDkpResetByUserId || !preview.priorDkpResetByNickname)) {
+    throw new RequestValidationError('The prior weekly DKP reset record is incomplete.', 409);
+  }
+  const snapshot = preview.dkpBefore.map((value, index) => readDkpCell(value, ['D', 'E', 'F', 'G', 'H', 'I'][index], toon.rowIndex ?? 3));
+  await restoreToonDkpSnapshot({
+    actorUserId: actorId, requestId, identity: { owner: toon.owner, account: toon.account },
+    values: snapshot, weeklyActivity: preview.activityWeeksBefore,
+    mutate: async (session, record, roster) => {
+      const manager = await User.findOne({ _id: actorId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
+      if (!manager) throw new RequestValidationError('Your permissions changed. Refresh and try again.', 403);
+      await assertRecentActivity(eventId, session);
+      const event = await ClanAuditEvent.findOne({ _id: eventId, eventType: 'toon-transferred' }).session(session);
+      if (!event || event.transferStatus !== 'completed' || !event.targetUserId || !event.transferToUserId) {
+        throw new RequestValidationError('This transfer is not complete.', 409);
+      }
+      if (event.undoneAt) {
+        if (event.undoRequestId === requestId) return;
+        throw new RequestValidationError('This transfer was already undone.', 409);
+      }
+      await assertLatestToonActivity(event, record, session);
+      const openHolds = await AuctionHold.find({ heldPoints: { $ne: 0 } }).select('rowIndex owner account heldPoints').session(session).lean();
+      const openAuctions = await Auction.find({ status: { $in: unfinished } }).select('status highBid').session(session).lean();
+      if (getReservationConflict({ identities: [record], rejectUnverifiedLegacyHolds: true }, openHolds, openAuctions)) {
+        throw new RequestValidationError('Resolve this toon’s open auction bids before undoing the transfer.', 409);
+      }
+      const source = await User.findOne({ _id: event.targetUserId, status: 'approved' }).session(session);
+      const destination = await User.findOne({ _id: event.transferToUserId, status: 'approved' }).session(session);
+      if (!source || !destination) throw new RequestValidationError('Restore both member accounts before undoing this transfer.', 409);
+      const linksMatch = (user: InstanceType<typeof User>, expected: Array<{ owner: string; account: string }>) => {
+        const current = getLinkedSheetRecordRows(user, roster).map((row) => roster.find((entry) => entry.rowIndex === row)!)
+          .filter(Boolean).map(getSheetRecordKey).sort();
+        const expectedKeys = expected.map(getSheetRecordKey).sort();
+        return current.length === expectedKeys.length && current.every((key, index) => key === expectedKeys[index]);
+      };
+      if (!linksMatch(source, sourceAfter) || !linksMatch(destination, destinationAfter)) {
+        throw new RequestValidationError('One of these accounts’ toon links changed after the transfer.', 409);
+      }
+      const toonKey = getSheetRecordKey(record);
+      if (!sourceBefore.some((identity) => getSheetRecordKey(identity) === toonKey) ||
+        sourceAfter.some((identity) => getSheetRecordKey(identity) === toonKey) ||
+        destinationBefore.some((identity) => getSheetRecordKey(identity) === toonKey) ||
+        !destinationAfter.some((identity) => getSheetRecordKey(identity) === toonKey)) {
+        throw new RequestValidationError('The source account ownership snapshot is inconsistent.', 409);
+      }
+      const allRestored = [...sourceBefore, ...destinationBefore];
+      const restoredMatches = allRestored.map((identity) => roster.filter((entry) => getSheetRecordKey(entry) === getSheetRecordKey(identity)));
+      if (restoredMatches.some((entries) => entries.length !== 1)) throw new RequestValidationError('A toon from the saved account links is no longer on the roster.', 409);
+      const restoredRows = new Set(restoredMatches.map((entries) => entries[0].rowIndex));
+      const thirdParty = await User.find({ _id: { $nin: [source._id, destination._id] } }).select('sheetRecords sheetRecordName').session(session).lean();
+      if (thirdParty.some((user) => getLinkedSheetRecordRows(user, roster).some((row) => restoredRows.has(row)))) {
+        throw new RequestValidationError('A saved toon is now linked to another account.', 409);
+      }
+      const restoreLinks = (identities: typeof sourceBefore) => identities.length ? identities.map((identity) => {
+        const current = roster.find((entry) => getSheetRecordKey(entry) === getSheetRecordKey(identity))!;
+        return { rowIndex: current.rowIndex, owner: current.owner, account: current.account };
+      }) : undefined;
+      source.sheetRecords = restoreLinks(sourceBefore); source.sheetRecordName = undefined;
+      destination.sheetRecords = restoreLinks(destinationBefore); destination.sheetRecordName = undefined;
+      await source.save({ session }); await destination.save({ session });
+      if (event.hadPriorDkpReset) {
+        await ToonDkpReset.updateOne({ identityKey: toonKey }, { $set: {
+          owner: record.owner, account: record.account, resetAt: event.priorDkpResetAt,
+          resetByUserId: event.priorDkpResetByUserId, resetByNickname: event.priorDkpResetByNickname,
+        } }, { upsert: true, session });
+      } else await ToonDkpReset.deleteOne({ identityKey: toonKey }).session(session);
+      event.undoneAt = new Date(); event.undoneByUserId = manager._id;
+      event.undoneByNickname = manager.nickname; event.undoRequestId = requestId;
+      await event.save({ session });
+    },
+  });
+  return { success: true, message: 'Transfer undone. Saved DKP restored; withdrawn auction bids were not restored.' };
+}
+
 async function undoActivity(actorId: string, eventId: string, requestId: string) {
   const eventPreview = await ClanAuditEvent.findById(eventId).lean();
   if (!eventPreview) throw new RequestValidationError('Activity entry not found.', 404);
   if (eventPreview.undoneAt) {
     if (eventPreview.undoRequestId === requestId) return { success: true, message: 'Change undone.' };
     throw new RequestValidationError('This activity has already been undone.', 409);
+  }
+  if (eventPreview.eventType === 'toon-dkp-wiped') return undoWipedDkp(actorId, eventId, requestId);
+  if (eventPreview.eventType === 'toon-transferred') return undoTransfer(actorId, eventId, requestId);
+  if (eventPreview.eventType === 'member-removal' || eventPreview.eventType === 'account-denial') {
+    return restoreArchivedAccount(actorId, eventId, requestId);
+  }
+  if (eventPreview.eventType === 'toon-removed') {
+    const toon = eventPreview.removedToons?.[0];
+    if (!toon) throw new RequestValidationError('This toon archive is unavailable.', 409);
+    const archive = await RosterMutation.findOne({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: getSheetRecordKey(toon),
+      status: 'applied', restoredAt: { $exists: false }, $or: [{ removalEventId: eventId }, { removalEventId: { $exists: false } }],
+    }).sort({ createdAt: -1 }).lean();
+    if (!archive) throw new RequestValidationError('This toon archive was already restored or is unavailable.', 409);
+    await changeClanToon(actorId, requestId, { action: 'restore', archiveMutationId: archive._id, undoEventId: eventId });
+    return { success: true, message: 'Toon and its saved DKP were restored. Auction bids were not restored.' };
   }
   if (eventPreview.eventType === 'toon-created') {
     const toon = eventPreview.addedToons?.[0];
@@ -227,7 +461,7 @@ export async function POST(request: Request) {
   try {
     const body = await readJsonObject(request);
     const { action, userId } = body;
-    if (typeof action !== 'string' || !['approve', 'deny', 'link', 'unlink', 'remove', 'set-role', 'transfer', 'undo-activity'].includes(action)) {
+    if (typeof action !== 'string' || !['approve', 'deny', 'link', 'unlink', 'remove', 'set-role', 'transfer', 'undo-activity', 'restore-toon', 'restore-account'].includes(action)) {
       throw new RequestValidationError('Invalid administration request.');
     }
     const initialManager = await getSessionUser();
@@ -238,6 +472,20 @@ export async function POST(request: Request) {
         throw new RequestValidationError('Choose a valid activity entry to undo.');
       }
       const result = await undoActivity(initialManager._id.toString(), body.eventId, body.requestId);
+      return NextResponse.json(result, { headers: privateHeaders });
+    }
+    if (action === 'restore-toon') {
+      if (typeof body.archiveMutationId !== 'string' || !/^[a-f0-9]{64}$/i.test(body.archiveMutationId) || !isDkpRequestId(body.requestId)) {
+        throw new RequestValidationError('Choose a valid archived toon.');
+      }
+      const result = await changeClanToon(initialManager._id.toString(), body.requestId, { action: 'restore', archiveMutationId: body.archiveMutationId });
+      return NextResponse.json({ success: true, ...result, message: 'Toon and saved DKP restored. Auction bids were not restored.' }, { headers: privateHeaders });
+    }
+    if (action === 'restore-account') {
+      if (typeof body.eventId !== 'string' || !/^[a-f0-9]{24}$/i.test(body.eventId) || !isDkpRequestId(body.requestId)) {
+        throw new RequestValidationError('Choose a valid archived account.');
+      }
+      const result = await restoreArchivedAccount(initialManager._id.toString(), body.eventId, body.requestId, false);
       return NextResponse.json(result, { headers: privateHeaders });
     }
     if (typeof userId !== 'string' || !/^[a-f0-9]{24}$/i.test(userId)) throw new RequestValidationError('Invalid administration request.');
@@ -291,6 +539,12 @@ export async function POST(request: Request) {
           if (conflictingUser) throw new RequestValidationError(`This toon is linked to ${conflictingUser.nickname}. Refresh the member list and try again.`, 409);
 
           const remainingRows = sourceRows.filter((row) => row !== record.rowIndex);
+          const sourceLinksBefore = snapshotUserLinks(source, roster, sourceRows);
+          const destinationLinksBefore = snapshotUserLinks(destination, roster, destinationRows);
+          const cache = await SheetRosterCache.findOne({ cacheKey: process.env.GOOGLE_SHEET_ID?.trim() }).select('weeklyActivityHistory').session(session).lean();
+          const activityWeeksBefore = cache?.weeklyActivityHistory?.find((entry) => getSheetRecordKey(entry) === getSheetRecordKey(record))?.weeks
+            ?? (record.fiveWeekActivity === 0 ? [] : [record.fiveWeekActivity ?? 0]);
+          const priorReset = await ToonDkpReset.findOne({ identityKey: getSheetRecordKey(record) }).session(session).lean();
           source.sheetRecords = remainingRows.flatMap((row) => {
             const linked = roster.find((entry) => entry.rowIndex === row);
             return linked ? [{ rowIndex: linked.rowIndex, owner: linked.owner, account: linked.account }] : [];
@@ -298,11 +552,16 @@ export async function POST(request: Request) {
           if (!source.sheetRecords.length) source.sheetRecords = undefined;
           source.sheetRecordName = undefined;
           await source.save({ session });
+          const dkpOperationKey = createHash('sha256').update(`toon-dkp:${process.env.GOOGLE_SHEET_ID?.trim()}:${manager._id.toString()}:${body.requestId}`).digest('hex');
           await ClanAuditEvent.create([{
             eventType: 'toon-transferred', actorUserId: manager._id, actorNickname: manager.nickname,
             actorRole: manager.role, targetUserId: source._id, targetNickname: source.nickname,
             previousRole: source.role, transferToUserId: destination._id, transferToNickname: destination.nickname,
             transferStatus: 'pending', operationKey: transferAuditKey,
+            dkpOperationKey, activityWeeksBefore,
+            hadPriorDkpReset: Boolean(priorReset), priorDkpResetAt: priorReset?.resetAt,
+            priorDkpResetByUserId: priorReset?.resetByUserId, priorDkpResetByNickname: priorReset?.resetByNickname,
+            sourceLinksBefore, sourceLinksAfter: snapshotUserLinks(source, roster, remainingRows), destinationLinksBefore,
             removedToons: [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }],
           }], { session });
         },
@@ -336,6 +595,7 @@ export async function POST(request: Request) {
           transferEvent.transferStatus = 'completed';
           transferEvent.transferToNickname = destination.nickname;
           transferEvent.addedToons = [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }];
+          transferEvent.destinationLinksAfter = snapshotUserLinks(destination, roster, [...destinationRows, record.rowIndex]);
           transferEvent.removedToons = [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }];
           transferEvent.dkpBefore = [record.weeklyEarned, record.weeklySpent, record.earned, record.spent, record.available, record.fiveWeekActivity].map(String);
           transferEvent.withdrawnBids = bidChanges.withdrawnBids;
@@ -400,9 +660,10 @@ export async function POST(request: Request) {
 
       if (action === 'deny') {
         if (target.status !== 'pending') throw new RequestValidationError('Only pending requests can be denied.', 409);
-        await ClanAuditEvent.create([{ eventType: 'account-denial', actorUserId: manager._id,
+        const [denialEvent] = await ClanAuditEvent.create([{ eventType: 'account-denial', actorUserId: manager._id,
           actorNickname: manager.nickname, actorRole: manager.role, targetUserId: target._id,
           targetNickname: target.nickname, previousRole: target.role }], { session });
+        await archiveAccount(target, manager, denialEvent._id.toString(), 'account-denial', target.sheetRecords ?? [], session);
         await AuthSession.deleteMany({ userId: target._id }).session(session);
         await target.deleteOne({ session });
         return 'Sign-up request denied.';
@@ -423,8 +684,9 @@ export async function POST(request: Request) {
           { status: 'completed', deliveryStatus: 'not-required', highBid: null, createdByUserId: target._id },
         ] }).session(session);
         if (outstanding) throw new RequestValidationError('Resolve this member’s open auctions and delivery tasks before removing the account.', 409);
-        await ClanAuditEvent.create([{ eventType: 'member-removal', actorUserId: manager._id, actorNickname: manager.nickname,
+        const [removalEvent] = await ClanAuditEvent.create([{ eventType: 'member-removal', actorUserId: manager._id, actorNickname: manager.nickname,
           actorRole: manager.role, targetUserId: target._id, targetNickname: target.nickname, previousRole: target.role }], { session });
+        await archiveAccount(target, manager, removalEvent._id.toString(), 'member-removal', currentIdentities, session);
         await AuthSession.deleteMany({ userId: target._id }).session(session);
         await target.deleteOne({ session });
         return 'Clan member account removed.';
