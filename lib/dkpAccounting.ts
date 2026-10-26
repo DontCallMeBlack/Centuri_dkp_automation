@@ -1,4 +1,4 @@
-export type DkpAdjustmentMode = 'balance' | 'weekly-earned' | 'auction-spend';
+export type DkpAdjustmentMode = 'balance' | 'available' | 'weekly-earned' | 'auction-spend';
 
 export interface DkpAdjustmentInput {
   rowIndex: number;
@@ -51,7 +51,7 @@ export function buildDkpAdjustmentUpdates(input: DkpAdjustmentInput) {
   if (!Number.isFinite(points) || Math.abs(points) > Number.MAX_SAFE_INTEGER) {
     throw new DkpIntegrityError('DKP adjustment must be a finite number within the safe numeric range.');
   }
-  if (!['balance', 'weekly-earned', 'auction-spend'].includes(mode)) throw new DkpIntegrityError('Unknown DKP adjustment mode.');
+  if (!['balance', 'available', 'weekly-earned', 'auction-spend'].includes(mode)) throw new DkpIntegrityError('Unknown DKP adjustment mode.');
   if (!row || !row[0]) throw new DkpIntegrityError(`Google Sheets roster row ${rowIndex} could not be read.`);
   if (
     (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
@@ -87,6 +87,9 @@ export function buildDkpAdjustmentUpdates(input: DkpAdjustmentInput) {
       { range: `${sheetName}!H${rowIndex}`, values: [[adjustedCell(row, 7, 'H', rowIndex, points)]] },
     ];
   }
+  if (mode === 'available') return [
+    { range: `${sheetName}!H${rowIndex}`, values: [[adjustedCell(row, 7, 'H', rowIndex, points)]] },
+  ];
   return [
     { range: `${sheetName}!F${rowIndex}`, values: [[adjustedCell(row, 5, 'F', rowIndex, points)]] },
     { range: `${sheetName}!H${rowIndex}`, values: [[adjustedCell(row, 7, 'H', rowIndex, points)]] },

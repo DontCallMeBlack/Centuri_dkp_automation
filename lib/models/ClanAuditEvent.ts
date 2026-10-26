@@ -1,8 +1,9 @@
 import mongoose, { Document, Model, Schema } from 'mongoose';
 
-export type ClanAuditEventType = 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-removed' | 'toon-dkp-wiped' | 'toon-transferred';
+export type ClanAuditEventType = 'promotion' | 'demotion' | 'member-removal' | 'toon-links' | 'toon-reference-refresh' | 'account-approval' | 'account-denial' | 'toon-created' | 'toon-restored' | 'toon-removed' | 'toon-dkp-wiped' | 'toon-transferred';
 
 interface AuditToon { rowIndex?: number; owner: string; account: string }
+interface AuditUserLinks { sheetRecords?: AuditToon[]; sheetRecordName?: string; linkedToons?: AuditToon[] }
 
 export interface IClanAuditEvent extends Document {
   eventType: ClanAuditEventType;
@@ -28,19 +29,29 @@ export interface IClanAuditEvent extends Document {
   undoneByUserId?: mongoose.Types.ObjectId;
   undoneByNickname?: string;
   undoRequestId?: string;
+  dkpOperationKey?: string;
+  activityWeeksBefore?: number[];
+  hadPriorDkpReset?: boolean;
+  priorDkpResetAt?: Date;
+  priorDkpResetByUserId?: mongoose.Types.ObjectId;
+  priorDkpResetByNickname?: string;
+  sourceLinksBefore?: AuditUserLinks;
+  sourceLinksAfter?: AuditUserLinks;
+  destinationLinksBefore?: AuditUserLinks;
+  destinationLinksAfter?: AuditUserLinks;
   createdAt: Date;
 }
 
 const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   eventType: {
     type: String,
-    enum: ['promotion', 'demotion', 'member-removal', 'toon-links', 'toon-reference-refresh', 'account-approval', 'account-denial', 'toon-created', 'toon-removed', 'toon-dkp-wiped', 'toon-transferred'],
+    enum: ['promotion', 'demotion', 'member-removal', 'toon-links', 'toon-reference-refresh', 'account-approval', 'account-denial', 'toon-created', 'toon-restored', 'toon-removed', 'toon-dkp-wiped', 'toon-transferred'],
     required: true,
   },
   actorUserId: { type: Schema.Types.ObjectId, required: true },
   actorNickname: { type: String, required: true },
   actorRole: { type: String, required: true },
-  targetUserId: { type: Schema.Types.ObjectId, required: function(this: IClanAuditEvent) { return !['toon-created', 'toon-removed', 'toon-dkp-wiped'].includes(this.eventType); } },
+  targetUserId: { type: Schema.Types.ObjectId, required: function(this: IClanAuditEvent) { return !['toon-created', 'toon-restored', 'toon-removed', 'toon-dkp-wiped'].includes(this.eventType); } },
   transferToUserId: { type: Schema.Types.ObjectId },
   transferToNickname: { type: String },
   transferStatus: { type: String, enum: ['pending', 'completed'] },
@@ -59,6 +70,16 @@ const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   undoneByUserId: { type: Schema.Types.ObjectId },
   undoneByNickname: { type: String },
   undoRequestId: { type: String },
+  dkpOperationKey: { type: String },
+  activityWeeksBefore: { type: [Number], default: undefined },
+  hadPriorDkpReset: { type: Boolean },
+  priorDkpResetAt: { type: Date },
+  priorDkpResetByUserId: { type: Schema.Types.ObjectId },
+  priorDkpResetByNickname: { type: String },
+  sourceLinksBefore: { type: Schema.Types.Mixed },
+  sourceLinksAfter: { type: Schema.Types.Mixed },
+  destinationLinksBefore: { type: Schema.Types.Mixed },
+  destinationLinksAfter: { type: Schema.Types.Mixed },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
 ClanAuditEventSchema.index({ createdAt: -1 });

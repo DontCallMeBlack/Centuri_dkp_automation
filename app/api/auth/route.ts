@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import dbConnect from '@/lib/mongodb';
 import User from '@/lib/models/User';
+import ClanAccountArchive from '@/lib/models/ClanAccountArchive';
 import ClanAdministrationState from '@/lib/models/ClanAdministrationState';
 import { createSession, revokeSession } from '@/lib/auth/session';
 import { withClanAdministrationTransaction, CLAN_ADMINISTRATION_KEY } from '@/lib/auth/administration';
@@ -43,8 +44,11 @@ export async function POST(request: Request) {
         if (existingNames.some((user) => (user.nicknameKey || normalizeNickname(user.nickname)) === nicknameKey)) {
           throw new RequestValidationError('That nickname is already registered.', 409);
         }
+        const archivedName = await ClanAccountArchive.exists({ nicknameKey, status: 'archived' }).session(session);
+        if (archivedName) throw new RequestValidationError('That nickname is archived. Ask a Chief or General to restore the account.', 409);
+        const archivedAccountCount = await ClanAccountArchive.countDocuments({ status: 'archived' }).session(session);
         const state = await ClanAdministrationState.findById(CLAN_ADMINISTRATION_KEY).session(session);
-        const bootstrap = existingNames.length === 0 && state?.bootstrapClaimed === false;
+        const bootstrap = existingNames.length === 0 && archivedAccountCount === 0 && state?.bootstrapClaimed === false;
         if (existingNames.length === 0) {
           if (!bootstrap) throw new RequestValidationError('The clan has already been initialized. The site owner must recover its Chief account.', 503);
           if (!validBootstrapToken(bootstrapToken, process.env.CLAN_BOOTSTRAP_TOKEN)) throw new SetupRequiredError();
