@@ -19,10 +19,15 @@ export interface IClanAuditEvent extends Document {
   newRole?: string;
   addedToons?: AuditToon[];
   removedToons?: AuditToon[];
+  affectedToon?: AuditToon;
   forfeitedDkp?: string[];
   dkpBefore?: string[];
   withdrawnBids?: number;
   promotedBids?: number;
+  undoneAt?: Date;
+  undoneByUserId?: mongoose.Types.ObjectId;
+  undoneByNickname?: string;
+  undoRequestId?: string;
   createdAt: Date;
 }
 
@@ -45,10 +50,15 @@ const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   newRole: { type: String },
   addedToons: { type: [new Schema({ rowIndex: Number, owner: String, account: String }, { _id: false })], default: undefined },
   removedToons: { type: [new Schema({ rowIndex: Number, owner: String, account: String }, { _id: false })], default: undefined },
+  affectedToon: { type: new Schema({ rowIndex: Number, owner: String, account: String }, { _id: false }) },
   forfeitedDkp: { type: [String], default: undefined },
   dkpBefore: { type: [String], default: undefined },
   withdrawnBids: { type: Number, min: 0 },
   promotedBids: { type: Number, min: 0 },
+  undoneAt: { type: Date },
+  undoneByUserId: { type: Schema.Types.ObjectId },
+  undoneByNickname: { type: String },
+  undoRequestId: { type: String },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
 ClanAuditEventSchema.index({ createdAt: -1 });

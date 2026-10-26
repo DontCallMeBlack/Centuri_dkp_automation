@@ -1047,6 +1047,15 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
       targetNickname: pending.account || pending.owner, previousRole: 'unlinked',
       ...(pending.action === 'create' ? { addedToons: [toon] } : { removedToons: [toon], forfeitedDkp: pending.before.slice(3, 9) }),
     }], { session });
+    if (pending.undoEventId) {
+      const original = await ClanAuditEvent.findOne({ _id: pending.undoEventId, eventType: 'toon-created', undoneAt: { $exists: false } }).session(session);
+      if (!original) throw new DkpIntegrityError('The toon creation activity changed while it was being undone. A manager must review the roster history.');
+      original.undoneAt = new Date();
+      original.undoneByUserId = pending.actorUserId;
+      original.undoneByNickname = pending.actorNickname;
+      original.undoRequestId = pending.undoRequestId;
+      await original.save({ session });
+    }
     pending.status = 'applied';
     await pending.save({ session });
   }, { recoveringRoster: true });
@@ -1054,7 +1063,7 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
 
 export async function changeClanToon(actorUserId: string, requestId: string, input:
   | { action: 'create'; owner: string; account: string; subClass: string }
-  | { action: 'remove'; rowIndex: number; owner: string; account: string }) {
+  | { action: 'remove'; rowIndex: number; owner: string; account: string; undoCreatedEventId?: string }) {
   assertDkpWritesEnabled();
   await dbConnect();
   const spreadsheetId = getSpreadsheetId();
@@ -1065,6 +1074,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
     const previous = await RosterMutation.findById(id).lean();
     if (previous) {
       if (previous.fingerprint !== fingerprint) throw new RequestValidationError('This request ID was already used for a different toon change.', 409);
+      if (previous.status === 'pending') await replayPendingRosterMutation(spreadsheetId, lockId);
       return { rowIndex: previous.rowIndex, replayed: true };
     }
     if (input.action === 'create' && (!ITEM_SUBROLES.includes(input.subClass as typeof ITEM_SUBROLES[number]) || input.subClass === 'Everyone')) throw new RequestValidationError('Choose a supported toon subrole.');
@@ -1124,6 +1134,44 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
       const auctions = await Auction.find({ $or: [{ status: { $in: ['active', 'removing', 'settling', 'settlement-failed'] } }, { status: 'completed', deliveryStatus: 'pending' }] }).select('status deliveryStatus highBid winner').session(session).lean();
       const awards = await BossAward.find({ status: { $in: ['pending', 'updating'] } }).select('participants pendingChange').session(session).lean();
       const users = await User.find().select('_id sheetRecords sheetRecordName').session(session).lean();
+      if (input.action === 'remove' && input.undoCreatedEventId) {
+        const createdEvent = await ClanAuditEvent.findOne({ _id: input.undoCreatedEventId, eventType: 'toon-created', undoneAt: { $exists: false } }).session(session);
+        const latestEvents = await ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).select('_id').session(session).lean();
+        if (!createdEvent || !latestEvents.some((event) => event._id.toString() === input.undoCreatedEventId) ||
+          !createdEvent.addedToons?.some((toon) => getSheetRecordKey(toon) === identityKey)) {
+          throw new RequestValidationError('This toon creation is no longer available to undo.', 409);
+        }
+        const currentToon = roster.find((record) => getSheetRecordKey(record) === identityKey);
+        if (!currentToon) throw new RequestValidationError('This toon is no longer on the roster.', 409);
+        requireRosterValues(currentToon, ['weeklyEarned', 'weeklySpent', 'earned', 'spent', 'available', 'fiveWeekActivity']);
+        if ([currentToon.weeklyEarned, currentToon.weeklySpent, currentToon.earned, currentToon.spent, currentToon.available, currentToon.fiveWeekActivity].some((value) => value !== 0)) {
+          throw new RequestValidationError('This toon has DKP history and cannot be safely undone.', 409);
+        }
+        const relatedEvents = await ClanAuditEvent.find({ $or: [
+          { addedToons: { $elemMatch: { owner: currentToon.owner, account: currentToon.account } } },
+          { removedToons: { $elemMatch: { owner: currentToon.owner, account: currentToon.account } } },
+          { 'affectedToon.owner': currentToon.owner, 'affectedToon.account': currentToon.account },
+          { eventType: 'toon-dkp-wiped', targetNickname: { $in: [currentToon.account, currentToon.owner].filter(Boolean) } },
+        ] }).sort({ createdAt: 1, _id: 1 }).select('_id').collation({ locale: 'en', strength: 2 }).session(session).lean();
+        const creationPosition = relatedEvents.findIndex((event) => event._id.toString() === input.undoCreatedEventId);
+        if (creationPosition < 0 || creationPosition !== relatedEvents.length - 1) {
+          throw new RequestValidationError('This toon has later roster activity and cannot be safely undone.', 409);
+        }
+        const linked = users.some((user) => getLinkedSheetRecordRows(user, roster).includes(currentToon.rowIndex));
+        const roleHistory = await Promise.all([
+          ToonRoleChange.exists({ identityKey }).session(session),
+          ToonRoleChangeAudit.exists({ identityKey }).session(session),
+          ToonRoleChangeRequest.exists({ identityKey }).session(session),
+          AuctionBidHistory.exists({ identityKey }).session(session),
+          Auction.exists({ $or: [
+            { 'highBid.owner': currentToon.owner, 'highBid.account': currentToon.account },
+            { 'winner.owner': currentToon.owner, 'winner.account': currentToon.account },
+          ] }).session(session),
+          BossAward.exists({ participants: { $elemMatch: { owner: currentToon.owner, account: currentToon.account } } }).collation({ locale: 'en', strength: 2 }).session(session),
+          RosterMutation.exists({ action: 'remove', identityKey }).session(session),
+        ]);
+        if (linked || roleHistory.some(Boolean)) throw new RequestValidationError('This toon has account, auction, award, or role history and cannot be safely undone.', 409);
+      }
       if (holds.some((hold) => deletedRows.includes(hold.rowIndex) &&
         !roster.some((record) => record.rowIndex === hold.rowIndex && getSheetRecordKey(record) === getSheetRecordKey({ owner: hold.owner ?? '', account: hold.account ?? '' })))) {
         throw new RequestValidationError('A DKP reservation is attached to an empty roster row. Reconcile auction holds before arranging the roster.', 409);
@@ -1144,6 +1192,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
         owner: input.owner, account: input.account, subClass, before, after,
         compaction: { endRow, beforeRows, afterRows, deletedRows, moves },
         actorUserId: actor._id, actorNickname: actor.nickname, actorRole: actor.role, linkChanges,
+        ...(input.action === 'remove' && input.undoCreatedEventId ? { undoEventId: input.undoCreatedEventId, undoRequestId: requestId } : {}),
       }], { session });
     });
     await replayPendingRosterMutation(spreadsheetId, lockId);
