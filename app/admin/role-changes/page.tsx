@@ -29,6 +29,7 @@ interface ManagedToon {
   scheduledRole: string | null;
   effectiveAt: string | null;
   request: ToonRequest | null;
+  isOwned: boolean;
   canRequest: boolean;
   canCancel: boolean;
   duplicateIdentity: boolean;
@@ -114,9 +115,11 @@ export default function RoleChangesPage() {
 
   const pendingRequests = data?.toons.filter((toon) => toon.request?.status === 'pending') ?? [];
   const visibleToons = data?.toons ?? [];
-  const orderedToons = data?.canApprove
-    ? [...visibleToons].sort((first, second) => Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') || first.rowIndex - second.rowIndex)
-    : visibleToons;
+  const orderedToons = [...visibleToons]
+    .filter((toon) => !data?.canApprove || toon.isOwned || toon.request !== null)
+    .sort((first, second) => Number(second.isOwned) - Number(first.isOwned) ||
+      Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') ||
+      first.rowIndex - second.rowIndex);
 
   return <div className="mx-auto max-w-4xl space-y-4">
     <header className="flex flex-wrap items-end justify-between gap-2 border-b border-white/[.08] pb-4">
@@ -152,9 +155,9 @@ export default function RoleChangesPage() {
     </section>}
 
     <section aria-labelledby="active-toons-title">
-      <h2 id="active-toons-title" className="mb-2 text-sm font-semibold text-slate-300">Active toons</h2>
+      <h2 id="active-toons-title" className="mb-2 text-sm font-semibold text-slate-300">{data?.canApprove ? 'Your toons & open changes' : 'Your toons'}</h2>
       {loading ? <LoadingSurface rows={4} label="Loading toons" /> : orderedToons.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-800 p-6 text-sm text-slate-500">No linked toons.</div>
+        <div className="rounded-xl border border-dashed border-slate-800 p-6 text-sm text-slate-500">{data?.canApprove ? 'No open changes.' : 'No linked toons.'}</div>
       ) : <div className="divide-y divide-white/[.08]">{orderedToons.map((toon) => {
         const request = toon.request;
         const pending = request?.status === 'pending';
@@ -163,7 +166,7 @@ export default function RoleChangesPage() {
         const canSubmitRequest = toon.canRequest && Boolean(alternateRole) && !toon.duplicateIdentity;
         const busy = busyKey === (request?.id ?? `request:${toon.rowIndex}`);
         return <article key={toon.rowIndex} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0"><h3 className="truncate text-sm font-medium text-white">{toon.account || toon.owner}</h3><p className="mt-1 text-xs text-slate-500">{toon.owner}</p><div className="mt-2 flex flex-wrap items-center gap-2"><RoleBadge role={toon.currentRole} gameClass />{request && <><ArrowRight size={12} className="text-slate-500" /><RoleBadge role={request.requestedRole} gameClass /><span className="text-[10px] text-slate-500">{pending ? 'Pending' : `Starts ${dateLabel(request.effectiveAt, { month: 'short', day: 'numeric' })}${request.decidedByNickname ? ` · approved by ${request.decidedByNickname}` : ''}`}</span></>}</div></div>
+          <div className="min-w-0"><h3 className="truncate text-sm font-medium text-white">{toon.account || 'Unnamed toon'}</h3><div className="mt-2 flex flex-wrap items-center gap-2"><RoleBadge role={toon.currentRole} gameClass />{request && <><ArrowRight size={12} className="text-slate-500" /><RoleBadge role={request.requestedRole} gameClass /><span className="text-[10px] text-slate-500">{pending ? 'Pending' : `Starts ${dateLabel(request.effectiveAt, { month: 'short', day: 'numeric' })}${request.decidedByNickname ? ` · approved by ${request.decidedByNickname}` : ''}`}</span></>}</div></div>
           <div className="flex shrink-0 items-center gap-2">
             {toon.duplicateIdentity ? <span className="text-xs text-amber-200">Duplicate toon</span>
               : pending && request && toon.canCancel && !data?.canApprove ? <button type="button" disabled={Boolean(busyKey)} onClick={() => void mutate('cancel', toon, request.id)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 disabled:opacity-50">{busy ? <LoaderCircle size={14} className="animate-spin" /> : 'Cancel request'}</button>
