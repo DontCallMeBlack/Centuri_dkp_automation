@@ -9,7 +9,7 @@ import Dialog from '@/components/Dialog';
 import ClanToonsPanel from '@/components/ClanToonsPanel';
 import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
-import { ArrowDown, ArrowRightLeft, ArrowUp, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Undo2, UserCheck, Users, X } from 'lucide-react';
+import { ArrowRightLeft, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Undo2, UserCheck, Users, X } from 'lucide-react';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 
 interface ClanUser {
@@ -380,13 +380,6 @@ export default function AdminRequestsPage() {
     }
   };
 
-  const unlinkToon = (member: ClanUser, record: RosterMember) => {
-    const toonName = record.account || record.owner;
-    if (window.confirm(`Unlink ${toonName} from ${member.nickname}? It will become available to link to another account.`)) {
-      void sendAdminAction(member._id, 'unlink', [record.rowIndex]);
-    }
-  };
-
   const transferToon = async () => {
     if (!toonTransfer || !transferDestination || mutationPending.current || !managerId) return;
     const { source, toon } = toonTransfer;
@@ -604,28 +597,26 @@ export default function AdminRequestsPage() {
         {section === 'members' && (
           <section className="tab-panel-content mt-6">
             <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Members</p><h2 className="mt-1 text-xl font-bold tracking-tight text-white">Approved accounts</h2></div><label className="search-field sm:w-72"><Search /><input aria-label="Search approved accounts" type="search" placeholder="Find a clan member..." value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} /></label></div>
-            <p className="mb-5 text-xs text-slate-500">Toons linked elsewhere stay hidden until unlinked.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
               <div className="space-y-3">
                 {members.filter((member) => member.nickname.toLowerCase().includes(memberQuery.trim().toLowerCase())).map((member) => {
                   const promotedRole = getAdjacentRole(member.role, 'promote');
                   const demotedRole = getAdjacentRole(member.role, 'demote');
-                  const canManageRole = member._id !== managerId &&
-                    (managerRole === 'chief' ||
-                      (managerRole === 'general' && member.role !== 'chief' && member.role !== 'general'));
-                  const canPromote = promotedRole !== undefined &&
-                    (managerRole === 'chief' || (member.role === 'clansman' && promotedRole === 'guardian'));
-                  const canDemote = demotedRole !== undefined &&
-                    (managerRole === 'chief' || (member.role === 'guardian' && demotedRole === 'clansman')) &&
-                    !(member.role === 'chief' && members.filter((entry) => entry.role === 'chief').length <= 1);
+                  const chiefCount = members.filter((entry) => entry.role === 'chief').length;
+                  const roleChoices = [...new Set([promotedRole, demotedRole, ...CLAN_ROLES]
+                    .filter((role): role is ClanRole => role !== undefined))]
+                    .filter((role) => role !== member.role &&
+                      canChangeMemberRole(managerRole, member.role, role, member._id === managerId, chiefCount));
+                  const suggestedRole = roleChoices[0];
+                  const canManageRole = suggestedRole !== undefined;
 
                   return (
                   <article key={member._id} className="group member-account-card p-4 sm:p-5">
                     <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-indigo-400/[.06] blur-3xl transition group-hover:bg-indigo-300/[.1]" />
                     <div className="relative grid min-w-0 gap-5 md:grid-cols-[minmax(12rem,.8fr)_minmax(0,1.2fr)] md:items-center 2xl:grid-cols-[minmax(14rem,.85fr)_minmax(0,1.15fr)_auto]">
-                      <div className="flex min-w-0 items-center gap-4">
-                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-indigo-300/15 bg-indigo-400/[.08] text-indigo-200 shadow-inner shadow-indigo-300/[.04]"><RoleIcon role={member.role} className="h-5 w-5" /></span>
-                        <div className="min-w-0"><h3 className="truncate text-xl font-bold tracking-tight text-white sm:text-2xl">{member.nickname}</h3><div className="mt-2 flex flex-wrap items-center gap-2"><RoleBadge role={member.role} /><span className="text-[10px] font-medium text-slate-500">{(member.sheetRecordRows ?? []).length} linked</span></div></div>
+                      <div className="min-w-0">
+                        <h3 className="truncate text-lg font-bold tracking-tight text-white sm:text-xl">{member.nickname}</h3>
+                        <div className="mt-2"><RoleBadge role={member.role} /></div>
                       </div>
 
                       <div className="min-w-0">
@@ -636,25 +627,18 @@ export default function AdminRequestsPage() {
                             return <span key={rowIndex} className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-white/[.07] bg-slate-950/45 py-1.5 pl-3 pr-1.5 text-xs font-medium text-slate-200 shadow-inner shadow-black/10">
                               <span className="max-w-40 truncate">{record.account || record.owner}</span>
                               {members.length > 1 && <button type="button" onClick={() => { setToonTransfer({ source: member, toon: record }); setTransferDestination(''); setTransferConfirmed(false); setError(''); }} disabled={busyId !== ''} aria-label={`Transfer ${record.account || record.owner} from ${member.nickname}`} title="Transfer toon" className="grid h-6 w-6 place-items-center rounded-lg text-indigo-300/70 transition hover:bg-indigo-400/10 hover:text-indigo-100 disabled:opacity-40"><ArrowRightLeft className="h-3.5 w-3.5" /></button>}
-                              <button type="button" onClick={() => unlinkToon(member, record)} disabled={busyId === member._id} aria-label={`Unlink ${record.account || record.owner} from ${member.nickname}`} title="Unlink toon" className="grid h-6 w-6 place-items-center rounded-lg text-slate-500 transition hover:bg-rose-400/10 hover:text-rose-200 disabled:opacity-40"><X className="h-3.5 w-3.5" /></button>
                             </span>;
                           })}
-                          {(member.sheetRecordRows ?? []).length === 0 && <span className="text-xs text-slate-500">No toons linked</span>}
                         </div>
                         <button type="button" aria-haspopup="dialog" disabled={busyId !== ''} onClick={() => editToons(member)} className="mt-2.5 inline-flex min-h-9 items-center gap-2 rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] px-3.5 text-xs font-semibold text-indigo-200 transition hover:border-indigo-300/35 hover:bg-indigo-400/[.1] disabled:cursor-wait disabled:opacity-40">
-                          <Link2 className="h-3.5 w-3.5" />{(member.sheetRecordRows ?? []).length ? 'Manage toons' : 'Link toons'}<Plus className="h-3.5 w-3.5 text-indigo-300/60" />
+                          <Link2 className="h-3.5 w-3.5" />{(member.sheetRecordRows ?? []).length ? 'Manage toons' : 'Link toons'}
                         </button>
                       </div>
 
                       <div className="flex min-w-0 flex-wrap items-center gap-2 md:col-span-2 md:justify-end 2xl:col-span-1">
-                        {canManageRole && <>
-                          <button type="button" disabled={busyId === member._id || !canPromote} onClick={() => promotedRole && updateRole(member, promotedRole)} title={promotedRole ? `Promote to ${promotedRole}` : 'Cannot promote'} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border border-emerald-400/20 bg-emerald-400/[.05] px-3.5 text-xs font-semibold text-emerald-200 transition hover:border-emerald-300/40 hover:bg-emerald-400/10 disabled:cursor-not-allowed disabled:opacity-35">
-                            {busyId === member._id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}<span>Promote</span>{promotedRole && <span className="text-[10px] font-medium text-emerald-100/65">→ {promotedRole}</span>}
-                          </button>
-                          <button type="button" disabled={busyId === member._id || !canDemote} onClick={() => demotedRole && updateRole(member, demotedRole)} title={demotedRole ? `Demote to ${demotedRole}` : 'Cannot demote'} className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border border-rose-400/20 bg-rose-400/[.04] px-3.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/40 hover:bg-rose-400/[.08] disabled:cursor-not-allowed disabled:opacity-35">
-                            <ArrowDown className="h-3.5 w-3.5" /><span>Demote</span>{demotedRole && <span className="text-[10px] font-medium text-rose-100/65">→ {demotedRole}</span>}
-                          </button>
-                        </>}
+                        {canManageRole && <button type="button" disabled={busyId === member._id || !suggestedRole} onClick={() => suggestedRole && updateRole(member, suggestedRole)} title="Change member role" className="inline-flex min-h-9 items-center justify-center gap-2 rounded-xl border border-indigo-300/15 bg-indigo-400/[.05] px-3.5 text-xs font-semibold text-indigo-200 transition hover:border-indigo-300/35 hover:bg-indigo-400/[.1] disabled:cursor-not-allowed disabled:opacity-40">
+                          {busyId === member._id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RoleIcon role={member.role} className="h-3.5 w-3.5" />}<span>Change role</span>
+                        </button>}
                         {(member.role === 'clansman' || member.role === 'guardian') && <button type="button" disabled={busyId === member._id} onClick={() => removeMember(member)} title={`Remove ${member.nickname}`} aria-label={`Remove ${member.nickname} from the clan`} className="grid h-9 w-9 place-items-center rounded-xl border border-rose-400/20 bg-rose-400/[.04] text-rose-200 transition hover:border-rose-300/40 hover:bg-rose-400/[.1] disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>}
                       </div>
                     </div>
