@@ -5,6 +5,7 @@ import Auction, { type IAuction, type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
+import ToonRoleChange from '@/lib/models/ToonRoleChange';
 import AuctionCreationRequest from '@/lib/models/AuctionCreationRequest';
 import { isDkpRequestId } from '@/lib/bossDkp';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
@@ -21,6 +22,7 @@ import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, is
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { requireRosterValues } from '@/lib/sheetRoster';
+import { getEffectiveToonRole } from '@/lib/toonRoleChanges';
 import {
   AUCTION_DURATION_MS,
   AUCTION_WEEKLY_MINIMUM,
@@ -102,6 +104,9 @@ export async function GET(request: Request) {
     const recentAuctions = includeArchive ? recentResults.slice(0, HISTORY_PAGE_SIZE) : recentResults;
     const nextCursor = includeArchive && recentResults.length > HISTORY_PAGE_SIZE ? historyCursor(recentAuctions[recentAuctions.length - 1]) : null;
     const roster = rosterSnapshot.roster;
+    const roleChanges = await ToonRoleChange.find({ identityKey: { $in: roster.map(getSheetRecordKey) } }).lean();
+    const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
+    const roleReadAt = new Date();
     const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
     for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
     for (const auction of pendingNoBidTasks) auctionsById.set(auction._id.toString(), auction);
@@ -128,13 +133,21 @@ export async function GET(request: Request) {
     const linkedRowSet = new Set(linkedRows);
     const linkedToons = rosterWithWeekly
       .filter((record) => linkedRowSet.has(record.rowIndex))
-      .map((record) => ({
-        ...record,
-        heldPoints: holds.filter((hold) => holdMatchesIdentity(hold, record) ||
-          (hold.owner === undefined && hold.rowIndex === record.rowIndex))
-          .reduce((sum, hold) => sum + hold.heldPoints, 0),
-        canBid: !record.dkpIssues.some((issue) => ['weeklySpent', 'spent', 'available'].includes(issue.field)) && record.available !== null,
-      }));
+      .map((record) => {
+        const roleChange = roleChangesByIdentity.get(getSheetRecordKey(record));
+        const effectiveRole = getEffectiveToonRole(record.subClass, roleChange, roleReadAt);
+        return {
+          ...record,
+          subClass: effectiveRole,
+          roleChange: roleChange?.scheduledRole && roleChange.effectiveAt && roleChange.effectiveAt.getTime() > roleReadAt.getTime()
+            ? { scheduledRole: roleChange.scheduledRole, effectiveAt: roleChange.effectiveAt.toISOString() }
+            : null,
+          heldPoints: holds.filter((hold) => holdMatchesIdentity(hold, record) ||
+            (hold.owner === undefined && hold.rowIndex === record.rowIndex))
+            .reduce((sum, hold) => sum + hold.heldPoints, 0),
+          canBid: !record.dkpIssues.some((issue) => ['weeklySpent', 'spent', 'available'].includes(issue.field)) && record.available !== null,
+        };
+      });
     const weeklyEarnedTotal = linkedToons.reduce((total, record) => total + record.weeklyEarned, 0);
 
     return NextResponse.json({
@@ -582,7 +595,11 @@ export async function POST(req: Request) {
           if (!linkedRows.has(rowIndex)) throw new RequestValidationError('Choose one of your linked toons.', 403);
           const toon = roster.find((record) => record.rowIndex === rowIndex);
           const auctionRoles = currentAuction.requiredRoles?.length ? currentAuction.requiredRoles : [currentAuction.requiredRole ?? ''];
-          if (!toon || !canRoleBid(toon.subClass, auctionRoles)) {
+          const scheduledRole = toon
+            ? await ToonRoleChange.findOne({ identityKey: getSheetRecordKey(toon) }).session(session).lean()
+            : null;
+          const effectiveRole = toon ? getEffectiveToonRole(toon.subClass, scheduledRole, bidAt) : '';
+          if (!toon || !canRoleBid(effectiveRole, auctionRoles)) {
             throw new RequestValidationError(`Only a linked ${auctionRoles.join(' or ')} toon can bid.`, 403);
           }
           requireRosterValues(toon, ['weeklySpent', 'spent', 'available']);

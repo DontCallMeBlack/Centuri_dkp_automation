@@ -12,6 +12,8 @@ import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import RosterMutation from '@/lib/models/RosterMutation';
 import { RequestValidationError } from '@/lib/security/request';
+import ToonRoleChange from '@/lib/models/ToonRoleChange';
+import { getEffectiveToonRole } from '@/lib/toonRoleChanges';
 
 
 export async function GET(req: Request) {
@@ -28,7 +30,13 @@ export async function GET(req: Request) {
         .lean(),
     ]);
     const roster = rosterSnapshot.roster;
-    const recordsByRow = new Map(roster.map((record) => [record.rowIndex, record]));
+    const roleChanges = await ToonRoleChange.find({ identityKey: { $in: roster.map(getSheetRecordKey) } }).lean();
+    const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
+    const effectiveRoster = roster.map((record) => ({
+      ...record,
+      subClass: getEffectiveToonRole(record.subClass, roleChangesByIdentity.get(getSheetRecordKey(record))),
+    }));
+    const recordsByRow = new Map(effectiveRoster.map((record) => [record.rowIndex, record]));
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
     const clanMembers = activeUsers.map((member) => ({
       nickname: member.nickname,
@@ -41,7 +49,7 @@ export async function GET(req: Request) {
     }));
     return NextResponse.json({
       success: true,
-      roster,
+      roster: effectiveRoster,
       rosterSync: {
         fetchedAt: rosterSnapshot.fetchedAt.toISOString(),
         stale: rosterSnapshot.stale,

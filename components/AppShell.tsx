@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowUpRight, CircleHelp, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, UsersRound, X } from 'lucide-react';
+import { ArrowUpRight, CalendarClock, CircleHelp, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, UsersRound, X } from 'lucide-react';
 import Dialog from './Dialog';
 import RoleBadge, { RoleIcon } from './RoleBadge';
 import { clearClientData, getData, notifyDkpChanged } from '@/lib/client/api';
@@ -83,7 +83,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isHistory = pathname === '/admin/boss-history' || pathname === '/dashboard' && currentView === 'boss-history';
   const isCatalog = pathname === '/dashboard' && currentView === 'items';
   const isAdministration = pathname.startsWith('/admin/requests');
-  const currentLabel = isAdministration ? 'Clan administration' : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : 'Roster';
+  const isRoleChanges = pathname.startsWith('/admin/role-changes');
+  const currentLabel = isAdministration ? 'Clan administration' : isRoleChanges ? (user?.role === 'general' ? 'Role request review' : 'My role changes') : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : 'Roster';
   const navClick = (event: React.MouseEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
     const link=(event.target as HTMLElement).closest('a');
@@ -105,6 +106,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <Link className={`shell-nav-link ${isAuction ? 'is-active' : ''}`} aria-current={isAuction ? 'page' : undefined} href="/dashboard?view=auction"><Gavel /><span>Auction house</span><ArrowUpRight className="nav-end" /></Link>
     <Link className={`shell-nav-link ${isHistory ? 'is-active' : ''}`} aria-current={isHistory ? 'page' : undefined} href="/dashboard?view=boss-history"><History /><span>Kill history</span></Link>
     {canManage && <><p className="nav-group-label mt-7">Management</p><Link className={`shell-nav-link ${isCatalog ? 'is-active' : ''}`} aria-current={isCatalog ? 'page' : undefined} href="/dashboard?view=items"><Package /><span>Item catalog</span></Link></>}
+    {user && <Link className={`shell-nav-link ${isRoleChanges ? 'is-active' : ''}`} aria-current={isRoleChanges ? 'page' : undefined} href="/admin/role-changes"><CalendarClock /><span>{user.role === 'general' ? 'Role request review' : 'My role changes'}</span></Link>}
     {canAdmin && <Link className={`shell-nav-link ${isAdministration ? 'is-active' : ''}`} aria-current={isAdministration ? 'page' : undefined} href="/admin/requests"><UsersRound /><span>Members & access</span></Link>}
   </>;
   return <SessionContext.Provider value={user}><div className="workspace">

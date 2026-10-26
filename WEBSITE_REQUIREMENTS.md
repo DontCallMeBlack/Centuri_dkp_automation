@@ -40,9 +40,10 @@ Accounts have one of two statuses: **pending** or **approved**. Only approved ac
 | `/login` | Public sign-in and sign-up screen. It remains reachable when signed in. |
 | `/dashboard` | Main authenticated application. Its data API redirects unauthenticated users to `/login`. |
 | `/admin/requests` | Clan administration page; Chief and General only. |
+| `/admin/role-changes` | Members request subclass changes for their linked toons; Generals review all roster requests and activity. |
 | `/admin/boss-history` | Standalone boss history page; any approved clan account can view it, while Chief, General, and Guardian can edit/delete awards. |
 
-The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, **Auction house**, **Kill history**, **Item catalog** for staff, and **Members & access** for Chiefs/Generals. The duplicate horizontal workspace button bar is removed. The header names the current section and the active link exposes `aria-current`. Views use `/dashboard?view=auction|items|boss-history`; Roster uses `/dashboard`. The older `/admin/boss-history` address remains supported. Sidebar history uses the embedded view so switching sections preserves visited views and drafts.
+The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, **Auction house**, **Kill history**, **Item catalog** for staff, **My role changes** for members, **Role request review** for Generals, and **Members & access** for Chiefs/Generals. The duplicate horizontal workspace button bar is removed. The header names the current section and the active link exposes `aria-current`. Views use `/dashboard?view=auction|items|boss-history`; Roster uses `/dashboard`. The older `/admin/boss-history` address remains supported. Sidebar history uses the embedded view so switching sections preserves visited views and drafts.
 
 ### 3.2 HTTP API routes
 
@@ -54,6 +55,7 @@ The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, 
 | `/api/dkp` | `GET` roster, linked approved members, user role, and sheet sync status; `POST` records a boss attendance award and changes DKP. |
 | `/api/admin/requests` | `GET` administration data; `POST` approve, deny, link, unlink, remove, or change a role. Chief/General only. |
 | `/api/admin/toons` | `GET` clan roster and pending change; `POST` create/remove a toon or finish an interrupted change. Chief/General only. |
+| `/api/role-changes` | `GET` visible requests, schedules, and recent activity; `POST` request, approve, deny, or cancel a subclass change. All approved members may request/cancel their own; Generals may review or cancel any. |
 | `/api/admin/boss-history` | `GET` awards; `PATCH` edit attendance; `DELETE` a boss award. Reads require a session; mutations require Chief/General/Guardian. |
 | `/api/auction` | `GET` auction data, `GET ?live=1` lightweight auction updates, `GET ?includeArchive=1` full history, and `POST` auction actions. Any approved account may read/bid; individual actions have role and ownership checks. |
 | `/api/auction/items` | `GET`, `POST`, `PATCH`, `DELETE` the saved-item catalog. Chief/General/Guardian only. |
@@ -327,6 +329,16 @@ Tier labels are not displayed. Legacy is an auction item type, not a new boss aw
 - Entries include target, event, previous/new role where applicable, actor nickname and role, and localized date/time.
 - Account approval/denial, toon linking/unlinking, DKP awards, item catalog edits, auction posts, and bids are not included in this activity log.
 
+### 10.6 Monthly toon role changes
+
+- Every approved member can request a subclass change for a toon linked to their account. Requests remain pending until a General approves or denies them. Only General accounts can approve or deny; Generals can review the full roster queue. Members can cancel their own pending requests or upcoming approved changes, and Generals can cancel any.
+- The five main-role groups are Ranger (Ranger), Druid (Support Druid, DPS Druid), Warrior (Tank, DPS Warrior), Rogue (DPS Rogue, Support Rogue), and Mage (Fire Mage, Ice Mage).
+- An approved subclass takes effect at 12:00 AM fixed EST (UTC−05:00, without daylight-saving adjustment) on the next month's first day. Until then, auction eligibility uses the current subclass; once effective, bid eligibility uses only the approved subclass. This is evaluated by the server at bid time and requires no rollover job.
+- Pending requests expire at the next first-of-month cutoff if no General has decided them; they are removed from the active review queue and cannot be approved after the cutoff. Approved schedules and pending requests are visible to the toon’s linked member; Generals see all roster statuses and the review queue.
+- Members may cancel their own pending requests or upcoming approved changes. Generals may cancel any pending or upcoming approved request.
+- The workspace shows current, pending, and approved roles, effective dates, and the latest 100 role-change actions. Request, approval, denial, cancellation, and expiration records include toon identity, previous/requested roles, effective date where relevant, actor ID/nickname/role, and timestamp. The durable activity collection has no retention TTL.
+- Removing a toon clears its active role override and schedule; its historical role-change audit entries remain.
+
 ## 11. DKP accounting, weekly cycle, and consistency rules
 
 ### 11.1 Sheet writes
@@ -374,6 +386,9 @@ The implementation uses MongoDB/Mongoose for:
 - **Auction items**: unique name, roles, boss type, image bytes/content types, image count, listing status, creator, creation time.
 - **Auctions**: item snapshot, roles/type, creator, end time, current high bid/winner, status, bid version, delivery tracking, settlement attempt/lease/error/manual-review state, timestamps.
 - **Clan audit events**: role changes and member removals, actor and target details, timestamp. Read endpoint returns 100 latest events; no retention TTL is specified.
+- **Toon role changes**: stable toon identity, active subclass override, optional scheduled subclass/effective date, and last actor.
+- **Toon role change requests**: requester and toon identities, current/requested subclass, next monthly cutoff, pending/approved/denied/cancelled/expired/applied status, optional General decision identity, and timestamps.
+- **Toon role-change audit**: request/approval/denial/cancellation/expiration action, toon identity, role details, effective date, actor ID/nickname/role, and timestamp. The workspace returns the 100 latest entries; no retention TTL is specified.
 
 The roster’s authoritative DKP values remain in Google Sheets. MongoDB stores application identities, auction state, award records, reservations, caches, and replay/audit support.
 
