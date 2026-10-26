@@ -17,12 +17,14 @@ import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import User from '@/lib/models/User';
 import RosterMutation from '@/lib/models/RosterMutation';
 import ToonRoleChange from '@/lib/models/ToonRoleChange';
+import ToonRoleChangeAudit from '@/lib/models/ToonRoleChangeAudit';
+import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
 import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
 import Auction from '@/lib/models/Auction';
 import BossAward from '@/lib/models/BossAward';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { getReservationConflict } from '@/lib/auth/reservationProtection';
-import { ITEM_SUBROLES } from '@/lib/auctionRules';
+import { ITEM_SUBROLES, normalizeAuctionRole } from '@/lib/auctionRules';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
 import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
@@ -424,6 +426,108 @@ export async function ensureWeeklyDkpReset() {
   }
 
   await withWeeklyResetLock(cacheKey, async () => undefined);
+}
+
+/** Apply approved subclass switches to the Sheet after their effective time. */
+export async function applyDueToonRoleChanges(at?: Date) {
+  assertDkpWritesEnabled();
+  await dbConnect();
+  const spreadsheetId = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(spreadsheetId);
+
+  return withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    const now = at ?? new Date();
+    const dueChanges = await ToonRoleChange.find({
+      scheduledRole: { $exists: true, $nin: ['', null] }, effectiveAt: { $lte: now },
+    }).sort({ effectiveAt: 1 }).lean();
+    const sheets = createSheetsClient();
+    const rows = dueChanges.length ? await readSheetRows(sheets) : [];
+    const roster = dueChanges.length ? rosterFromRows(rows) : [];
+    const updates: Array<{ range: string; values: string[][] }> = [];
+    const completed: Array<{ identityKey: string; owner: string; account: string; currentRole: string; scheduledRole: string; effectiveAt: Date }> = [];
+
+    for (const change of dueChanges) {
+      const scheduledRole = change.scheduledRole ?? '';
+      if (!ITEM_SUBROLES.some((role) => role !== 'Everyone' && role === scheduledRole)) {
+        throw new DkpIntegrityError('A scheduled toon subrole is invalid. A manager must review it before the Sheet can be updated.');
+      }
+      const matches = roster.filter((toon) => getSheetRecordKey(toon) === change.identityKey);
+      if (matches.length !== 1) {
+        throw new DkpIntegrityError('A scheduled toon subrole could not be matched to exactly one Google Sheets row. Reconcile the roster before retrying.');
+      }
+      const toon = matches[0];
+      const sheetRole = String(rows[toon.rowIndex - 3]?.[2] ?? '').trim();
+      const normalizedSheetRole = normalizeAuctionRole(sheetRole);
+      const normalizedCurrentRole = normalizeAuctionRole(change.currentRole);
+      const normalizedScheduledRole = normalizeAuctionRole(scheduledRole);
+      if (normalizedSheetRole !== normalizedCurrentRole && normalizedSheetRole !== normalizedScheduledRole) {
+        throw new DkpIntegrityError('The toon subrole in Google Sheets changed after approval. A manager must reconcile it before the scheduled change can be applied.');
+      }
+      if (normalizedSheetRole !== normalizedScheduledRole) {
+        updates.push({ range: `${SHEET_NAME}!C${toon.rowIndex}`, values: [[scheduledRole]] });
+      }
+      completed.push({
+        identityKey: change.identityKey, owner: toon.owner, account: toon.account,
+        currentRole: change.currentRole, scheduledRole, effectiveAt: change.effectiveAt!,
+      });
+    }
+
+    if (updates.length) {
+      await assertLedgerLock(spreadsheetId, lockId);
+      await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: { valueInputOption: 'RAW', data: updates },
+      }), false);
+      await assertLedgerLock(spreadsheetId, lockId);
+    }
+    await assertLedgerLock(spreadsheetId, lockId);
+
+    if (!completed.length && !await ToonRoleChangeRequest.exists({ status: 'pending', effectiveAt: { $lte: now } })) {
+      return { applied: 0, expired: 0 };
+    }
+
+    let expiredCount = 0;
+    await withClanAdministrationTransaction(async (session) => {
+      for (const change of completed) {
+        const current = await ToonRoleChange.findOne({ identityKey: change.identityKey }).session(session);
+        if (!current) throw new DkpIntegrityError('A scheduled toon role record disappeared while its Sheet update was being finalized.');
+        const hasSameDueSchedule = current.scheduledRole === change.scheduledRole && current.effectiveAt?.getTime() === change.effectiveAt.getTime();
+        if (hasSameDueSchedule) {
+          current.currentRole = change.scheduledRole;
+          current.scheduledRole = undefined;
+          current.effectiveAt = undefined;
+          await current.save({ session });
+        } else if (normalizeAuctionRole(current.currentRole) !== normalizeAuctionRole(change.scheduledRole) ||
+          (current.effectiveAt && current.effectiveAt.getTime() <= now.getTime())) {
+          throw new DkpIntegrityError('A scheduled toon role changed while its Sheet update was being finalized. A manager must review it.');
+        }
+      }
+
+      if (completed.length) {
+        await ToonRoleChangeRequest.updateMany({
+          identityKey: { $in: completed.map((change) => change.identityKey) },
+          status: 'approved', effectiveAt: { $lte: now },
+        }, { $set: { status: 'applied' } }, { session });
+      }
+
+      const expiredRequests = await ToonRoleChangeRequest.find({ status: 'pending', effectiveAt: { $lte: now } }).session(session).lean();
+      if (expiredRequests.length) {
+        expiredCount = expiredRequests.length;
+        await ToonRoleChangeRequest.updateMany(
+          { _id: { $in: expiredRequests.map((request) => request._id) }, status: 'pending' },
+          { $set: { status: 'expired' } }, { session },
+        );
+        await ToonRoleChangeAudit.insertMany(expiredRequests.map((request) => ({
+          action: 'expired' as const, identityKey: request.identityKey, owner: request.owner, account: request.account,
+          previousRole: request.currentRole, scheduledRole: request.requestedRole, effectiveAt: request.effectiveAt,
+          actorNickname: 'System', actorRole: 'system' as const,
+        })), { session });
+      }
+    });
+
+    if (completed.length) await invalidateSheetRosterCache();
+    return { applied: completed.length, expired: expiredCount };
+  });
 }
 
 function assertDkpWritesEnabled() {

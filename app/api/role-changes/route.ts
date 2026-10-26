@@ -6,7 +6,7 @@ import ToonRoleChangeAudit from '@/lib/models/ToonRoleChangeAudit';
 import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
 import { getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
-import { getSheetRoster } from '@/lib/googleSheets';
+import { applyDueToonRoleChanges, getSheetRoster } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
@@ -17,27 +17,22 @@ const privateHeaders = { 'Cache-Control': 'private, no-store' };
 const OPEN_REQUEST_STATUSES = ['pending', 'approved'] as const;
 
 async function expireDueRequests(now = new Date()) {
-  if (!await ToonRoleChangeRequest.exists({ status: { $in: OPEN_REQUEST_STATUSES }, effectiveAt: { $lte: now } })) return;
+  if (!await ToonRoleChangeRequest.exists({ status: 'pending', effectiveAt: { $lte: now } })) return;
   await withClanAdministrationTransaction(async (session) => {
     const dueRequests = await ToonRoleChangeRequest.find({
-      status: { $in: OPEN_REQUEST_STATUSES }, effectiveAt: { $lte: now },
+      status: 'pending', effectiveAt: { $lte: now },
     }).session(session).lean();
-    const expiredRequests = dueRequests.filter((request) => request.status === 'pending');
-    const appliedRequestIds = dueRequests.filter((request) => request.status === 'approved').map((request) => request._id);
-    if (expiredRequests.length) {
+    if (dueRequests.length) {
       await ToonRoleChangeRequest.updateMany(
-        { _id: { $in: expiredRequests.map((request) => request._id) }, status: 'pending' },
+        { _id: { $in: dueRequests.map((request) => request._id) }, status: 'pending' },
         { $set: { status: 'expired' } }, { session },
       );
-      await ToonRoleChangeAudit.insertMany(expiredRequests.map((request) => ({
+      await ToonRoleChangeAudit.insertMany(dueRequests.map((request) => ({
         action: 'expired' as const, identityKey: request.identityKey, owner: request.owner, account: request.account,
         previousRole: request.currentRole, scheduledRole: request.requestedRole, effectiveAt: request.effectiveAt,
         actorNickname: 'System', actorRole: 'system' as const,
       })), { session });
     }
-    if (appliedRequestIds.length) await ToonRoleChangeRequest.updateMany(
-      { _id: { $in: appliedRequestIds }, status: 'approved' }, { $set: { status: 'applied' } }, { session },
-    );
   });
 }
 
@@ -122,6 +117,9 @@ export async function POST(request: Request) {
       throw new RequestValidationError('Choose a valid role request action.');
     }
     const action = body.action as 'request' | 'approve' | 'deny' | 'cancel';
+    if (action === 'approve' && user.role === 'general' && await ToonRoleChange.exists({
+      scheduledRole: { $exists: true, $nin: ['', null] }, effectiveAt: { $lte: new Date() },
+    })) await applyDueToonRoleChanges();
     if (action === 'request') {
       if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) {
         throw new RequestValidationError('Choose one of your linked toons.');
@@ -188,6 +186,9 @@ export async function POST(request: Request) {
         }
         if (action === 'approve') {
           const currentChange = await ToonRoleChange.findOne({ identityKey: roleRequest.identityKey }).session(session);
+          if (currentChange?.effectiveAt && currentChange.effectiveAt.getTime() <= now.getTime()) {
+            throw new RequestValidationError('This toon’s previous subrole is still syncing to Google Sheets. Refresh and try again.', 409);
+          }
           const currentRole = getEffectiveToonRole(toon.subClass, currentChange, now).trim();
           if (getAlternateToonSubrole(currentRole) !== roleRequest.requestedRole) {
             throw new RequestValidationError('The requested subclass no longer matches this toon’s class. Ask the member to submit a new request.', 409);

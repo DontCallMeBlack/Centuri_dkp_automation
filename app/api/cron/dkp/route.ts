@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { ensureWeeklyDkpReset } from '@/lib/googleSheets';
+import { applyDueToonRoleChanges } from '@/lib/googleSheets';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,10 +16,10 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Unauthorized.' }, { status: 401 });
   }
   try {
-    await ensureWeeklyDkpReset();
-    return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+    const roleChanges = await applyDueToonRoleChanges();
+    return Response.json({ ok: true, roleChanges }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    console.error('Scheduled DKP rollover failed.', error instanceof Error ? error.name : 'UnknownError');
-    return Response.json({ error: 'DKP rollover did not complete. Check server logs and roster values.' }, { status: 500 });
+    console.error('Scheduled roster maintenance failed.', error instanceof Error ? error.name : 'UnknownError');
+    return Response.json({ error: 'Scheduled roster maintenance did not complete. Check server logs and roster values.' }, { status: 500 });
   }
 }
