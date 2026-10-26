@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowUpRight, CalendarClock, CircleHelp, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, UsersRound, X } from 'lucide-react';
+import { ArrowUpRight, CalendarClock, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, UsersRound, X } from 'lucide-react';
 import Dialog from './Dialog';
 import RoleBadge, { RoleIcon } from './RoleBadge';
 import { clearClientData, getData, notifyDkpChanged } from '@/lib/client/api';
@@ -119,7 +119,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="workspace-body"><header className="workspace-header"><div className="flex min-w-0 items-center gap-3"><button className="icon-button lg:hidden" type="button" onClick={() => setMenuOpen(true)} aria-label="Open navigation" aria-expanded={menuOpen}><Menu size={20} /></button><span className="text-xs text-slate-500">Centuri</span><span className="text-slate-700">/</span><span className="truncate text-xs font-medium text-slate-200">{currentLabel}</span></div><div className="flex items-center gap-3"><span className="hidden text-xs text-slate-500 sm:block">Celtic Heroes</span>{user && <RoleBadge role={user.role} />}</div></header>
       {error && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-200">{error}</p>}
       <div id="main-content" tabIndex={-1} className="workspace-content">{children}</div>
-      <footer className="workspace-footer"><span>Centuri Clan</span><span className="flex items-center gap-1.5"><CircleHelp size={13} /> Need help? Contact your clan leadership.</span></footer>
     </div>
     {menuOpen && <Dialog labelledBy="mobile-nav-title" onClose={() => setMenuOpen(false)} className="mobile-nav-dialog"><aside className="mobile-sidebar" aria-label="Mobile navigation"><h2 id="mobile-nav-title" className="sr-only">Clan navigation</h2><div className="flex items-center justify-between"><Link href="/dashboard" className="brand"><span className="brand-mark"><Command size={22} /></span>CENTURI</Link><button className="icon-button" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={19} /></button></div><nav className="mt-8" onClickCapture={navClick}>{nav}</nav><div className="mt-auto border-t border-white/10 pt-5">{error && <p role="alert" className="mb-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs leading-5 text-rose-200">{error}</p>}<RoleBadge role={user?.role} /><p className="my-4 text-sm text-white">{user?.nickname}</p><button className="secondary-button w-full" disabled={signingOut} onClick={() => void signOut()}><LogOut size={16} /> Sign out</button></div></aside></Dialog>}
   </div></SessionContext.Provider>;
