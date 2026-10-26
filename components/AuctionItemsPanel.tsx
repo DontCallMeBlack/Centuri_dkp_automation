@@ -306,10 +306,10 @@ function ItemEditor({
     }
   };
 
-  if (!expanded) return <article className="surface flex items-center gap-4 p-4"><div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/5 bg-slate-950/60"><img loading="lazy" decoding="async" width={64} height={64} src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`} alt={item.name} className="h-full w-full object-contain" /></div><div className="min-w-0 flex-1"><h4 className="truncate text-sm font-semibold text-slate-200" title={item.name}>{item.name}</h4><div className="mt-2 flex flex-wrap gap-1.5">{item.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="self-center text-[10px] text-slate-500">{item.bossType} / {item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span></div></div><button type="button" className="secondary-button shrink-0" onClick={() => setExpanded(true)} aria-label={`Edit ${item.name}`}><Pencil size={13} /><span className="hidden sm:inline">Edit item</span></button></article>;
+  if (!expanded) return <article className="surface item-catalog-card grid min-w-0 max-w-full grid-cols-[3.5rem_minmax(0,1fr)_2.5rem] items-center gap-3 p-3 sm:flex sm:gap-4 sm:p-4"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/5 bg-slate-950/60 sm:h-16 sm:w-16"><img loading="lazy" decoding="async" width={64} height={64} src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`} alt={item.name} className="h-full w-full object-contain" /></div><div className="min-w-0"><h4 className="truncate text-sm font-semibold text-slate-200" title={item.name}>{item.name}</h4><div className="mt-2 flex min-w-0 flex-wrap gap-1.5">{item.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="self-center text-[10px] text-slate-500">{item.bossType} / {item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span></div></div><button type="button" className="secondary-button h-10 w-10 shrink-0 !p-0 sm:h-auto sm:w-auto sm:!px-4" onClick={() => setExpanded(true)} aria-label={`Edit ${item.name}`}><Pencil size={13} /><span className="hidden sm:inline">Edit item</span></button></article>;
 
   return (
-    <form onSubmit={save} className="surface grid gap-4 p-5 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:items-center"><div className="flex items-center justify-between gap-3 border-b border-white/5 pb-3 sm:col-span-3"><p className="text-xs font-semibold text-slate-300">Editing {item.name}</p><button type="button" className="secondary-button" disabled={saving} onClick={() => setExpanded(false)}>Done</button></div>
+    <form onSubmit={save} className="surface grid min-w-0 max-w-full gap-4 p-4 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:items-center sm:p-5"><div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/5 pb-3 sm:col-span-3"><p className="truncate text-xs font-semibold text-slate-300">Editing {item.name}</p><button type="button" className="secondary-button" disabled={saving} onClick={() => setExpanded(false)}>Done</button></div>
       <div className="relative h-20 w-20 overflow-hidden rounded-xl bg-slate-900">
         <img
           src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`}
@@ -515,7 +515,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   };
 
   return (
-    <div className="space-y-6">
+    <div className="item-catalog min-w-0 max-w-full space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
