@@ -361,10 +361,10 @@ export default function AdminRequestsPage() {
         {busyId && <p role="status" aria-live="polite" className="mt-5 flex items-center gap-2 rounded-lg border border-indigo-400/20 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200"><LoaderCircle size={15} className="animate-spin" />{notice || 'Saving clan changes…'}</p>}
         {!busyId && notice && <p role="status" className="mt-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
 
-        <section hidden={section !== 'toons'} aria-label="Manage clan toons"><ClanToonsPanel active={section === 'toons'} accountId={managerId} onChanged={loadData} /></section>
+        <section className="tab-panel-content" hidden={section !== 'toons'} aria-label="Manage clan toons"><ClanToonsPanel active={section === 'toons'} accountId={managerId} onChanged={loadData} /></section>
 
         {section === 'requests' && (
-          <section className="mt-6 space-y-3">
+          <section className="tab-panel-content mt-6 space-y-3">
             <div className="mb-5 flex items-end justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-white">Pending sign-ups</h2>
@@ -398,7 +398,7 @@ export default function AdminRequestsPage() {
         )}
 
         {section === 'members' && (
-          <section className="mt-6">
+          <section className="tab-panel-content mt-6">
             <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Members</p><h2 className="mt-1 text-xl font-bold tracking-tight text-white">Approved accounts</h2></div><label className="search-field sm:w-72"><Search /><input aria-label="Search approved accounts" type="search" placeholder="Find a clan member..." value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} /></label></div>
             <p className="mb-5 text-xs text-slate-500">Toons linked elsewhere stay hidden until unlinked.</p>
             {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
@@ -462,7 +462,7 @@ export default function AdminRequestsPage() {
         )}
 
         {section === 'activity' && (
-          <section className="mt-6">
+          <section className="tab-panel-content mt-6">
             <div className="mb-5">
               <h2 className="text-lg font-bold text-white">Member access history</h2>
               <p className="mt-1 text-sm text-slate-400">The latest 100 actions: new and removed clan toons, account links, approvals, and rank changes.</p>

@@ -254,7 +254,7 @@ function Dashboard() {
       </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
       <main>
-        <section id="panel-dkp" aria-label="Roster" hidden={activeView !== 'dkp'}>
+        <section id="panel-dkp" className="tab-panel-content" aria-label="Roster" hidden={activeView !== 'dkp'}>
           <div className="space-y-8">
             {canSubmitDkp && statusMessage && <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${submitting ? 'border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300'}`}>{submitting ? <Zap className="h-4 w-4 shrink-0 animate-pulse" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />}{statusMessage}</div>}
             {!canSubmitDkp && (
@@ -342,9 +342,9 @@ function Dashboard() {
             </section>
           </div>
         </section>
-        {(activeView === 'auction' || visitedViews.has('auction')) && <section id="panel-auction" aria-label="Auction house" hidden={activeView !== 'auction'}><AuctionHousePanel active={activeView === 'auction'} /></section>}
-        {canSubmitDkp && (activeView === 'items' || visitedViews.has('items')) && <section id="panel-items" aria-label="Item catalog" hidden={activeView !== 'items'}><AuctionItemsPanel active={activeView === 'items'} /></section>}
-        {(activeView === 'boss-history' || visitedViews.has('boss-history')) && <section id="panel-boss-history" aria-label="Kill history" hidden={activeView !== 'boss-history'}><BossHistoryPanel embedded active={activeView === 'boss-history'} /></section>}
+        {(activeView === 'auction' || visitedViews.has('auction')) && <section id="panel-auction" className="tab-panel-content" aria-label="Auction house" hidden={activeView !== 'auction'}><AuctionHousePanel active={activeView === 'auction'} /></section>}
+        {canSubmitDkp && (activeView === 'items' || visitedViews.has('items')) && <section id="panel-items" className="tab-panel-content" aria-label="Item catalog" hidden={activeView !== 'items'}><AuctionItemsPanel active={activeView === 'items'} /></section>}
+        {(activeView === 'boss-history' || visitedViews.has('boss-history')) && <section id="panel-boss-history" className="tab-panel-content" aria-label="Kill history" hidden={activeView !== 'boss-history'}><BossHistoryPanel embedded active={activeView === 'boss-history'} /></section>}
         {activeView === 'items' && (sessionUser || !loading) && !canSubmitDkp && <p role="alert" className="surface p-6 text-sm text-slate-400">Item management requires a Chief, General, or Guardian account.</p>}
       </main>
 
