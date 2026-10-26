@@ -15,7 +15,7 @@ import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Users, Zap, X, Wallet, Swords } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Users, Zap, X, Swords } from 'lucide-react';
 const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Every kill. Every contribution." /> });
 const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Find your next upgrade." /> });
 const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Great loot starts here." /> });
@@ -246,8 +246,6 @@ function Dashboard() {
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(sessionUser?.role ?? userSession?.role ?? '');
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
-  const ownAvailable = ownToons.some((toon) => toon.available === null) ? null : ownToons.reduce((sum,toon) => sum+toon.available!,0);
-  const ownPendingDkp = pendingAward ? ownToons.filter((toon) => pendingAward.rows.includes(toon.rowIndex)).length * pendingAward.points : 0;
 
   return (
     <div className="space-y-6">
@@ -257,10 +255,10 @@ function Dashboard() {
       </div>
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
       <RosterDataIssues issues={roster.flatMap((toon) => toon.dkpIssues ?? [])} />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan'],[Wallet,'My available DKP',ownAvailable,'Before active auction holds']].map(([Icon,label,value,caption]) => {
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan']].map(([Icon,label,value,caption]) => {
           const I = Icon as typeof Users;
-          return <div key={String(label)} className="surface stat-card last:col-span-2 sm:last:col-span-1"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p>{String(label) === 'My available DKP' && ownPendingDkp > 0 && <p className="mt-1 text-[10px] font-medium text-indigo-300">+{ownPendingDkp.toLocaleString()} pending sync</p>}</div></div>;
+          return <div key={String(label)} className="surface stat-card"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
         })}
       </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
