@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import mongoose from 'mongoose';
 import Auction, { type IAuction, type IAuctionBid } from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
+import AuctionBidHistory from '@/lib/models/AuctionBidHistory';
 import AuctionItem from '@/lib/models/AuctionItem';
 import User from '@/lib/models/User';
 import ToonRoleChange from '@/lib/models/ToonRoleChange';
@@ -649,11 +650,27 @@ export async function POST(req: Request) {
             hold.heldPoints = nextHeldPoints;
             await hold.save({ session });
           }
+          if (currentBid && !await AuctionBidHistory.exists({
+            auctionId: currentAuction._id, userId: currentBid.userId,
+            identityKey: getSheetRecordKey(currentBid), amount: currentBid.amount,
+            withdrawnAt: { $exists: false },
+          }).session(session)) {
+            await AuctionBidHistory.create([{
+              auctionId: currentAuction._id, userId: currentBid.userId, nickname: currentBid.nickname,
+              rowIndex: currentBid.rowIndex, owner: currentBid.owner, account: currentBid.account,
+              identityKey: getSheetRecordKey(currentBid), amount: currentBid.amount, placedAt: currentBid.placedAt,
+            }], { session });
+          }
           const endsAt = getAuctionBidEndTime(currentAuction.endsAt, bidAt);
           currentAuction.highBid = {
             userId: actor._id, nickname: actor.nickname, rowIndex,
             owner: toon.owner, account: toon.account, amount, placedAt: bidAt,
           };
+          await AuctionBidHistory.create([{
+            auctionId: currentAuction._id, userId: actor._id, nickname: actor.nickname,
+            rowIndex, owner: toon.owner, account: toon.account,
+            identityKey: getSheetRecordKey(toon), amount, placedAt: bidAt,
+          }], { session });
           currentAuction.endsAt = endsAt;
           currentAuction.bidVersion = (currentAuction.bidVersion ?? 0) + 1;
           await currentAuction.save({ session });

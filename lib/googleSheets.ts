@@ -1,5 +1,6 @@
 // lib/googleSheets.ts
 import { createHash, randomUUID } from 'node:crypto';
+import type { ClientSession, Types } from 'mongoose';
 import { google } from 'googleapis';
 import AuctionHold from '@/lib/models/AuctionHold';
 import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
@@ -21,6 +22,7 @@ import ToonRoleChangeAudit from '@/lib/models/ToonRoleChangeAudit';
 import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
 import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
 import Auction from '@/lib/models/Auction';
+import AuctionBidHistory from '@/lib/models/AuctionBidHistory';
 import BossAward from '@/lib/models/BossAward';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { getReservationConflict } from '@/lib/auth/reservationProtection';
@@ -705,6 +707,97 @@ export async function invalidateSheetRosterCache() {
   );
 }
 
+type ToonDkpResetMode = 'available' | 'all';
+type ToonDkpResetIdentity = { owner: string; account: string };
+type ToonDkpResetActor = { _id: Types.ObjectId; nickname: string; role: string };
+
+/** Reset a toon through the recoverable sheet-mutation ledger. Related Mongo changes
+ * can be committed in the same transaction as the pending sheet write. */
+export async function resetToonDkp(options: {
+  actorUserId: string;
+  requestId: string;
+  identity: ToonDkpResetIdentity;
+  mode: ToonDkpResetMode;
+  fingerprintData?: unknown;
+  beforeMutation?: (session: ClientSession, record: ISheetRosterRecord, actor: ToonDkpResetActor, roster: ISheetRosterRecord[]) => Promise<void>;
+  mutate?: (session: ClientSession, record: ISheetRosterRecord, actor: ToonDkpResetActor, roster: ISheetRosterRecord[]) => Promise<void>;
+}) {
+  assertDkpWritesEnabled();
+  await dbConnect();
+  const spreadsheetId = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(spreadsheetId);
+  const operationKey = createHash('sha256')
+    .update(`toon-dkp:${spreadsheetId}:${options.actorUserId}:${options.requestId}`).digest('hex');
+  const requestFingerprint = createHash('sha256').update(JSON.stringify({
+    identity: options.identity, mode: options.mode, fingerprintData: options.fingerprintData,
+  })).digest('hex');
+
+  return withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    const existing = await DkpSheetMutation.findOne({ spreadsheetId, operationKey });
+    if (existing) {
+      if (existing.requestFingerprint !== requestFingerprint) {
+        throw new RequestValidationError('This request ID was already used for a different toon DKP change.', 409);
+      }
+      if (existing.status === 'applied') return { rowIndex: existing.identities?.[0]?.rowIndex, replayed: true };
+      throw new DkpIntegrityError('The previous toon DKP change is awaiting recovery. Retry the same request.');
+    }
+
+    const sheets = createSheetsClient();
+    const rows = await readSheetRows(sheets);
+    const roster = rosterFromRows(rows);
+    const matchingRecords = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(options.identity));
+    if (matchingRecords.length !== 1) throw new RequestValidationError('This toon identity is missing or duplicated in the Sheet. Correct the roster before changing DKP.', 409);
+    const record = matchingRecords[0];
+    requireRosterValues(record, options.mode === 'available' ? ['available'] : ['weeklyEarned', 'weeklySpent', 'earned', 'spent', 'available', 'fiveWeekActivity']);
+
+    const loadActor = async (session: ClientSession) => {
+      const actor = await User.findOne({ _id: options.actorUserId, status: 'approved' })
+        .select('_id nickname role').session(session);
+      if (!actor || !['chief', 'general'].includes(actor.role)) throw new RequestValidationError('Only Chiefs and Generals can change toon DKP.', 403);
+      return actor as ToonDkpResetActor;
+    };
+    if (options.beforeMutation) {
+      await withClanAdministrationTransaction(async (session) => {
+        const actor = await loadActor(session);
+        await options.beforeMutation!(session, record, actor, roster);
+      });
+    }
+
+    const columns = options.mode === 'available' ? ['H'] : ['D', 'E', 'F', 'G', 'H', 'I'];
+    const updates: SheetValueUpdate[] = columns.map((column) => ({ range: `${SHEET_NAME}!${column}${record.rowIndex}`, values: [[0]] }));
+    const previousValues = snapshotDkpCells(updates, rows);
+    getDkpReplayState(previousValues, updates, rows);
+    let weeklyActivityHistory: Array<{ rowIndex: number; owner: string; account: string; weeks: number[] }> | undefined;
+    if (options.mode === 'all') {
+      const cache = await SheetRosterCache.findOne({ cacheKey: spreadsheetId }).lean();
+      const currentHistory = cache?.weeklyActivityHistory ?? initializeWeeklyDkpActivityHistory(
+        roster.filter((entry) => entry.fiveWeekActivity !== null).map((entry) => ({ ...entry, fiveWeekActivity: entry.fiveWeekActivity! })),
+      );
+      const resetKey = getSheetRecordKey(record);
+      weeklyActivityHistory = currentHistory.map((entry) => getSheetRecordKey(entry) === resetKey
+        ? { ...entry, rowIndex: record.rowIndex, weeks: [] }
+        : entry);
+      if (!weeklyActivityHistory.some((entry) => getSheetRecordKey(entry) === resetKey)) {
+        weeklyActivityHistory.push({ rowIndex: record.rowIndex, owner: record.owner, account: record.account, weeks: [] });
+      }
+    }
+
+    await assertLedgerLock(spreadsheetId, lockId);
+    await withClanAdministrationTransaction(async (session) => {
+      const actor = await loadActor(session);
+      if (options.mutate) await options.mutate(session, record, actor, roster);
+      await DkpSheetMutation.create([{
+        spreadsheetId, operationKey, requestFingerprint, status: 'pending', updates, previousValues,
+        identities: [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }],
+        actorUserId: options.actorUserId,
+        ...(weeklyActivityHistory ? { weeklyActivityHistory } : {}),
+      }], { session });
+    });
+    await replayPendingSheetMutation(spreadsheetId, sheets, lockId);
+    return { rowIndex: record.rowIndex, replayed: false };
+  });
+}
+
 export async function adjustPlayersDKP(
   adjustments: Array<{
     rowIndex: number;
@@ -905,6 +998,10 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
         { rowIndex: pending.rowIndex },
         { owner: pending.owner, account: pending.account },
       ] }, { session });
+      const activeAuctionIds = await Auction.find({ status: 'active' }).distinct('_id').session(session);
+      if (activeAuctionIds.length) await AuctionBidHistory.updateMany({
+        identityKey: pending.identityKey, auctionId: { $in: activeAuctionIds }, withdrawnAt: { $exists: false },
+      }, { $set: { withdrawnAt: new Date() } }, { session });
     }
     for (const move of pending.compaction?.moves ?? []) {
       await AuctionHold.updateOne(
@@ -918,6 +1015,8 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
         { $set: { 'highBid.rowIndex': move.toRow } }, { session });
       await Auction.updateMany({ 'winner.owner': move.owner, 'winner.account': move.account },
         { $set: { 'winner.rowIndex': move.toRow } }, { session });
+      await AuctionBidHistory.updateMany({ owner: move.owner, account: move.account },
+        { $set: { rowIndex: move.toRow } }, { session });
       await BossAward.updateMany(
         { participants: { $elemMatch: { owner: move.owner, account: move.account } } },
         { $set: { 'participants.$[participant].rowIndex': move.toRow } },
