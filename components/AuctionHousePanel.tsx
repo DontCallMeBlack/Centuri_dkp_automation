@@ -93,6 +93,7 @@ interface AuctionData {
 }
 
 const AUCTION_PREVIEW_CACHE_KEY = '/ui/auction-preview';
+const AUCTION_POLL_INTERVAL_MS = 60_000;
 
 function rememberAuctionData(data: AuctionData) {
   const preview: AuctionData = {
@@ -315,8 +316,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         pollInFlight = false;
       }
     };
-    // Poll compact auction state every minute; reload roster/catalog less often.
-    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), 60_000);
+    // Poll auction state once per minute while this view is active and visible.
+    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), AUCTION_POLL_INTERVAL_MS);
     const clockTimer = window.setInterval(() => { if (activeRef.current && document.visibilityState === 'visible') setNow(Date.now()); }, 1000);
     return () => {
       mounted = false;
@@ -348,7 +349,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (version === clientDataVersion()) setLoading(false);
     }
   };
-  useAutoRefresh(refresh, { active, intervalMs: 60_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
+  useAutoRefresh(refresh, { active, intervalMs: AUCTION_POLL_INTERVAL_MS, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
 
   const updateAuctionInView = (auctionId: string, changes: Partial<Auction>) => {
     setData((current) => {

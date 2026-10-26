@@ -417,7 +417,7 @@ The roster’s authoritative DKP values remain in Google Sheets. MongoDB stores 
 
 ### 13.3 Performance and freshness
 
-- Roster snapshots are reused for up to 30 seconds; live auction state polls every 30 seconds and the full catalog/roster refreshes every 15 minutes while visible.
+- Roster snapshots are reused for up to 30 seconds; live auction state and the full catalog/roster refresh once per minute while the auction page is active and visible.
 - Auction image requests are lazy-loaded near the viewport and images are compressed before MongoDB storage.
 - The item picker batches visibility in groups of 40; catalog and auction history have search/filter controls.
 - The roster sheet range is capped at rows 3–1000. The UI does not paginate the leaderboard or full auction history.
