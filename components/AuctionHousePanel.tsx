@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { DkpCellIssue } from '@/lib/sheetRoster';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
 import { normalizeAuctionRole, canRoleBid, resolveItemSubroles } from '@/lib/auctionRules';
+import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
@@ -22,6 +23,7 @@ interface AuctionToon {
   available: number | null;
   heldPoints: number;
   canBid?: boolean;
+  roleChange?: { scheduledRole: string; effectiveAt: string } | null;
 }
 
 interface CatalogItem {
@@ -744,6 +746,14 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         </p>
       )}
 
+      {data.toons.some((toon) => toon.roleChange) && (
+        <section className="rounded-2xl border border-indigo-300/20 bg-gradient-to-r from-indigo-400/[.08] via-slate-900/80 to-violet-400/[.06] p-4 sm:p-5" aria-label="Scheduled toon subclass changes">
+          <div className="flex items-start gap-3"><CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-indigo-200" /><div className="min-w-0"><p className="text-xs font-bold text-white">Upcoming subclass changes</p><p className="mt-1 text-[11px] text-slate-400">Your current subclass remains eligible until its change date. After that, bids use the new subclass.</p>
+            <div className="mt-3 flex flex-wrap gap-2">{data.toons.filter((toon) => toon.roleChange).map((toon) => <span key={toon.rowIndex} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-indigo-300/15 bg-slate-950/55 px-2.5 py-2 text-[10px] text-slate-300"><span className="max-w-32 truncate font-semibold text-white">{toon.account || toon.owner}</span><span>{toon.subClass} → {toon.roleChange!.scheduledRole}</span><span className="text-indigo-200">{new Date(toon.roleChange!.effectiveAt).toLocaleDateString(undefined, { timeZone: ROLE_CHANGE_TIME_ZONE, month: 'short', day: 'numeric' })}</span></span>)}</div>
+          </div></div>
+        </section>
+      )}
+
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${saving ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{saving && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
       {data.rosterSync?.stale && (
@@ -1155,9 +1165,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                         {eligibleToons.length > 0 && data.canBidWeekly ? (
                           <>
                             {eligibleToons.length === 1 ? (
-                              <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5">
+                              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5">
+                                <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0"><p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Bidding as</p><p className="truncate text-sm font-bold text-white">{eligibleToons[0].account || eligibleToons[0].owner} <span className="font-normal text-slate-400">· {eligibleToons[0].subClass}</span></p></div>
-                                <p className="shrink-0 text-right"><span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Max total</span><span className="text-sm font-black tabular-nums text-emerald-200">{toonMaximumBid(eligibleToons[0]).toLocaleString()} DKP</span></p>
+                                <p className="shrink-0 text-right"><span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">Max total</span><span className="text-sm font-black tabular-nums text-emerald-200">{toonMaximumBid(eligibleToons[0]).toLocaleString()} DKP</span></p></div>
+                                {eligibleToons[0].roleChange && <p className="mt-2 border-t border-white/[.05] pt-2 text-[10px] text-indigo-200/80">Switches to {eligibleToons[0].roleChange.scheduledRole} on {new Date(eligibleToons[0].roleChange.effectiveAt).toLocaleDateString(undefined, { timeZone: ROLE_CHANGE_TIME_ZONE, month: 'short', day: 'numeric' })} · role change scheduled</p>}
                               </div>
                             ) : (
                               <label className="block space-y-1.5">

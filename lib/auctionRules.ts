@@ -16,6 +16,16 @@ export function normalizeAuctionBossType(value: unknown) {
 
 export const ITEM_SUBROLES = ['Ranger', 'DPS Rogue', 'Fire Mage', 'Ice Mage', 'Support Druid', 'DPS Druid', 'Support Rogue', 'DPS Warrior', 'Tank', 'Everyone'] as const;
 
+/** The five main roles and the subclasses a toon may choose under each one. */
+export const TOON_ROLE_GROUPS = [
+  { name: 'Ranger', subroles: ['Ranger'] },
+  { name: 'Druid', subroles: ['Support Druid', 'DPS Druid'] },
+  { name: 'Warrior', subroles: ['Tank', 'DPS Warrior'] },
+  { name: 'Rogue', subroles: ['DPS Rogue', 'Support Rogue'] },
+  { name: 'Mage', subroles: ['Fire Mage', 'Ice Mage'] },
+] as const;
+export const TOON_SUBROLES = TOON_ROLE_GROUPS.flatMap((group) => group.subroles);
+
 export function resolveItemSubroles(roles: string[]): string[] | null {
   const resolved = [...new Set(roles.map(normalizeAuctionRole))].map((role) => ITEM_SUBROLES.find((entry) => normalizeAuctionRole(entry) === role));
   if (!resolved.length || resolved.length > 2 || resolved.some((role) => !role) || (resolved.includes('Everyone') && resolved.length !== 1)) return null;

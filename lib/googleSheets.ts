@@ -16,6 +16,7 @@ import { buildDkpAdjustmentUpdates, DkpIntegrityError, getDkpReplayState, snapsh
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import User from '@/lib/models/User';
 import RosterMutation from '@/lib/models/RosterMutation';
+import ToonRoleChange from '@/lib/models/ToonRoleChange';
 import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
 import Auction from '@/lib/models/Auction';
 import BossAward from '@/lib/models/BossAward';
@@ -927,6 +928,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
         const links = existing.filter((record) => getSheetRecordKey(record) !== identityKey).map(({ owner, account }) => ({ owner, account }));
         return [{ userId: user._id.toString(), links }];
       });
+      if (input.action === 'remove') await ToonRoleChange.deleteOne({ identityKey }).session(session);
       await RosterMutation.create([{
         _id: id, spreadsheetId, fingerprint, action: input.action, status: 'pending', rowIndex, identityKey,
         owner: input.owner, account: input.account, subClass, before, after,
