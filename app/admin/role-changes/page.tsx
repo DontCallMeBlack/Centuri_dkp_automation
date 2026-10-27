@@ -115,7 +115,7 @@ export default function RoleChangesPage() {
   const pendingRequests = data?.toons.filter((toon) => toon.request?.status === 'pending') ?? [];
   const visibleToons = data?.toons ?? [];
   const orderedToons = [...visibleToons]
-    .filter((toon) => !data?.canApprove || toon.isOwned || toon.request !== null)
+    .filter((toon) => !data?.canApprove || (toon.isOwned && toon.request?.status !== 'pending') || toon.request?.status === 'approved')
     .sort((first, second) => Number(second.isOwned) - Number(first.isOwned) ||
       Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') ||
       first.rowIndex - second.rowIndex);

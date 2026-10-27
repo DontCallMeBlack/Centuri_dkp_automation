@@ -1075,7 +1075,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             {auctionView === 'live' && liveAuctions.length === 0 && <button type="button" onClick={() => setAuctionView('all')} className="mt-3 text-xs font-semibold text-indigo-300 hover:text-indigo-200">Browse auction history</button>}
           </div>
         ) : (
-          <div className="grid w-full gap-4 xl:grid-cols-2">
+          <div className={`grid w-full gap-4 ${visibleAuctions.length > 1 ? 'xl:grid-cols-2' : ''}`}>
             {visibleAuctions.map((auction) => {
               const isActive = auction.status === 'active' && !auction.biddingClosed && new Date(auction.endsAt).getTime() > now;
               const secondsLeft = Math.max(0, Math.floor((new Date(auction.endsAt).getTime() - now) / 1000));
@@ -1097,7 +1097,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
-                <article key={auction.id} className={`group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
+                <article key={auction.id} className={`group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${visibleAuctions.length === 1 ? 'xl:mx-auto xl:w-full xl:max-w-4xl' : ''} ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
                   <header className="flex items-start justify-between gap-3 p-4">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0">
@@ -1113,10 +1113,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                   </header>
 
                   <div className="grid gap-4 px-4 pb-4 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                    <div className="order-2 relative aspect-square w-full overflow-hidden rounded-xl bg-slate-950/70 sm:order-1">
+                    <div className="order-1 relative mx-auto aspect-square w-full max-w-36 overflow-hidden rounded-xl bg-slate-950/70 sm:order-1 sm:mx-0 sm:max-w-none">
                       <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} className="absolute inset-0 h-full w-full max-w-none rounded-xl bg-slate-950/20 p-0" />
                     </div>
-                    <div className="order-1 flex min-w-0 flex-col gap-3 sm:order-2 sm:pt-0">
+                    <div className="order-2 flex min-w-0 flex-col gap-3 sm:order-2 sm:pt-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
                       {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}
