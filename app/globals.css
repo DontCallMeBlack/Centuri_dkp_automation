@@ -428,20 +428,12 @@ svg { flex-shrink: 0; }
   }
 
   .section-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 5px;
-    overflow: visible;
+    gap: 4px;
   }
 
   .section-tab {
     min-height: 40px;
-    min-width: 0;
-    width: 100%;
-    justify-content: flex-start;
-    gap: 6px;
-    padding-inline: 9px;
-    font-size: 11px;
+    padding-inline: 12px;
   }
 
   .stat-card {
@@ -455,12 +447,6 @@ svg { flex-shrink: 0; }
 
   .app-dialog {
     border-radius: 18px;
-  }
-}
-
-@media (max-width: 380px) {
-  .section-tabs {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 
