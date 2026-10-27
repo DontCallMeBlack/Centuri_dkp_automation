@@ -292,7 +292,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     if (!active) return;
     let mounted = true;
     let pollInFlight = false;
-    let refreshTimer: ReturnType<typeof window.setTimeout>;
+    let refreshTimer: number | undefined;
     const pollLiveAuctions = async () => {
       const current = dataRef.current;
       if (!current || pollInFlight || fullRefreshCount.current > 0 || !activeRef.current || document.visibilityState !== 'visible' || navigator.onLine === false) return;
