@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/lib/client/api';
 import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
@@ -8,7 +8,6 @@ import LoadingSurface from '@/components/LoadingSurface';
 import Dialog from '@/components/Dialog';
 import ClanToonsPanel from '@/components/ClanToonsPanel';
 import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ArrowRightLeft, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Undo2, UserCheck, Users, X } from 'lucide-react';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 
@@ -125,12 +124,19 @@ const ROLE_DETAILS: Record<ClanRole, string> = {
   guardian: 'Record boss kills, manage catalog items and post auctions.',
   clansman: 'View the roster and bid using linked toons.',
 };
-interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]; archivedAccounts:ArchivedAccount[]; archivedToons:ArchivedToon[]}
+interface AdminData {managerRole:ClanRole; managerId:string; pendingUsers:ClanUser[]; members:ClanUser[]; auditEvents:ClanAuditEntry[]; roster:RosterMember[]; archivedAccounts?:ArchivedAccount[]; archivedToons?:ArchivedToon[]}
+interface ArchiveData {archivedAccounts:ArchivedAccount[]; archivedToons:ArchivedToon[]}
+const ARCHIVE_DATA_URL = '/api/admin/requests?section=archives';
+const invalidateAdminData = () => {
+  invalidateData('/api/admin/requests');
+  invalidateData(ARCHIVE_DATA_URL);
+};
 
 export default function AdminRequestsPage() {
   const initialAdminData = peekData<AdminData>('/api/admin/requests');
   const mountedRef = useRef(true);
   const loadSequence = useRef(0);
+  const initialLoadStarted = useRef(false);
   const dirtyMappings = useRef(new Set<string>());
   const mutationPending = useRef(false);
   const originalMappings = useRef<Record<string, number[]>>({});
@@ -141,6 +147,8 @@ export default function AdminRequestsPage() {
   const [roster, setRoster] = useState<RosterMember[]>(() => initialAdminData?.roster ?? []);
   const [archivedAccounts, setArchivedAccounts] = useState<ArchivedAccount[]>(() => initialAdminData?.archivedAccounts ?? []);
   const [archivedToons, setArchivedToons] = useState<ArchivedToon[]>(() => initialAdminData?.archivedToons ?? []);
+  const [archivesLoaded, setArchivesLoaded] = useState(() => Boolean(initialAdminData?.archivedAccounts && initialAdminData?.archivedToons));
+  const [archivesLoading, setArchivesLoading] = useState(false);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>(() => Object.fromEntries([...(initialAdminData?.pendingUsers ?? []), ...(initialAdminData?.members ?? [])].map((member) => [member._id, member.sheetRecordRows ?? []])));
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
   const [editingToonsFor, setEditingToonsFor] = useState('');
@@ -158,16 +166,32 @@ export default function AdminRequestsPage() {
   const [memberQuery, setMemberQuery] = useState('');
   const router = useRouter();
 
-  const applyData = (data:AdminData) => {
+  const applyData = useCallback((data:AdminData) => {
     setManagerRole(data.managerRole ?? ''); setManagerId(data.managerId ?? '');
     setPendingUsers(data.pendingUsers); setMembers(data.members); setAuditEvents(data.auditEvents); setRoster(data.roster);
-    setArchivedAccounts(data.archivedAccounts ?? []); setArchivedToons(data.archivedToons ?? []);
+    if (data.archivedAccounts) setArchivedAccounts(data.archivedAccounts);
+    if (data.archivedToons) setArchivedToons(data.archivedToons);
     setSelectedMappings((current) => Object.fromEntries([...data.pendingUsers,...data.members].map((member) => [member._id,dirtyMappings.current.has(member._id) ? current[member._id] ?? member.sheetRecordRows ?? [] : member.sheetRecordRows ?? []])));
-  };
-  const loadData = async () => {
+  }, []);
+  const loadData = useCallback(async () => {
     if (!mountedRef.current) return;
     const sequence = ++loadSequence.current;
-    try { const data=await getData<AdminData>('/api/admin/requests'); if (mountedRef.current && sequence === loadSequence.current) { applyData(data); setAccessRole(''); setError(''); } }
+    try {
+      const data = await getData<AdminData>('/api/admin/requests');
+      if (mountedRef.current && sequence === loadSequence.current) {
+        applyData(data);
+        setAccessRole(''); setError('');
+        if (archivesLoaded) {
+          void getData<ArchiveData>(ARCHIVE_DATA_URL).then((archiveData) => {
+            if (mountedRef.current && sequence === loadSequence.current) {
+              setArchivedAccounts(archiveData.archivedAccounts);
+              setArchivedToons(archiveData.archivedToons);
+              setArchivesLoaded(true);
+            }
+          }).catch(() => undefined);
+        }
+      }
+    }
     catch (cause) {
       if (!mountedRef.current || sequence !== loadSequence.current) return;
       if (cause instanceof ApiError && cause.status === 499) return;
@@ -176,13 +200,14 @@ export default function AdminRequestsPage() {
       else setError(cause instanceof Error ? cause.message : 'Clan administration could not be refreshed. Showing the last known data.');
       return false;
     } finally { if (mountedRef.current && sequence === loadSequence.current) setLoading(false); }
-  };
+  }, [archivesLoaded, applyData, router]);
   useEffect(() => {
     mountedRef.current=true;
     const clear = () => {
       loadSequence.current += 1; dirtyMappings.current.clear();
       setPendingUsers([]); setMembers([]); setAuditEvents([]); setRoster([]);
       setArchivedAccounts([]); setArchivedToons([]);
+      setArchivesLoaded(false); setArchivesLoading(false);
       setSelectedMappings({}); setMappingQueries({}); setEditingToonsFor('');
       setRoleEditor(null);
       setToonTransfer(null); setTransferDestination(''); setTransferConfirmed(false);
@@ -190,10 +215,44 @@ export default function AdminRequestsPage() {
       setError(''); setNotice(''); setLoading(true);
     };
     window.addEventListener('centuri:clear-data',clear);
-    return () => { mountedRef.current=false; loadSequence.current += 1; window.removeEventListener('centuri:clear-data',clear); };
+    return () => {
+      mountedRef.current=false;
+      loadSequence.current += 1;
+      initialLoadStarted.current = false;
+      window.removeEventListener('centuri:clear-data',clear);
+    };
   }, []);
-  useAutoRefresh(loadData);
-
+  useEffect(() => {
+    if (initialLoadStarted.current) return;
+    initialLoadStarted.current = true;
+    void loadData();
+  }, [loadData]);
+  useEffect(() => {
+    const refreshForSessionChange = () => {
+      invalidateAdminData();
+      void loadData();
+    };
+    window.addEventListener('centuri:session-updated', refreshForSessionChange);
+    return () => window.removeEventListener('centuri:session-updated', refreshForSessionChange);
+  }, [loadData]);
+  useEffect(() => {
+    if (section !== 'activity' || archivesLoaded || !managerId) return;
+    let cancelled = false;
+    setArchivesLoading(true);
+    getData<ArchiveData>(ARCHIVE_DATA_URL)
+      .then((data) => {
+        if (!cancelled) {
+          setArchivedAccounts(data.archivedAccounts);
+          setArchivedToons(data.archivedToons);
+          setArchivesLoaded(true);
+        }
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Archives could not be loaded.');
+      })
+      .finally(() => { if (!cancelled) setArchivesLoading(false); });
+    return () => { cancelled = true; };
+  }, [section, archivesLoaded, managerId]);
   const sendAdminAction = async (
     userId: string,
     action: string,
@@ -237,7 +296,7 @@ export default function AdminRequestsPage() {
       if (!res.ok) throw new Error(data.error || 'The request could not be completed');
       setNotice(data.message);
       dirtyMappings.current.delete(userId);
-      invalidateData('/api/admin/requests');
+      invalidateAdminData();
       invalidateData('/api/auth/session');
       invalidateData('/api/auction');
       invalidateData('/api/dkp');
@@ -401,7 +460,7 @@ export default function AdminRequestsPage() {
     } catch (cause) {
       setNotice('');
       setError(cause instanceof Error ? cause.message : 'The transfer could not be confirmed. Retry the same action.');
-      invalidateData('/api/admin/requests');
+      invalidateAdminData();
       void loadData();
     } finally { mutationPending.current = false; setBusyId(''); }
   };
@@ -426,7 +485,7 @@ export default function AdminRequestsPage() {
       void loadData();
     } catch (cause) {
       setNotice(''); setError(cause instanceof Error ? cause.message : 'The transfer could not be resumed.');
-      invalidateData('/api/admin/requests'); void loadData();
+      invalidateAdminData(); void loadData();
     } finally { mutationPending.current = false; setBusyId(''); }
   };
 
@@ -454,7 +513,7 @@ export default function AdminRequestsPage() {
     } catch (cause) {
       setNotice('');
       setError(cause instanceof Error ? cause.message : 'The change could not be undone.');
-      invalidateData('/api/admin/requests');
+      invalidateAdminData();
       void loadData();
     } finally { mutationPending.current = false; setBusyId(''); }
   };
@@ -476,7 +535,7 @@ export default function AdminRequestsPage() {
       void loadData();
     } catch (cause) {
       setNotice(''); setError(cause instanceof Error ? cause.message : 'The account could not be restored.');
-      invalidateData('/api/admin/requests'); void loadData();
+      invalidateAdminData(); void loadData();
     } finally { mutationPending.current = false; setBusyId(''); }
   };
 
@@ -497,7 +556,7 @@ export default function AdminRequestsPage() {
       void loadData();
     } catch (cause) {
       setNotice(''); setError(cause instanceof Error ? cause.message : 'The toon could not be restored.');
-      invalidateData('/api/admin/requests'); void loadData();
+      invalidateAdminData(); void loadData();
     } finally { mutationPending.current = false; setBusyId(''); }
   };
 
@@ -544,7 +603,13 @@ export default function AdminRequestsPage() {
           ] as const).map(([key, label, Icon, count]) => (
             <button
               key={key}
-              onClick={() => setSection(key)}
+              onClick={() => {
+                setSection(key);
+                if (key === 'activity' && archivesLoaded) {
+                  invalidateData(ARCHIVE_DATA_URL);
+                  setArchivesLoaded(false);
+                }
+              }}
               aria-pressed={section === key}
               className={`section-tab ${section === key ? '!border-indigo-400 !text-indigo-300' : ''}`}
             >
@@ -682,6 +747,7 @@ export default function AdminRequestsPage() {
 
         {section === 'activity' && (
           <section className="tab-panel-content mt-6 space-y-8">
+            {archivesLoading && <p role="status" className="text-sm text-slate-400">Loading archived accounts and toons…</p>}
             <div>
               <h2 className="mb-4 text-lg font-bold text-white">Removed toons</h2>
               {archivedToons.length === 0 ? <p className="border-y border-slate-800 py-8 text-center text-sm text-slate-500">No removed toons.</p> : (

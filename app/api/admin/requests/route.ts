@@ -16,7 +16,7 @@ import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { readDkpCell } from '@/lib/dkpAccounting';
 import { CLAN_ROLES, canChangeMemberRole, isClanRole, validRosterRows } from '@/lib/auth/permissions';
-import { adjustPlayersDKP, changeClanToon, getSheetRoster, resetToonDkp, restoreToonDkpSnapshot, withDkpLedgerLock } from '@/lib/googleSheets';
+import { adjustPlayersDKP, changeClanToon, getSheetRoster, getSheetRosterSnapshot, resetToonDkp, restoreToonDkpSnapshot, withDkpLedgerLock } from '@/lib/googleSheets';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { withdrawToonOpenAuctionBids } from '@/lib/auctionBidWithdrawal';
 import { getLinkedSheetRecordRows, getSheetRecordKey, type SheetRecordIdentity } from '@/lib/sheetRecordLinks';
@@ -35,23 +35,65 @@ const snapshotUserLinks = (user: { sheetRecords?: Array<{ rowIndex?: number; own
 });
 
 export async function GET(request: Request) {
+  const startedAt = Date.now();
   try {
+    const authStartedAt = Date.now();
     const manager = await getSessionUser();
+    const authDuration = Date.now() - authStartedAt;
     if (!manager) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageClan(manager.role)) return NextResponse.json({ error: 'This page is limited to Chief and General accounts', role: manager.role }, { status: 403 });
-    const [pendingUsers, members, roster, recentAuditEvents, pendingTransfers, archivedAccounts, archivedToons] = await Promise.all([
+
+    if (new URL(request.url).searchParams.get('section') === 'archives') {
+      const archivesStartedAt = Date.now();
+      const [archivedAccounts, archivedToons] = await Promise.all([
+        ClanAccountArchive.find({ status: 'archived' }).select('auditEventId nickname role originalStatus archiveReason linkedToons archivedAt archivedByNickname').sort({ archivedAt: -1 }).limit(500).lean(),
+        RosterMutation.find({ action: 'remove', status: 'applied', restoredAt: { $exists: false } })
+          .select('_id owner account subClass before actorNickname createdAt removalEventId').sort({ createdAt: -1 }).limit(500).lean(),
+      ]);
+      const archivedAccountsResponse = archivedAccounts.map(({ _id, ...archive }) => ({ ...archive, id: _id.toString(), auditEventId: archive.auditEventId.toString() }));
+      const archivedToonsResponse = archivedToons.map(({ _id, before, ...archive }) => ({
+        id: _id, eventId: archive.removalEventId?.toString(), owner: archive.owner, account: archive.account,
+        subClass: archive.subClass, available: String(before[7] ?? '0'), archivedAt: archive.createdAt, archivedByNickname: archive.actorNickname,
+      }));
+      return NextResponse.json({ archivedAccounts: archivedAccountsResponse, archivedToons: archivedToonsResponse }, {
+        headers: { ...privateHeaders, 'Server-Timing': `auth;dur=${authDuration}, archives;dur=${Date.now() - archivesStartedAt}, total;dur=${Date.now() - startedAt}` },
+      });
+    }
+
+    const dataStartedAt = Date.now();
+    const rosterStartedAt = Date.now();
+    let rosterDuration = 0;
+    let rosterCacheStatus: 'cache' | 'sheet' | 'stale' = 'cache';
+    const rosterPromise = getSheetRosterSnapshot().then((snapshot) => {
+      rosterDuration = Date.now() - rosterStartedAt;
+      rosterCacheStatus = snapshot.cacheStatus;
+      return snapshot.roster;
+    });
+    const [pendingUsers, members, roster, recentAuditEvents, pendingTransfers] = await Promise.all([
       User.find({ status: 'pending' }).select('_id nickname role status sheetRecordName sheetRecords').sort({ createdAt: 1 }).lean(),
       User.find({ status: 'approved' }).select('_id nickname role status sheetRecordName sheetRecords').sort({ nickname: 1 }).lean(),
-      getSheetRoster(), ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).lean(),
+      rosterPromise, ClanAuditEvent.find().sort({ createdAt: -1 }).limit(100).lean(),
       ClanAuditEvent.find({ eventType: 'toon-transferred', transferStatus: 'pending' }).sort({ createdAt: -1 }).lean(),
-      ClanAccountArchive.find({ status: 'archived' }).select('auditEventId nickname role originalStatus archiveReason linkedToons archivedAt archivedByNickname').sort({ archivedAt: -1 }).limit(500).lean(),
-      RosterMutation.find({ action: 'remove', status: 'applied', restoredAt: { $exists: false } })
-        .select('_id owner account subClass before actorNickname createdAt removalEventId').sort({ createdAt: -1 }).limit(500).lean(),
     ]);
     const auditEvents = [...new Map([...recentAuditEvents, ...pendingTransfers].map((event) => [event._id.toString(), event])).values()]
       .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime());
-    const accountArchiveEvents = new Set(archivedAccounts.map((archive) => archive.auditEventId.toString()));
-    const toonArchiveEvents = new Set(archivedToons.flatMap((archive) => archive.removalEventId ? [archive.removalEventId.toString()] : []));
+    const accountArchiveEventIds = auditEvents
+      .filter((event) => ['member-removal', 'account-denial'].includes(event.eventType))
+      .map((event) => event._id);
+    const toonArchiveEventIds = auditEvents
+      .filter((event) => event.eventType === 'toon-removed')
+      .map((event) => event._id);
+    const [accountArchiveRows, toonArchiveRows] = await Promise.all([
+      accountArchiveEventIds.length
+        ? ClanAccountArchive.find({ status: 'archived', auditEventId: { $in: accountArchiveEventIds } }).select('auditEventId').lean()
+        : [],
+      toonArchiveEventIds.length
+        ? RosterMutation.find({ action: 'remove', status: 'applied', restoredAt: { $exists: false }, removalEventId: { $in: toonArchiveEventIds } }).select('removalEventId').lean()
+        : [],
+    ]);
+    const dataDuration = Date.now() - dataStartedAt;
+    const accountArchiveEvents = new Set(accountArchiveRows.map((archive) => archive.auditEventId.toString()));
+    const toonArchiveEvents = new Set(toonArchiveRows.flatMap((archive) => archive.removalEventId ? [archive.removalEventId.toString()] : []));
     const includeRows = (user: (typeof members)[number]) => {
       const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
       const needsLinkRefresh = Boolean(user.sheetRecords?.some((saved) => saved.rowIndex === undefined ||
@@ -92,12 +134,10 @@ export async function GET(request: Request) {
           (event.eventType === 'toon-dkp-wiped' && Boolean(event.affectedToon && event.dkpBefore?.[4])) ||
           (event.eventType === 'toon-transferred' && Boolean(event.sourceLinksBefore?.linkedToons && event.sourceLinksAfter?.linkedToons && event.destinationLinksBefore?.linkedToons && event.destinationLinksAfter?.linkedToons && event.dkpBefore?.length === 6 && Array.isArray(event.activityWeeksBefore) && typeof event.hadPriorDkpReset === 'boolean' && (!event.hadPriorDkpReset || (event.priorDkpResetAt && event.priorDkpResetByUserId && event.priorDkpResetByNickname)))),
       })),
-      archivedAccounts: archivedAccounts.map(({ _id, ...archive }) => ({ ...archive, id: _id.toString(), auditEventId: archive.auditEventId.toString() })),
-      archivedToons: archivedToons.map(({ _id, before, ...archive }) => ({
-        id: _id, eventId: archive.removalEventId?.toString(), owner: archive.owner, account: archive.account,
-        subClass: archive.subClass, available: String(before[7] ?? '0'), archivedAt: archive.createdAt, archivedByNickname: archive.actorNickname,
-      })),
-    }, { headers: privateHeaders });
+    }, { headers: {
+      ...privateHeaders,
+      'Server-Timing': `auth;dur=${authDuration}, data;dur=${dataDuration}, roster;dur=${rosterDuration};desc="${rosterCacheStatus}", total;dur=${Date.now() - startedAt}`,
+    } });
   } catch (error) { return requestErrorResponse(error, 'Unable to load clan administration. Please retry.'); }
 }
 

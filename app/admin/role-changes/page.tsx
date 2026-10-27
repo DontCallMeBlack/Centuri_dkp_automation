@@ -9,7 +9,6 @@ import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clearClientData, getData, invalidateData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getAlternateToonSubrole } from '@/lib/auctionRules';
 import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 
 type RequestStatus = 'pending' | 'approved';
 interface ToonRequest {
@@ -81,7 +80,7 @@ export default function RoleChangesPage() {
     return () => { mounted.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
 
-  useAutoRefresh(load, { active: Boolean(user), onError: (cause) => setError(cause instanceof Error ? cause.message : 'Role requests could not be refreshed.') });
+  useEffect(() => { if (user) void load(); }, [user?.id, user?.role, user?.sheetRecordRows?.join(','), load]);
 
   const mutate = async (action: MutationAction, toon: ManagedToon, requestId?: string) => {
     const key = `${action}:${requestId ?? toon.rowIndex}`;

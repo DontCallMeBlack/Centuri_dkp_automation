@@ -580,6 +580,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
       fetchedAt: staleAtRequest.fetchedAt,
       stale: false,
       refreshDelayed: Boolean(staleAtRequest.lastRefreshError),
+      cacheStatus: 'cache' as const,
     };
   }
 
@@ -597,6 +598,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
         fetchedAt: current.fetchedAt,
         stale: false,
         refreshDelayed: Boolean(current.lastRefreshError),
+        cacheStatus: 'sheet' as const,
       };
     }
     if (!options.fresh && current?.roster.length && isRosterCacheFresh(current.fetchedAt, Date.now())) {
@@ -605,6 +607,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
         fetchedAt: current.fetchedAt,
         stale: false,
         refreshDelayed: Boolean(current.lastRefreshError),
+        cacheStatus: 'cache' as const,
       };
     }
 
@@ -640,6 +643,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
             fetchedAt: updated?.fetchedAt ?? new Date(),
             stale: false,
             refreshDelayed: false,
+            cacheStatus: 'sheet' as const,
           };
         }
         await SheetRosterCache.updateOne(
@@ -665,6 +669,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
             fetchedAt: failedCache.fetchedAt,
             stale: true,
             refreshDelayed: true,
+            cacheStatus: 'stale' as const,
           };
         }
         throw error;
@@ -675,6 +680,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
         fetchedAt: current.fetchedAt,
         stale: true,
         refreshDelayed: Boolean(current.lastRefreshError),
+        cacheStatus: 'stale' as const,
       };
     }
 
@@ -688,6 +694,7 @@ export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) 
       fetchedAt: latest.fetchedAt,
       stale: true,
       refreshDelayed: Boolean(latest.lastRefreshError),
+      cacheStatus: 'stale' as const,
     };
   }
   if (lastError instanceof Error) throw lastError;

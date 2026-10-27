@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Eraser, LoaderCircle, Plus, Search, Shield, Trash2, Users, X } from 'lucide-react';
 import Dialog from '@/components/Dialog';
 import RoleBadge from '@/components/RoleBadge';
 import { ITEM_SUBROLES } from '@/lib/auctionRules';
 import { clientDataVersion, getData, invalidateData, peekData, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 
 interface Toon {
   rowIndex: number; owner: string; account: string; subClass: string;
@@ -32,18 +31,32 @@ export default function ClanToonsPanel({ active, accountId, onChanged }: { activ
   const [notice, setNotice] = useState('');
   const pending = useRef(false);
   const mounted = useRef(true);
+  const initialLoadStarted = useRef(false);
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setData(null); setCreating(false); setRemoving(null); setWiping(null); setOwner(''); setAccount(''); setSubClass(''); setError(''); setNotice(''); setConfirmed(false); };
+    const clear = () => { initialLoadStarted.current = false; setData(null); setCreating(false); setRemoving(null); setWiping(null); setOwner(''); setAccount(''); setSubClass(''); setError(''); setNotice(''); setConfirmed(false); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mounted.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
-  const load = async () => {
+  const load = useCallback(async () => {
     const version = clientDataVersion();
     const result = await getData<ToonData>('/api/admin/toons');
     if (mounted.current && version === clientDataVersion()) { setData(result); setReadError(''); }
-  };
-  useAutoRefresh(load, { active, onError: (cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be refreshed.') });
+  }, []);
+  useEffect(() => {
+    if (!active || initialLoadStarted.current) return;
+    initialLoadStarted.current = true;
+    void load().catch((cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be loaded.'));
+  }, [active, load]);
+  useEffect(() => {
+    if (!active) return;
+    const reloadForSessionChange = () => {
+      initialLoadStarted.current = true;
+      void load().catch((cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be loaded.'));
+    };
+    window.addEventListener('centuri:session-updated', reloadForSessionChange);
+    return () => window.removeEventListener('centuri:session-updated', reloadForSessionChange);
+  }, [active, load]);
 
   const submit = async (action: 'create' | 'remove' | 'wipe' | 'recover', payload: Record<string, unknown> = {}) => {
     if (pending.current || !accountId) return;

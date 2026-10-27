@@ -1,7 +1,7 @@
 // app/dashboard/page.tsx
 'use client';
 
-import { Suspense, useState, useEffect, useRef, useDeferredValue } from 'react';
+import { Suspense, useCallback, useState, useEffect, useRef, useDeferredValue } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import RoleBadge from '@/components/RoleBadge';
@@ -11,7 +11,6 @@ import { useSessionUser } from '@/components/AppShell';
 import ToonDkpCards from '@/components/ToonDkpCards';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { ReadableRosterRecord } from '@/lib/sheetRoster';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
@@ -86,6 +85,7 @@ function Dashboard() {
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
+  const dkpLoaded = useRef(false);
   const [roster, setRoster] = useState<RosterMember[]>(() => initialDkpData?.roster ?? []);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>(() => initialDkpData?.clanMembers ?? []);
   const [userSession, setUserSession] = useState<UserSession | null>(() => initialDkpData?.user ?? null);
@@ -104,7 +104,7 @@ function Dashboard() {
 
   useEffect(() => {
     activeRef.current = true;
-    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
+    const clear = () => { dkpLoaded.current = false; setRoster([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setMemberQuery(''); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { activeRef.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -112,7 +112,7 @@ function Dashboard() {
   useEffect(() => { setVisitedViews((current) => current.has(activeView) ? current : new Set([...current, activeView])); }, [activeView]);
 
 
-  const fetchData = async (fresh = false) => {
+  const fetchData = useCallback(async (fresh = false) => {
     try {
       const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp');
       if (!data.success) throw new Error('The roster could not be refreshed.');
@@ -127,8 +127,21 @@ function Dashboard() {
     } finally {
       if (activeRef.current) setLoading(false);
     }
-  };
-  useAutoRefresh(fetchData, { active: activeView === 'dkp' });
+  }, [router]);
+  useEffect(() => {
+    if (activeView !== 'dkp' || dkpLoaded.current) return;
+    dkpLoaded.current = true;
+    void fetchData();
+  }, [activeView, fetchData]);
+  useEffect(() => {
+    const refreshAfterDkpChange = () => {
+      if (activeView !== 'dkp') { dkpLoaded.current = false; return; }
+      dkpLoaded.current = true;
+      void fetchData();
+    };
+    window.addEventListener('centuri:dkp-changed', refreshAfterDkpChange);
+    return () => window.removeEventListener('centuri:dkp-changed', refreshAfterDkpChange);
+  }, [activeView, fetchData]);
 
   const toggleMemberSelection = (rowIndex: number) => {
     setSelectedMembers((prev) =>
