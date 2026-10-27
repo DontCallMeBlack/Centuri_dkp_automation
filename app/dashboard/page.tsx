@@ -318,8 +318,8 @@ function Dashboard() {
                                 {toon.available === null ? '—' : toon.roleRank}
                               </span>
                             </td>
-                            <td className="overflow-hidden px-2 py-2.5 sm:max-w-0 sm:px-3">
-                              <span className="block whitespace-normal break-words text-sm font-semibold text-white sm:truncate sm:whitespace-nowrap" title={toon.account || toon.owner}>
+                            <td className="max-w-0 overflow-hidden px-2 py-2.5 sm:px-3">
+                              <span className="block truncate text-sm font-semibold text-white" title={toon.account || toon.owner}>
                                 {toon.account || toon.owner}
                               </span>
                             </td>
