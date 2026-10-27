@@ -393,7 +393,8 @@ function ItemEditor({
 
 export default function AuctionItemsPanel({ active = true }: { active?: boolean }) {
   const mounted = useRef(true);
-  const [items, setItems] = useState<CatalogItem[]>(() => peekData<{ items: CatalogItem[] }>('/api/auction/items')?.items ?? []);
+  const initialCatalogData = peekData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
+  const [items, setItems] = useState<CatalogItem[]>(() => initialCatalogData?.items ?? []);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
@@ -405,7 +406,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const initialLoadStarted = useRef(false);
+  const initialLoadStarted = useRef(Boolean(initialCatalogData));
   const router = useRouter();
 
   const loadItems = useCallback(async () => {

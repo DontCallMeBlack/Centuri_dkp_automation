@@ -134,9 +134,10 @@ const invalidateAdminData = () => {
 
 export default function AdminRequestsPage() {
   const initialAdminData = peekData<AdminData>('/api/admin/requests');
+  const initialArchiveData = peekData<ArchiveData>(ARCHIVE_DATA_URL);
   const mountedRef = useRef(true);
   const loadSequence = useRef(0);
-  const initialLoadStarted = useRef(false);
+  const initialLoadStarted = useRef(Boolean(initialAdminData));
   const dirtyMappings = useRef(new Set<string>());
   const mutationPending = useRef(false);
   const originalMappings = useRef<Record<string, number[]>>({});
@@ -145,9 +146,9 @@ export default function AdminRequestsPage() {
   const [members, setMembers] = useState<ClanUser[]>(() => initialAdminData?.members ?? []);
   const [auditEvents, setAuditEvents] = useState<ClanAuditEntry[]>(() => initialAdminData?.auditEvents ?? []);
   const [roster, setRoster] = useState<RosterMember[]>(() => initialAdminData?.roster ?? []);
-  const [archivedAccounts, setArchivedAccounts] = useState<ArchivedAccount[]>(() => initialAdminData?.archivedAccounts ?? []);
-  const [archivedToons, setArchivedToons] = useState<ArchivedToon[]>(() => initialAdminData?.archivedToons ?? []);
-  const [archivesLoaded, setArchivesLoaded] = useState(() => Boolean(initialAdminData?.archivedAccounts && initialAdminData?.archivedToons));
+  const [archivedAccounts, setArchivedAccounts] = useState<ArchivedAccount[]>(() => initialAdminData?.archivedAccounts ?? initialArchiveData?.archivedAccounts ?? []);
+  const [archivedToons, setArchivedToons] = useState<ArchivedToon[]>(() => initialAdminData?.archivedToons ?? initialArchiveData?.archivedToons ?? []);
+  const [archivesLoaded, setArchivesLoaded] = useState(() => Boolean(initialArchiveData || (initialAdminData?.archivedAccounts && initialAdminData?.archivedToons)));
   const [archivesLoading, setArchivesLoading] = useState(false);
   const [selectedMappings, setSelectedMappings] = useState<Record<string, number[]>>(() => Object.fromEntries([...(initialAdminData?.pendingUsers ?? []), ...(initialAdminData?.members ?? [])].map((member) => [member._id, member.sheetRecordRows ?? []])));
   const [mappingQueries, setMappingQueries] = useState<Record<string, string>>({});
@@ -603,13 +604,7 @@ export default function AdminRequestsPage() {
           ] as const).map(([key, label, Icon, count]) => (
             <button
               key={key}
-              onClick={() => {
-                setSection(key);
-                if (key === 'activity' && archivesLoaded) {
-                  invalidateData(ARCHIVE_DATA_URL);
-                  setArchivesLoaded(false);
-                }
-              }}
+              onClick={() => setSection(key)}
               aria-pressed={section === key}
               className={`section-tab ${section === key ? '!border-indigo-400 !text-indigo-300' : ''}`}
             >
