@@ -6,7 +6,7 @@ import { ArrowLeftRight, ArrowRight, CalendarDays, Check, CircleAlert, LoaderCir
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
 import { useSessionUser } from '@/components/AppShell';
-import { ApiError, clearClientData, getData, invalidateData, notifyDkpChanged, readResponse } from '@/lib/client/api';
+import { ApiError, clearClientData, getData, invalidateData, notifyDkpChanged, peekData, readResponse } from '@/lib/client/api';
 import { getAlternateToonSubrole } from '@/lib/auctionRules';
 import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 
@@ -49,8 +49,10 @@ export default function RoleChangesPage() {
   const user = useSessionUser();
   const router = useRouter();
   const mounted = useRef(true);
-  const [data, setData] = useState<RoleChangeData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const initialData = peekData<RoleChangeData>('/api/role-changes');
+  const initialLoadStarted = useRef(Boolean(initialData));
+  const [data, setData] = useState<RoleChangeData | null>(() => initialData);
+  const [loading, setLoading] = useState(() => !initialData);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -75,12 +77,16 @@ export default function RoleChangesPage() {
 
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setData(null); setLoading(true); setBusyKey(''); setError(''); setNotice(''); };
+    const clear = () => { initialLoadStarted.current = false; setData(null); setLoading(true); setBusyKey(''); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mounted.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
 
-  useEffect(() => { if (user) void load(); }, [user?.id, user?.role, user?.sheetRecordRows?.join(','), load]);
+  useEffect(() => {
+    if (!user || initialLoadStarted.current) return;
+    initialLoadStarted.current = true;
+    void load();
+  }, [user?.id, user?.role, user?.sheetRecordRows?.join(','), load]);
 
   const mutate = async (action: MutationAction, toon: ManagedToon, requestId?: string) => {
     const key = `${action}:${requestId ?? toon.rowIndex}`;

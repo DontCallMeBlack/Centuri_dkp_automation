@@ -16,7 +16,8 @@ interface Toon {
 interface ToonData { toons: Toon[]; pending: { action: string; owner: string; account: string } | null }
 
 export default function ClanToonsPanel({ active, accountId, onChanged }: { active: boolean; accountId: string; onChanged: () => Promise<unknown> }) {
-  const [data, setData] = useState<ToonData | null>(() => peekData<ToonData>('/api/admin/toons'));
+  const initialToonData = peekData<ToonData>('/api/admin/toons');
+  const [data, setData] = useState<ToonData | null>(() => initialToonData);
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<Toon | null>(null);
@@ -31,7 +32,7 @@ export default function ClanToonsPanel({ active, accountId, onChanged }: { activ
   const [notice, setNotice] = useState('');
   const pending = useRef(false);
   const mounted = useRef(true);
-  const initialLoadStarted = useRef(false);
+  const initialLoadStarted = useRef(Boolean(initialToonData));
   useEffect(() => {
     mounted.current = true;
     const clear = () => { initialLoadStarted.current = false; setData(null); setCreating(false); setRemoving(null); setWiping(null); setOwner(''); setAccount(''); setSubClass(''); setError(''); setNotice(''); setConfirmed(false); };

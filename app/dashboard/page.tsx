@@ -85,7 +85,7 @@ function Dashboard() {
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
-  const dkpLoaded = useRef(false);
+  const dkpLoaded = useRef(Boolean(initialDkpData));
   const [roster, setRoster] = useState<RosterMember[]>(() => initialDkpData?.roster ?? []);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>(() => initialDkpData?.clanMembers ?? []);
   const [userSession, setUserSession] = useState<UserSession | null>(() => initialDkpData?.user ?? null);

@@ -54,7 +54,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const pageCount = useRef(1);
   const historySequence = useRef(0);
   const historyPending = useRef(0);
-  const initialLoadStarted = useRef(false);
+  const initialLoadStarted = useRef(Boolean(initialHistory));
   const router = useRouter();
 
   const applyData = useCallback((data:HistoryData) => {

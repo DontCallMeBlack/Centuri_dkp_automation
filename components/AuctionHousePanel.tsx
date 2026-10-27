@@ -136,7 +136,9 @@ function rememberAuctionData(data: AuctionData) {
   rememberData(AUCTION_PREVIEW_CACHE_KEY, preview);
 }
 
-function readAuctionCache() { return peekData<AuctionData>(AUCTION_PREVIEW_CACHE_KEY); }
+function readAuctionCache() {
+  return peekData<AuctionData>('/api/auction') ?? peekData<AuctionData>(AUCTION_PREVIEW_CACHE_KEY);
+}
 
 const roleStyles: Record<string, string> = {
   ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',

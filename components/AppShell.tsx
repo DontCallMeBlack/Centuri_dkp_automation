@@ -59,6 +59,28 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => { active=false; window.removeEventListener('focus',check); document.removeEventListener('visibilitychange',check); };
   }, [publicPage, router]);
   useEffect(() => {
+    if (publicPage || !user?.id) return;
+    const urls = [
+      '/api/dkp',
+      '/api/auction',
+      '/api/auction/items',
+      '/api/admin/boss-history',
+      '/api/role-changes',
+      ...(user.role === 'chief' || user.role === 'general'
+        ? ['/api/admin/requests', '/api/admin/requests?section=archives', '/api/admin/toons']
+        : []),
+    ];
+    const timer = window.setTimeout(() => {
+      const tasks: Promise<unknown>[] = urls.map((url) => getData<unknown>(url));
+      tasks.push(import('./AuctionHousePanel'), import('./BossHistoryPanel'));
+      if (user.role === 'chief' || user.role === 'general' || user.role === 'guardian') {
+        tasks.push(import('./AuctionItemsPanel'));
+      }
+      void Promise.allSettled(tasks);
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [publicPage, user?.id, user?.role, user?.sheetRecordRows?.join(',')]);
+  useEffect(() => {
     const onSignOut = (event: StorageEvent) => {
       if (event.key === 'centuri:logout') { clearClientData(); setUser(null); userRef.current=null; router.replace('/login'); }
     };
