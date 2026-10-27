@@ -10,7 +10,6 @@ import type { DkpCellIssue } from '@/lib/sheetRoster';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
 import { normalizeAuctionRole, canRoleBid, resolveItemSubroles } from '@/lib/auctionRules';
 import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 
@@ -93,7 +92,26 @@ interface AuctionData {
 }
 
 const AUCTION_PREVIEW_CACHE_KEY = '/ui/auction-preview';
-const AUCTION_POLL_INTERVAL_MS = 60_000;
+const AUCTION_IDLE_POLL_MS = 60 * 60_000;
+const AUCTION_MID_POLL_MS = 5 * 60_000;
+const AUCTION_FINAL_POLL_MS = 60_000;
+const AUCTION_MINUTE_MS = 60_000;
+
+function getAuctionPollDelay(auctions: Auction[], now = Date.now()) {
+  const activeEnds = auctions
+    .filter((auction) => auction.status === 'active')
+    .map((auction) => new Date(auction.endsAt).getTime())
+    .filter(Number.isFinite);
+  if (!activeEnds.length) return AUCTION_IDLE_POLL_MS;
+
+  const remaining = Math.min(...activeEnds) - now;
+  if (remaining <= 0) return AUCTION_FINAL_POLL_MS;
+  if (remaining <= 5 * AUCTION_MINUTE_MS) return AUCTION_FINAL_POLL_MS;
+  if (remaining <= 60 * AUCTION_MINUTE_MS) {
+    return Math.min(AUCTION_MID_POLL_MS, remaining - 5 * AUCTION_MINUTE_MS);
+  }
+  return Math.min(AUCTION_IDLE_POLL_MS, remaining - 60 * AUCTION_MINUTE_MS);
+}
 
 function rememberAuctionData(data: AuctionData) {
   const preview: AuctionData = {
@@ -229,6 +247,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const dataRef = useRef<AuctionData | null>(data);
   const fullRefreshCount = useRef(0);
   const liveEpoch = useRef(0);
+  const initialRefreshStarted = useRef(false);
+  const refreshRef = useRef<() => Promise<unknown>>(async () => undefined);
   const [loading, setLoading] = useState(() => !initialAuctionData);
   const [syncing, setSyncing] = useState(() => Boolean(initialAuctionData));
   const [lastSyncedAt, setLastSyncedAt] = useState<number>(0);
@@ -269,8 +289,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   }, []);
 
   useEffect(() => {
+    if (!active) return;
     let mounted = true;
     let pollInFlight = false;
+    let refreshTimer: ReturnType<typeof window.setTimeout>;
     const pollLiveAuctions = async () => {
       const current = dataRef.current;
       if (!current || pollInFlight || fullRefreshCount.current > 0 || !activeRef.current || document.visibilityState !== 'visible' || navigator.onLine === false) return;
@@ -309,22 +331,30 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           .filter((auction) => !(result.removedIds as string[] | undefined)?.includes(auction.id))
           .map((auction) => byId.has(auction.id) ? { ...auction, ...byId.get(auction.id)! } : auction));
         setLastSyncedAt(Date.now());
-        if (personalBalanceChanged) await refresh();
+        if (personalBalanceChanged) await refreshRef.current();
       } catch (cause) {
         if (mounted) setError(cause instanceof Error ? cause.message : 'Live updates are delayed. Retrying automatically.');
       } finally {
         pollInFlight = false;
       }
     };
-    // Poll auction state once per minute while this view is active and visible.
-    const refreshTimer = window.setInterval(() => void pollLiveAuctions(), AUCTION_POLL_INTERVAL_MS);
+    const schedulePoll = () => {
+      if (!mounted || !activeRef.current) return;
+      window.clearTimeout(refreshTimer);
+      const delay = getAuctionPollDelay(dataRef.current?.auctions ?? []);
+      refreshTimer = window.setTimeout(() => {
+        void pollLiveAuctions().finally(schedulePoll);
+      }, delay);
+    };
+    // Poll live auction state less often when the next auction is far from ending.
+    schedulePoll();
     const clockTimer = window.setInterval(() => { if (activeRef.current && document.visibilityState === 'visible') setNow(Date.now()); }, 1000);
     return () => {
       mounted = false;
-      window.clearInterval(refreshTimer);
+      window.clearTimeout(refreshTimer);
       window.clearInterval(clockTimer);
     };
-  }, [router]);
+  }, [active, data?.auctions]);
 
   const refresh = async () => {
     fullRefreshCount.current += 1; liveEpoch.current += 1;
@@ -349,7 +379,26 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (version === clientDataVersion()) setLoading(false);
     }
   };
-  useAutoRefresh(refresh, { active, intervalMs: AUCTION_POLL_INTERVAL_MS, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed. Retrying automatically.') });
+  refreshRef.current = refresh;
+  useEffect(() => {
+    if (!active || initialRefreshStarted.current) return;
+    initialRefreshStarted.current = true;
+    void refreshRef.current().catch((cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed.'));
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const refreshAfterLocalChange = () => {
+      initialRefreshStarted.current = true;
+      void refreshRef.current().catch((cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed.'));
+    };
+    window.addEventListener('centuri:dkp-changed', refreshAfterLocalChange);
+    window.addEventListener('centuri:catalog-changed', refreshAfterLocalChange);
+    return () => {
+      window.removeEventListener('centuri:dkp-changed', refreshAfterLocalChange);
+      window.removeEventListener('centuri:catalog-changed', refreshAfterLocalChange);
+    };
+  }, [active]);
 
   const updateAuctionInView = (auctionId: string, changes: Partial<Auction>) => {
     setData((current) => {
@@ -388,7 +437,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    const clear = () => { archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
+    const clear = () => { initialRefreshStarted.current = false; archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);

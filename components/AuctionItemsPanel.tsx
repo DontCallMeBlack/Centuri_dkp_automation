@@ -1,12 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Dialog from '@/components/Dialog';
 import RoleBadge from '@/components/RoleBadge';
 import ItemSubrolePicker from '@/components/ItemSubrolePicker';
 import { resolveItemSubroles } from '@/lib/auctionRules';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clearClientData, clientDataVersion, getData, invalidateData, peekData, rememberData } from '@/lib/client/api';
 import { ImagePlus, LoaderCircle, Package, Save, Search, Trash2, Pencil, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { optimizeImageForUpload } from '@/lib/auctionImageClient';
@@ -406,9 +405,10 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const initialLoadStarted = useRef(false);
   const router = useRouter();
 
-  const loadItems = async () => {
+  const loadItems = useCallback(async () => {
     const version = clientDataVersion();
     try {
       const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
@@ -420,18 +420,31 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
     } finally {
       if (mounted.current && version === clientDataVersion()) setLoading(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     mounted.current = true;
-    const clear = () => { setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
+    const clear = () => { initialLoadStarted.current = false; setItems([]); setCreateOpen(false); setName(''); setFiles([]); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => {
       mounted.current = false;
       window.removeEventListener('centuri:clear-data', clear);
     };
   }, [router]);
-  useAutoRefresh(loadItems, { active, intervalMs: 180_000, onError: (cause) => setError(cause instanceof Error ? cause.message : 'Catalog updates are delayed. Retrying automatically.') });
+  useEffect(() => {
+    if (!active || initialLoadStarted.current) return;
+    initialLoadStarted.current = true;
+    void loadItems().catch((cause) => setError(cause instanceof Error ? cause.message : 'The catalog could not be loaded.'));
+  }, [active, loadItems]);
+  useEffect(() => {
+    if (!active) return;
+    const reloadForSessionChange = () => {
+      initialLoadStarted.current = true;
+      void loadItems().catch((cause) => setError(cause instanceof Error ? cause.message : 'The catalog could not be loaded.'));
+    };
+    window.addEventListener('centuri:session-updated', reloadForSessionChange);
+    return () => window.removeEventListener('centuri:session-updated', reloadForSessionChange);
+  }, [active, loadItems]);
 
   const catalogChanged = () => {
     invalidateData('/api/auction/items'); invalidateData('/api/auction');

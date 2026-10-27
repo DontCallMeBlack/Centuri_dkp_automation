@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
@@ -55,13 +54,14 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const pageCount = useRef(1);
   const historySequence = useRef(0);
   const historyPending = useRef(0);
+  const initialLoadStarted = useRef(false);
   const router = useRouter();
 
-  const applyData = (data:HistoryData) => {
+  const applyData = useCallback((data:HistoryData) => {
     setCanManage(data.canManage === true); setAwards(data.awards); setRoster(data.roster); setNextCursor(data.nextCursor ?? null);
     setSelectedRows((previous) => ({...Object.fromEntries(data.awards.map((award) => [award.id,award.selectedRows])),...(editingRef.current ? {[editingRef.current]:previous[editingRef.current]} : {})}));
-  };
-  const loadHistory = async (clearReadError = true) => {
+  }, []);
+  const loadHistory = useCallback(async (clearReadError = true) => {
     if (!mountedRef.current || historyPending.current) return;
     const version = clientDataVersion();
     const sequence = ++historySequence.current;
@@ -88,14 +88,24 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       else setError(cause instanceof Error ? cause.message : 'Boss history could not be refreshed. Showing the last known data.');
       return false;
     } finally { if (historyPending.current === sequence) historyPending.current = 0; if (mountedRef.current && version === clientDataVersion() && sequence === historySequence.current) { setLoading(false); setRefreshing(false); } }
-  };
+  }, [applyData, router]);
   useEffect(() => {
     mountedRef.current=true;
-    const clear = () => { historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
+    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
-  useAutoRefresh(loadHistory, { active });
+  useEffect(() => {
+    if (!active || initialLoadStarted.current) return;
+    initialLoadStarted.current = true;
+    void loadHistory();
+  }, [active, loadHistory]);
+  useEffect(() => {
+    if (!active) return;
+    const reloadForSessionChange = () => { initialLoadStarted.current = true; void loadHistory(); };
+    window.addEventListener('centuri:session-updated', reloadForSessionChange);
+    return () => window.removeEventListener('centuri:session-updated', reloadForSessionChange);
+  }, [active, loadHistory]);
 
   const loadMoreHistory = async () => {
     if (!nextCursor || loadingMore || refreshing || historyPending.current) return;

@@ -61,5 +61,6 @@ const schema = new Schema<RosterMutationRecord>({
 }, { timestamps: true });
 schema.index({ spreadsheetId: 1, status: 1 });
 schema.index({ spreadsheetId: 1, identityKey: 1, action: 1 });
+schema.index({ removalEventId: 1 }, { sparse: true });
 const RosterMutation: Model<RosterMutationRecord> = mongoose.models.RosterMutation || mongoose.model('RosterMutation', schema);
 export default RosterMutation;

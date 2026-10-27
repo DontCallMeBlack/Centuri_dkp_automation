@@ -42,7 +42,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         const previous=userRef.current;
         const changed=previous && (previous.id !== result.user.id || previous.role !== result.user.role || JSON.stringify(previous.sheetRecordRows) !== JSON.stringify(result.user.sheetRecordRows));
         userRef.current=result.user; setUser(result.user); setError('');
-        if (changed) { clearClientData(); notifyDkpChanged(); }
+        if (changed) {
+          clearClientData();
+          notifyDkpChanged();
+          window.dispatchEvent(new Event('centuri:session-updated'));
+        }
       }).catch((cause) => {
         if (!active) return;
         if (cause?.status === 401) { clearClientData(); userRef.current=null; setUser(null); router.replace('/login'); }
@@ -52,8 +56,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     check();
     window.addEventListener('focus',check);
     document.addEventListener('visibilitychange',check);
-    const timer=window.setInterval(check,120_000);
-    return () => { active=false; window.clearInterval(timer); window.removeEventListener('focus',check); document.removeEventListener('visibilitychange',check); };
+    return () => { active=false; window.removeEventListener('focus',check); document.removeEventListener('visibilitychange',check); };
   }, [publicPage, router]);
   useEffect(() => {
     const onSignOut = (event: StorageEvent) => {
