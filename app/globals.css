@@ -86,6 +86,7 @@ svg { flex-shrink: 0; }
 .skeleton { border-radius: 7px; background: linear-gradient(105deg,rgba(148,163,184,.07) 25%,rgba(174,168,255,.16) 45%,rgba(120,202,220,.1) 52%,rgba(148,163,184,.07) 72%); background-size: 240% 100%; animation: shimmer 1.8s ease-in-out infinite; }
 @keyframes shimmer { to { background-position: -150% 0; } }
 .app-dialog { margin: auto; padding: 0; color: #e4e7f2; background: radial-gradient(ellipse at 90% 0%,rgba(111,102,213,.13),transparent 42%),linear-gradient(145deg,#171b2b,#0d101a); border: 1px solid rgba(165,166,255,.2); border-radius: 24px; width: calc(100% - 32px); max-width: 720px; max-height: calc(100dvh - 48px); overflow: auto; box-shadow: 0 34px 110px rgba(0,0,0,.7),0 0 48px rgba(92,82,192,.11); }
+.boss-picker-scroll { overflow-anchor: none; overscroll-behavior-y: contain; }
 .app-dialog::backdrop { background: rgba(2,4,11,.78); backdrop-filter: blur(8px) saturate(115%); }
 .mobile-nav-overlay { position: fixed; inset: 0; background: #0009; z-index: 80; }
 .mobile-sidebar { height: 100dvh; width: min(300px,85vw); background: linear-gradient(180deg,#0e111c,#090b13); padding: 25px 20px; display: flex; flex-direction: column; box-shadow: 15px 0 50px #0006; }
