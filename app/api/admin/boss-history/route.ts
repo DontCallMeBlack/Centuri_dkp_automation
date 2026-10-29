@@ -168,7 +168,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
       const weeklyResetStart = getCurrentDkpWeekStart();
       if (award.createdAt < weeklyResetStart) {
         return NextResponse.json({
-          error: 'This kill is from a previous week and is locked after the Sunday DKP reset.',
+          error: 'This kill cannot be modified.',
         }, { status: 409 });
       }
       const roster = await getSheetRoster({ fresh: true });

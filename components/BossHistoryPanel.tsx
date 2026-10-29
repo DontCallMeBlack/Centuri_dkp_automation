@@ -344,7 +344,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       <div className="space-y-4">
         <div className="flex items-start gap-3 rounded-2xl border border-indigo-400/15 bg-gradient-to-r from-indigo-500/[.08] via-slate-900/60 to-violet-500/[.06] p-4">
           <span className="mt-0.5 rounded-xl border border-indigo-300/15 bg-indigo-400/10 p-2 text-indigo-200"><Clock3 size={16} /></span>
-          <div><p className="text-sm font-semibold text-slate-200">Current week · previous weeks archived</p><p className="mt-1 text-xs leading-5 text-slate-400">{canManage ? 'Edit this week’s attendance anytime. Changes leave a comment; removals need a reason.' : 'Managers can update this week’s attendance. Previous weeks are read-only.'}</p></div>
+          <div><p className="text-sm font-semibold text-slate-200">Current week · previous weeks archived</p>{canManage && <p className="mt-1 text-xs leading-5 text-slate-400">Edit this week’s attendance anytime. Changes leave a comment; removals need a reason.</p>}</div>
         </div>
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
