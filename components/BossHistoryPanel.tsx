@@ -6,7 +6,7 @@ import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { Check, Clock3, History, LoaderCircle, MessageSquareText, Save, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { Check, Clock3, History, LoaderCircle, MessageCircle, Save, Shield, Swords, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
 interface RosterMember {
@@ -30,6 +30,7 @@ interface BossAward {
   participants: RosterMember[];
   auditTrail?: Array<{
     kind: 'participant_added' | 'participant_removed' | 'kill_deleted';
+    changeId?: string;
     participant?: RosterMember;
     reason?: BossAttendanceRemovalReason;
     actor: string;
@@ -62,11 +63,31 @@ function sortRemovalReasons(reasons: Array<{owner: string; account: string; reas
     participantKey(left).localeCompare(participantKey(right)) || left.reason.localeCompare(right.reason));
 }
 
-function describeAuditEvent(event: NonNullable<BossAward['auditTrail']>[number]) {
-  const participantName = event.participant?.account || event.participant?.owner || 'A toon';
-  if (event.kind === 'participant_added') return <><strong className="text-slate-100">{participantName}</strong> was added by <strong className="text-indigo-200">{event.actor}</strong>.</>;
-  if (event.kind === 'participant_removed') return <><strong className="text-slate-100">{participantName}</strong> was removed by <strong className="text-indigo-200">{event.actor}</strong>{event.reason ? <> · {event.reason}</> : <> · reason not recorded for this older change</>}.</>;
-  return <><strong className="text-rose-200">The kill record</strong> was deleted by <strong className="text-indigo-200">{event.actor}</strong>.</>;
+type BossAuditEvent = NonNullable<BossAward['auditTrail']>[number];
+
+interface AuditComment {
+  id: string;
+  actor: string;
+  occurredAt: string;
+  added: RosterMember[];
+  removed: Array<{participant?: RosterMember; reason?: BossAttendanceRemovalReason}>;
+  deleted: boolean;
+}
+
+function groupAuditComments(events: BossAuditEvent[]) {
+  const groups = new Map<string, AuditComment>();
+  for (const event of events) {
+    const id = event.changeId || `${event.actor}:${event.occurredAt}`;
+    let group = groups.get(id);
+    if (!group) {
+      group = { id, actor: event.actor, occurredAt: event.occurredAt, added: [], removed: [], deleted: false };
+      groups.set(id, group);
+    }
+    if (event.kind === 'participant_added' && event.participant) group.added.push(event.participant);
+    else if (event.kind === 'participant_removed') group.removed.push({ participant: event.participant, reason: event.reason });
+    else if (event.kind === 'kill_deleted') group.deleted = true;
+  }
+  return [...groups.values()].reverse();
 }
 
 export default function BossHistoryPanel({ embedded = false, active = true }: { embedded?: boolean; active?: boolean }) {
@@ -79,6 +100,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const [selectedRows, setSelectedRows] = useState<Record<string, number[]>>(() => Object.fromEntries((initialHistory?.awards ?? []).map((award) => [award.id, award.selectedRows])));
   const [removalReasons, setRemovalReasons] = useState<Record<string, Record<string, BossAttendanceRemovalReason | ''>>>({});
   const [editingId, setEditingId] = useState('');
+  const [commentsOpenId, setCommentsOpenId] = useState('');
   const editingRef = useRef('');
   editingRef.current = editingId;
   const [loading, setLoading] = useState(() => !initialHistory);
@@ -129,7 +151,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   }, [applyData, router]);
   useEffect(() => {
     mountedRef.current=true;
-    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setRemovalReasons({}); setEditingId(''); setCanManage(false); setLoading(true); };
+    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setRemovalReasons({}); setEditingId(''); setCommentsOpenId(''); setCanManage(false); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -337,45 +359,43 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const removedParticipants = isEditing ? getRemovedParticipants(award, editRows, roster) : [];
           const missingRemovalReason = removedParticipants.some((participant) => !removalReasons[award.id]?.[participantKey(participant)]);
           const auditTrail = award.auditTrail ?? [];
-          const recentAudit = auditTrail.slice(-3).reverse();
-          const olderAudit = auditTrail.slice(0, -3).reverse();
+          const commentGroups = groupAuditComments(auditTrail);
           return (
-            <article key={award.id} className="surface p-5 sm:p-6">
-              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-base font-bold text-white">{award.bossName}</h2>
-                    <span className="rounded-full bg-indigo-500/10 px-2.5 py-1 text-xs font-semibold text-indigo-300">
-                      +{award.points} DKP
-                    </span>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${award.status === 'applied' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'}`}>
-                      {award.status}
-                    </span>
+            <article key={award.id} className="surface relative overflow-hidden p-0">
+              <div className="h-1 bg-gradient-to-r from-indigo-400 via-violet-400 to-cyan-300" />
+              <div className="flex flex-col justify-between gap-4 border-b border-slate-800/80 bg-gradient-to-r from-indigo-950/45 via-slate-900/70 to-violet-950/35 px-5 py-5 sm:flex-row sm:items-center sm:px-6">
+                <div className="flex min-w-0 items-center gap-3.5">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-indigo-200/15 bg-indigo-300/[.08] text-indigo-200 shadow-inner shadow-indigo-300/[.06]"><Swords size={19} /></span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h2 className="text-lg font-bold tracking-tight text-white">{award.bossName}</h2>
+                      <span className="rounded-full border border-emerald-300/15 bg-emerald-300/[.07] px-2.5 py-1 text-[11px] font-bold text-emerald-200">+{award.points} DKP</span>
+                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[.12em] ${award.status === 'applied' ? 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200' : 'border-amber-300/15 bg-amber-300/[.06] text-amber-200'}`}>{award.status}</span>
+                    </div>
+                    <p className="mt-1.5 truncate text-[11px] text-slate-400">{new Date(award.createdAt).toLocaleString()} <span className="text-slate-600">·</span> Recorded by <span className="font-semibold text-slate-300">{award.createdBy}</span>{award.updatedBy ? <> <span className="text-slate-600">·</span> Last change by <span className="font-semibold text-slate-300">{award.updatedBy}</span></> : null}</p>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {new Date(award.createdAt).toLocaleString()} · Recorded by {award.createdBy}
-                    {award.updatedBy ? ` · Last edited by ${award.updatedBy}` : ''}
-                  </p>
                 </div>
-                {canManage && award.status === 'applied' && !isEditing && award.canModify === true && (
-                  <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  {canManage && award.status === 'applied' && !isEditing && award.canModify === true && <>
                     <button
                       onClick={() => { setRemovalReasons((current) => ({...current,[award.id]:{}})); setEditingId(award.id); }}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10"
-                    >
-                      <Users className="h-4 w-4" /> Edit toons
-                    </button>
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-300/20 bg-indigo-300/[.07] px-3.5 py-2.5 text-xs font-semibold text-indigo-100 transition hover:border-indigo-200/35 hover:bg-indigo-300/[.12]"
+                    ><Users size={14} /> Edit roster</button>
                     <button
                       onClick={() => void deleteAward(award)}
                       disabled={busyId === award.id}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-500/40 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {busyId === award.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                      Delete kill
-                    </button>
-                  </div>
-                )}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300/15 px-3.5 py-2.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/30 hover:bg-rose-300/[.07] disabled:opacity-50"
+                    >{busyId === award.id ? <LoaderCircle size={14} className="animate-spin" /> : <Trash2 size={14} />}Delete kill</button>
+                  </>}
+                  {commentGroups.length > 0 && <button
+                    type="button"
+                    aria-expanded={commentsOpenId === award.id}
+                    onClick={() => setCommentsOpenId((current) => current === award.id ? '' : award.id)}
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3.5 py-2.5 text-xs font-semibold transition ${commentsOpenId === award.id ? 'border-cyan-200/30 bg-cyan-200/[.1] text-cyan-100' : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-200/25 hover:text-cyan-100'}`}
+                  ><MessageCircle size={14} /> Comments <span className="rounded-full bg-white/[.08] px-1.5 py-0.5 text-[10px] tabular-nums">{commentGroups.length}</span></button>}
+                </div>
               </div>
+              <div className="p-5 sm:p-6">
 
               {canManage && award.status === 'applied' && award.canModify !== true && (
                 <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-300/15 bg-amber-300/[.05] px-3.5 py-3 text-xs text-amber-100">
@@ -480,45 +500,39 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   </div>
                 </div>
               ) : (
-                <div className="mt-4 border-t border-slate-800 pt-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Participants · {award.participants.length}
-                  </p>
+                <div className="mt-1">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Raid roster</p>
+                    <span className="rounded-full border border-slate-700/80 bg-slate-900/70 px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-400">{award.participants.length} attendees</span>
+                  </div>
                   {award.participants.length === 0 ? (
-                    <p className="mt-2 text-sm text-slate-500">No toons currently receive this award.</p>
+                    <p className="rounded-xl border border-dashed border-slate-800 px-4 py-5 text-center text-xs text-slate-500">No toons currently receive this award.</p>
                   ) : (
-                    <p className="mt-2 text-sm text-slate-300">
-                      {award.participants.map((participant) => participant.account || participant.owner).join(', ')}
-                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {award.participants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`Owner: ${participant.owner}`} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/65 px-3 py-2 text-xs text-slate-200 shadow-sm shadow-black/10"><span className="h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300/80" /><span className="truncate">{participant.account || participant.owner}</span></span>)}
+                    </div>
                   )}
                 </div>
               )}
 
-              <section className="mt-4 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/35">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 px-4 py-3">
-                  <div className="flex items-center gap-2.5"><span className="rounded-lg border border-indigo-300/15 bg-indigo-300/[.08] p-1.5 text-indigo-200"><MessageSquareText size={14} /></span><div><h3 className="text-xs font-semibold text-slate-200">Attendance activity</h3><p className="mt-0.5 text-[10px] text-slate-500">Names added or removed, with author and reason</p></div></div>
-                  <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-300">{auditTrail.length} {auditTrail.length === 1 ? 'entry' : 'entries'}</span>
+              {commentsOpenId === award.id && commentGroups.length > 0 && <section className="mt-5 overflow-hidden rounded-2xl border border-cyan-200/15 bg-gradient-to-br from-cyan-950/25 via-slate-950/70 to-indigo-950/25 shadow-lg shadow-black/10">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-100/[.08] px-4 py-3.5">
+                  <div className="flex items-center gap-2.5"><span className="rounded-lg border border-cyan-100/15 bg-cyan-100/[.06] p-1.5 text-cyan-100"><MessageCircle size={14} /></span><div><h3 className="text-xs font-bold text-cyan-50">Kill comments</h3><p className="mt-0.5 text-[10px] text-slate-400">Attendance changes · {commentGroups.length} {commentGroups.length === 1 ? 'update' : 'updates'}</p></div></div>
+                  <button type="button" onClick={() => setCommentsOpenId('')} className="rounded-lg border border-slate-700/80 px-2.5 py-1.5 text-[10px] font-semibold text-slate-400 transition hover:border-slate-500 hover:text-white">Close</button>
                 </div>
-                {auditTrail.length === 0 ? <p className="px-4 py-3 text-xs text-slate-500">No name changes recorded for this older kill.</p> : <>
-                  <ol className="divide-y divide-slate-800/70 px-4">
-                    {recentAudit.map((event, index) => <li key={`${event.occurredAt}-${event.actor}-${index}`} className="flex gap-3 py-3">
-                      <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? 'border-rose-300/15 bg-rose-300/[.07] text-rose-200' : 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200'}`}>
-                        {event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? <UserMinus size={13} /> : <UserPlus size={13} />}
-                      </span>
-                      <div className="min-w-0 flex-1"><p className="text-xs leading-5 text-slate-300">{describeAuditEvent(event)}</p><time className="mt-1 block text-[10px] text-slate-500">{new Date(event.occurredAt).toLocaleString()}</time></div>
-                    </li>)}
-                  </ol>
-                  {olderAudit.length > 0 && <details className="group border-t border-slate-800/70 px-4 py-3">
-                    <summary className="cursor-pointer list-none text-[11px] font-semibold text-indigo-200 marker:hidden hover:text-indigo-100">View {olderAudit.length} earlier {olderAudit.length === 1 ? 'entry' : 'entries'} <span className="ml-1 text-slate-500 transition group-open:inline-block group-open:rotate-90">›</span></summary>
-                    <ol className="mt-2 divide-y divide-slate-800/70">
-                      {olderAudit.map((event, index) => <li key={`${event.occurredAt}-${event.actor}-older-${index}`} className="flex gap-3 py-3">
-                        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? 'border-rose-300/15 bg-rose-300/[.07] text-rose-200' : 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200'}`}>{event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? <UserMinus size={13} /> : <UserPlus size={13} />}</span>
-                        <div className="min-w-0 flex-1"><p className="text-xs leading-5 text-slate-300">{describeAuditEvent(event)}</p><time className="mt-1 block text-[10px] text-slate-500">{new Date(event.occurredAt).toLocaleString()}</time></div>
-                      </li>)}
-                    </ol>
-                  </details>}
-                </>}
-              </section>
+                <div className="space-y-3 p-3 sm:p-4">
+                  {commentGroups.map((comment) => <article key={comment.id} className="rounded-xl border border-white/[.06] bg-slate-950/50 p-3.5 sm:p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-slate-100">{comment.actor} <span className="font-normal text-slate-400">updated the roster</span></p>
+                      <time className="text-[10px] text-slate-500">{new Date(comment.occurredAt).toLocaleString()}</time>
+                    </div>
+                    {comment.deleted && <p className="mt-3 rounded-lg bg-rose-300/[.07] px-3 py-2 text-xs text-rose-100">The kill record was deleted.</p>}
+                    {comment.added.length > 0 && <div className="mt-3 flex flex-wrap items-start gap-2"><span className="inline-flex items-center gap-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-emerald-200"><UserPlus size={12} /> Added</span><div className="flex flex-wrap gap-1.5">{comment.added.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} className="rounded-lg border border-emerald-200/15 bg-emerald-200/[.06] px-2.5 py-1.5 text-[11px] font-medium text-emerald-50">{participant.account || participant.owner}</span>)}</div></div>}
+                    {comment.removed.length > 0 && <div className="mt-3 flex flex-wrap items-start gap-2"><span className="inline-flex items-center gap-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-rose-200"><UserMinus size={12} /> Removed</span><div className="flex flex-col gap-1.5">{comment.removed.map((entry, index) => <div key={`${comment.id}:removed:${index}`} className="flex flex-wrap items-center gap-1.5"><span className="rounded-lg border border-rose-200/15 bg-rose-200/[.06] px-2.5 py-1.5 text-[11px] font-medium text-rose-50">{entry.participant?.account || entry.participant?.owner || 'Toon'}</span><span className="text-[10px] text-slate-400">Reason: {entry.reason || 'not recorded'}</span></div>)}</div></div>}
+                  </article>)}
+                </div>
+              </section>}
+              </div>
             </article>
           );
         })}

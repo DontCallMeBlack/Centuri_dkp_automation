@@ -122,12 +122,6 @@ export async function POST(req: Request) {
           _id: awardId, requestId, requestFingerprint: fingerprint,
           bossName, points: BOSS_DKP_POINTS[bossName],
           participants: participants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account })),
-          auditTrail: participants.map((record) => ({
-            kind: 'participant_added',
-            participant: { rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account },
-            actor: user.nickname,
-            occurredAt: new Date(),
-          })),
           createdBy: user.nickname, status: 'pending',
           }], { session });
           return created;

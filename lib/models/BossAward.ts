@@ -8,6 +8,7 @@ export interface IBossAwardParticipant {
 
 export interface IBossAwardAuditEntry {
   kind: 'participant_added' | 'participant_removed' | 'kill_deleted';
+  changeId?: string;
   participant?: IBossAwardParticipant;
   reason?: 'underperforming' | 'afk' | 'not helping with boss mechanics' | "didn't attend" | 'other';
   actor: string;
@@ -50,6 +51,7 @@ const ParticipantSchema = new Schema<IBossAwardParticipant>({
 
 const AuditEntrySchema = new Schema<IBossAwardAuditEntry>({
   kind: { type: String, enum: ['participant_added', 'participant_removed', 'kill_deleted'], required: true },
+  changeId: { type: String },
   participant: { type: ParticipantSchema },
   reason: { type: String, enum: ['underperforming', 'afk', 'not helping with boss mechanics', "didn't attend", 'other'] },
   actor: { type: String, required: true },
