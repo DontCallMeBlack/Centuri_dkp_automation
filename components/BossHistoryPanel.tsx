@@ -37,7 +37,6 @@ interface BossAward {
   }>;
   selectedRows: number[];
   canModify?: boolean;
-  nextSundayReset?: string;
   createdBy: string;
   updatedBy?: string;
   status: 'pending' | 'applied' | 'failed' | 'updating';
@@ -149,21 +148,6 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       window.removeEventListener('centuri:dkp-changed', reloadForSessionChange);
     };
   }, [active, loadHistory]);
-  useEffect(() => {
-    if (!active) return;
-    const lockedResetTimes = awards
-      .filter((award) => award.status === 'applied' && award.canModify !== true && award.nextSundayReset)
-      .map((award) => Date.parse(award.nextSundayReset!))
-      .filter(Number.isFinite);
-    if (!lockedResetTimes.length) return;
-    const millisecondsUntilReset = Math.min(...lockedResetTimes) - Date.now();
-    const timeout = window.setTimeout(
-      () => { void loadHistory(); },
-      millisecondsUntilReset > 0 ? millisecondsUntilReset + 1_500 : 60_000,
-    );
-    return () => window.clearTimeout(timeout);
-  }, [active, awards, loadHistory]);
-
   const loadMoreHistory = async () => {
     if (!nextCursor || loadingMore || refreshing || historyPending.current) return;
     const sequence = ++historySequence.current;
@@ -207,7 +191,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     const normalizedRemovalReasons = sortRemovalReasons(reasonsForRemoval as Array<{owner: string; account: string; reason: BossAttendanceRemovalReason}>);
     if (
       removedParticipants.length > 0 &&
-      !window.confirm(`This removes ${removedParticipants.length} toon(s) and reverses ${award?.points ?? 0} DKP per toon in the award's original week. Continue?`)
+      !window.confirm(`Removing ${removedParticipants.length} toon(s) subtracts ${award?.points ?? 0} DKP per affected toon from this week's weekly earned. Participants no longer on the roster are skipped. Continue?`)
     ) {
       return;
     }
@@ -248,7 +232,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
   const deleteAward = async (award: BossAward) => {
     if (!window.confirm(
-      `Delete the ${award.bossName} kill? This removes ${award.points} DKP from each participant still on the roster. Removed toons are skipped because their DKP was already forfeited. This cannot be undone.`,
+      `Delete the ${award.bossName} kill? This week's award will be reversed by subtracting ${award.points} DKP from weekly earned for each participant still on the roster. Removed toons are skipped because their DKP was already forfeited. This cannot be undone.`,
     )) {
       return;
     }
@@ -336,7 +320,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       <div className="space-y-4">
         <div className="flex items-start gap-3 rounded-2xl border border-indigo-400/15 bg-gradient-to-r from-indigo-500/[.08] via-slate-900/60 to-violet-500/[.06] p-4">
           <span className="mt-0.5 rounded-xl border border-indigo-300/15 bg-indigo-400/10 p-2 text-indigo-200"><Clock3 size={16} /></span>
-          <div><p className="text-sm font-semibold text-slate-200">Attendance locks until the weekly Sunday reset</p><p className="mt-1 text-xs leading-5 text-slate-400">{canManage ? 'New kills stay locked for the rest of the week. After reset, managers can edit names; every addition and removal is logged, and removals need a reason.' : 'Only Chiefs, Generals, and Guardians can change records, and only after the weekly reset.'}</p></div>
+          <div><p className="text-sm font-semibold text-slate-200">This week’s kills stay editable until Sunday reset</p><p className="mt-1 text-xs leading-5 text-slate-400">{canManage ? 'Current-week attendance can be corrected anytime. At Sunday rollover, those records become read-only so a correction cannot alter DKP that has already moved into available and all-time earned. Every change is logged, and removals need a reason.' : 'Boss history is view-only. Managers can update this week’s records until the Sunday reset; previous weeks are locked.'}</p></div>
         </div>
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
@@ -355,9 +339,6 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const auditTrail = award.auditTrail ?? [];
           const recentAudit = auditTrail.slice(-3).reverse();
           const olderAudit = auditTrail.slice(0, -3).reverse();
-          const sundayResetLabel = award.nextSundayReset
-            ? new Date(award.nextSundayReset).toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-            : 'the next Sunday reset';
           return (
             <article key={award.id} className="surface p-5 sm:p-6">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -398,8 +379,8 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
               {canManage && award.status === 'applied' && award.canModify !== true && (
                 <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-300/15 bg-amber-300/[.05] px-3.5 py-3 text-xs text-amber-100">
-                  <Clock3 size={15} className="shrink-0 text-amber-300" />
-                  <span><strong className="font-semibold">Locked for this week.</strong> Changes open after {sundayResetLabel}.</span>
+                  <Shield size={15} className="shrink-0 text-amber-300" />
+                  <span><strong className="font-semibold">Previous-week record locked.</strong> It became read-only at the Sunday DKP reset to protect rolled-over balances.</span>
                 </div>
               )}
 
@@ -410,6 +391,10 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
               {canManage && isEditing ? (
                 <div className="mt-4">
+                  <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-300/15 bg-amber-300/[.045] px-3.5 py-3 text-xs leading-5 text-amber-100/90">
+                    <History size={14} className="mt-0.5 shrink-0 text-amber-300" />
+                    <p>This kill is in the current DKP week. Changes update <strong className="font-semibold text-amber-100">weekly earned</strong>; the audit trail records each name, author, and reason for removals.</p>
+                  </div>
                   <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
                     <span>Select who should receive this boss award; clear all to reverse it for everyone.</span>
                     <span>{selectedCount} selected</span>
