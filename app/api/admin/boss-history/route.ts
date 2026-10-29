@@ -87,29 +87,36 @@ export async function GET(request: Request) {
     const page = readHistoryPage(new URL(request.url));
     const [results, roster] = await Promise.all([
       BossAward.find({ status: { $ne: 'deleted' }, ...page }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean(),
-      canManage ? getSheetRoster() : Promise.resolve([]),
+      getSheetRoster(),
     ]);
     const now = new Date();
     const currentWeekStart = getCurrentDkpWeekStart(now);
     const awards = results.slice(0, HISTORY_PAGE_SIZE);
+    const decorateParticipant = (participant: IBossAwardParticipant) => ({
+      ...participant,
+      subClass: participant.subClass || roster.find((record) => getSheetRecordKey(record) === getSheetRecordKey(participant))?.subClass || '',
+    });
     const selectedRowsFor = (participants: IBossAwardParticipant[]) => participants.flatMap((participant) => {
       try { return [resolveParticipant(participant, roster).rowIndex]; } catch { return []; }
     });
     return NextResponse.json({
-      success: true, canManage, roster,
+      success: true, canManage, roster: canManage ? roster : [],
       nextCursor: results.length > HISTORY_PAGE_SIZE ? historyCursor(awards[awards.length - 1]) : null,
       awards: awards.map((award) => ({
         id: award._id.toString(), bossName: award.bossName, points: award.points,
-        participants: award.participants, status: award.status,
+        participants: award.participants.map(decorateParticipant), status: award.status,
         createdAt: award.createdAt, updatedAt: award.updatedAt,
         createdBy: award.createdBy, updatedBy: award.updatedBy,
         auditTrail: (award.auditTrail ?? []).filter((entry) => !(
           entry.kind === 'participant_added' &&
           entry.actor === award.createdBy &&
           entry.occurredAt.getTime() <= award.createdAt.getTime()
-        )),
+        )).map((entry) => ({
+          ...entry,
+          ...(entry.participant ? { participant: decorateParticipant(entry.participant) } : {}),
+        })),
         canModify: award.status === 'applied' && award.createdAt >= currentWeekStart,
-        selectedRows: selectedRowsFor(award.participants),
+        selectedRows: canManage ? selectedRowsFor(award.participants) : [],
         ...(canManage ? {
           failureReason: award.status === 'failed'
             ? 'This legacy award requires manager review before it can be changed.'
@@ -183,7 +190,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
           status: 'updating',
           pendingChange: {
             requestId, fingerprint, kind, updatedBy: user.nickname,
-            participants: nextParticipants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account })),
+            participants: nextParticipants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account, subClass: record!.subClass })),
             ...(kind === 'edit' ? { removalReasons } : {}),
           },
         },

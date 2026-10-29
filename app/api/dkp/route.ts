@@ -23,12 +23,21 @@ export async function GET(req: Request) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const fresh = new URL(req.url).searchParams.get('fresh') === '1' &&
       (canManageClan(user.role) || user.role === 'guardian');
-    const [rosterSnapshot, activeUsers] = await Promise.all([
+    const [rosterSnapshot, activeUsers, historicalBossAttendance] = await Promise.all([
       getSheetRosterSnapshot({ fresh }),
       User.find({ status: 'approved' })
         .select('nickname role sheetRecordName sheetRecords')
         .sort({ nickname: 1 })
         .lean(),
+      BossAward.aggregate<{ bossName: string; owner: string; account: string; count: number }>([
+        { $match: { status: 'applied' } },
+        { $unwind: '$participants' },
+        { $group: {
+          _id: { bossName: '$bossName', owner: '$participants.owner', account: '$participants.account' },
+          count: { $sum: 1 },
+        } },
+        { $project: { _id: 0, bossName: '$_id.bossName', owner: '$_id.owner', account: '$_id.account', count: 1 } },
+      ]).exec(),
     ]);
     const roster = rosterSnapshot.roster;
     const identities = roster.map(getSheetRecordKey);
@@ -52,6 +61,20 @@ export async function GET(req: Request) {
       return { ...record, subClass: getEffectiveToonRole(record.subClass, change, roleReadAt, approval) };
     });
     const recordsByRow = new Map(effectiveRoster.map((record) => [record.rowIndex, record]));
+    const rowByIdentity = new Map(effectiveRoster.map((record) => [getSheetRecordKey(record), record.rowIndex]));
+    const activityByBossAndRow = new Map<string, { bossName: string; rowIndex: number; count: number }>();
+    for (const historyEntry of historicalBossAttendance) {
+      const identity = getSheetRecordKey({ owner: String(historyEntry.owner ?? ''), account: String(historyEntry.account ?? '') });
+      const rowIndex = rowByIdentity.get(identity);
+      if (rowIndex === undefined || !Object.prototype.hasOwnProperty.call(BOSS_DKP_POINTS, historyEntry.bossName)) continue;
+      const key = JSON.stringify([historyEntry.bossName, rowIndex]);
+      const existing = activityByBossAndRow.get(key);
+      activityByBossAndRow.set(key, {
+        bossName: historyEntry.bossName,
+        rowIndex,
+        count: (existing?.count ?? 0) + historyEntry.count,
+      });
+    }
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
     const clanMembers = activeUsers.map((member) => ({
       nickname: member.nickname,
@@ -65,6 +88,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: true,
       roster: effectiveRoster,
+      bossActivity: [...activityByBossAndRow.values()],
       rosterSync: {
         fetchedAt: rosterSnapshot.fetchedAt.toISOString(),
         stale: rosterSnapshot.stale,
@@ -121,7 +145,7 @@ export async function POST(req: Request) {
           const [created] = await BossAward.create([{
           _id: awardId, requestId, requestFingerprint: fingerprint,
           bossName, points: BOSS_DKP_POINTS[bossName],
-          participants: participants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account })),
+          participants: participants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account, subClass: record!.subClass })),
           createdBy: user.nickname, status: 'pending',
           }], { session });
           return created;

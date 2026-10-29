@@ -4,6 +4,7 @@ export interface IBossAwardParticipant {
   rowIndex: number;
   owner: string;
   account: string;
+  subClass?: string;
 }
 
 export interface IBossAwardAuditEntry {
@@ -47,6 +48,7 @@ const ParticipantSchema = new Schema<IBossAwardParticipant>({
   rowIndex: { type: Number, required: true },
   owner: { type: String, required: true },
   account: { type: String, default: '' },
+  subClass: { type: String, default: '' },
 }, { _id: false });
 
 const AuditEntrySchema = new Schema<IBossAwardAuditEntry>({
