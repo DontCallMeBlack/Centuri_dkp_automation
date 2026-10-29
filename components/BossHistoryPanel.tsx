@@ -8,6 +8,7 @@ import BossIcon from '@/components/BossIcon';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
+import { groupBossAuditComments, type BossAuditEvent } from '@/lib/bossHistoryAudit';
 import { History, LoaderCircle, MessageCircle, Save, Search, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
@@ -31,14 +32,7 @@ interface BossAward {
   bossName: string;
   points: number;
   participants: RosterMember[];
-  auditTrail?: Array<{
-    kind: 'participant_added' | 'participant_removed' | 'kill_deleted';
-    changeId?: string;
-    participant?: RosterMember;
-    reason?: BossAttendanceRemovalReason;
-    actor: string;
-    occurredAt: string;
-  }>;
+  auditTrail?: BossAuditEvent[];
   selectedRows: number[];
   canModify?: boolean;
   createdBy: string;
@@ -73,37 +67,6 @@ function getRemovedParticipants(award: BossAward, nextRows: number[], roster: Ro
 function sortRemovalReasons(reasons: Array<{owner: string; account: string; reason: BossAttendanceRemovalReason}>) {
   return [...reasons].sort((left, right) =>
     participantKey(left).localeCompare(participantKey(right)) || left.reason.localeCompare(right.reason));
-}
-
-type BossAuditEvent = NonNullable<BossAward['auditTrail']>[number];
-
-interface AuditComment {
-  id: string;
-  actor: string;
-  occurredAt: string;
-  added: RosterMember[];
-  removed: Array<{participant?: RosterMember; reason?: BossAttendanceRemovalReason}>;
-  deletedParticipants: RosterMember[];
-  deleted: boolean;
-}
-
-function groupAuditComments(events: BossAuditEvent[]) {
-  const groups = new Map<string, AuditComment>();
-  for (const event of events) {
-    const id = event.changeId || `${event.actor}:${event.occurredAt}`;
-    let group = groups.get(id);
-    if (!group) {
-      group = { id, actor: event.actor, occurredAt: event.occurredAt, added: [], removed: [], deletedParticipants: [], deleted: false };
-      groups.set(id, group);
-    }
-    if (event.kind === 'participant_added' && event.participant) group.added.push(event.participant);
-    else if (event.kind === 'participant_removed') group.removed.push({ participant: event.participant, reason: event.reason });
-    else if (event.kind === 'kill_deleted') {
-      group.deleted = true;
-      if (event.participant) group.deletedParticipants.push(event.participant);
-    }
-  }
-  return [...groups.values()].reverse();
 }
 
 export default function BossHistoryPanel({ embedded = false, active = true }: { embedded?: boolean; active?: boolean }) {
@@ -386,7 +349,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const removedParticipants = isEditing ? getRemovedParticipants(award, editRows, roster) : [];
           const missingRemovalReason = removedParticipants.some((participant) => !removalReasons[award.id]?.[participantKey(participant)]);
           const auditTrail = award.auditTrail ?? [];
-          const commentGroups = groupAuditComments(auditTrail);
+          const commentGroups = groupBossAuditComments(auditTrail);
           const deletionEvent = [...auditTrail].reverse().find((event) => event.kind === 'kill_deleted');
           const rosterQuery = editRosterQuery.trim().toLocaleLowerCase();
           const filteredRoster = rosterQuery

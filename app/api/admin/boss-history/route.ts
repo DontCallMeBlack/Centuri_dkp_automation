@@ -13,6 +13,7 @@ import { getCurrentDkpWeekStart } from '@/lib/dkpCycle';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
+import { buildKillDeletedAuditEntries } from '@/lib/bossHistoryAudit';
 
 function canManageBossHistory(role: string) {
   return role === 'chief' || role === 'general' || role === 'guardian';
@@ -230,9 +231,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
     ];
     const auditAt = new Date();
     const auditEntries: IBossAwardAuditEntry[] = kind === 'delete'
-      ? (award!.participants.length > 0
-        ? award!.participants.map((participant) => ({ kind: 'kill_deleted' as const, changeId: requestId, participant, actor: pending.updatedBy, occurredAt: auditAt }))
-        : [{ kind: 'kill_deleted', changeId: requestId, actor: pending.updatedBy, occurredAt: auditAt }])
+      ? buildKillDeletedAuditEntries(award!.participants, requestId, pending.updatedBy, auditAt)
       : (() => {
         const previousKeys = new Set(award!.participants.map(getSheetRecordKey));
         const nextKeys = new Set(pending.participants.map(getSheetRecordKey));
