@@ -6,7 +6,8 @@ import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { Check, History, LoaderCircle, Save, Shield, Trash2, Users, X } from 'lucide-react';
+import { Check, Clock3, History, LoaderCircle, MessageSquareText, Save, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
 interface RosterMember {
   rowIndex: number;
@@ -18,11 +19,25 @@ interface BossAward {
   id: string;
   requestId?: string;
   originalSelectedRows: number[];
-  pendingChange?: {requestId: string; kind: 'edit' | 'delete'; selectedRows: number[]};
+  pendingChange?: {
+    requestId: string;
+    kind: 'edit' | 'delete';
+    selectedRows: number[];
+    removalReasons?: Array<{owner: string; account: string; reason: BossAttendanceRemovalReason}>;
+  };
   bossName: string;
   points: number;
   participants: RosterMember[];
+  auditTrail?: Array<{
+    kind: 'participant_added' | 'participant_removed' | 'kill_deleted';
+    participant?: RosterMember;
+    reason?: BossAttendanceRemovalReason;
+    actor: string;
+    occurredAt: string;
+  }>;
   selectedRows: number[];
+  canModify?: boolean;
+  nextSundayReset?: string;
   createdBy: string;
   updatedBy?: string;
   status: 'pending' | 'applied' | 'failed' | 'updating';
@@ -32,6 +47,29 @@ interface BossAward {
 
 interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMember[]; nextCursor?:string|null}
 
+function participantKey(participant: Pick<RosterMember, 'owner' | 'account'>) {
+  return JSON.stringify([participant.owner.trim().toLowerCase(), participant.account.trim().toLowerCase()]);
+}
+
+function getRemovedParticipants(award: BossAward, nextRows: number[], roster: RosterMember[]) {
+  const selectedKeys = new Set(roster
+    .filter((member) => nextRows.includes(member.rowIndex))
+    .map(participantKey));
+  return award.participants.filter((participant) => !selectedKeys.has(participantKey(participant)));
+}
+
+function sortRemovalReasons(reasons: Array<{owner: string; account: string; reason: BossAttendanceRemovalReason}>) {
+  return [...reasons].sort((left, right) =>
+    participantKey(left).localeCompare(participantKey(right)) || left.reason.localeCompare(right.reason));
+}
+
+function describeAuditEvent(event: NonNullable<BossAward['auditTrail']>[number]) {
+  const participantName = event.participant?.account || event.participant?.owner || 'A toon';
+  if (event.kind === 'participant_added') return <><strong className="text-slate-100">{participantName}</strong> was added by <strong className="text-indigo-200">{event.actor}</strong>.</>;
+  if (event.kind === 'participant_removed') return <><strong className="text-slate-100">{participantName}</strong> was removed by <strong className="text-indigo-200">{event.actor}</strong>{event.reason ? <> · {event.reason}</> : <> · reason not recorded for this older change</>}.</>;
+  return <><strong className="text-rose-200">The kill record</strong> was deleted by <strong className="text-indigo-200">{event.actor}</strong>.</>;
+}
+
 export default function BossHistoryPanel({ embedded = false, active = true }: { embedded?: boolean; active?: boolean }) {
   const user = useSessionUser();
   const initialHistory = peekData<HistoryData>('/api/admin/boss-history');
@@ -40,6 +78,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const [awards, setAwards] = useState<BossAward[]>(() => initialHistory?.awards ?? []);
   const [roster, setRoster] = useState<RosterMember[]>(() => initialHistory?.roster ?? []);
   const [selectedRows, setSelectedRows] = useState<Record<string, number[]>>(() => Object.fromEntries((initialHistory?.awards ?? []).map((award) => [award.id, award.selectedRows])));
+  const [removalReasons, setRemovalReasons] = useState<Record<string, Record<string, BossAttendanceRemovalReason | ''>>>({});
   const [editingId, setEditingId] = useState('');
   const editingRef = useRef('');
   editingRef.current = editingId;
@@ -54,7 +93,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const pageCount = useRef(1);
   const historySequence = useRef(0);
   const historyPending = useRef(0);
-  const initialLoadStarted = useRef(Boolean(initialHistory));
+  const initialLoadStarted = useRef(false);
   const router = useRouter();
 
   const applyData = useCallback((data:HistoryData) => {
@@ -91,7 +130,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   }, [applyData, router]);
   useEffect(() => {
     mountedRef.current=true;
-    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setEditingId(''); setCanManage(false); setLoading(true); };
+    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setRemovalReasons({}); setEditingId(''); setCanManage(false); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -104,8 +143,26 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     if (!active) return;
     const reloadForSessionChange = () => { initialLoadStarted.current = true; void loadHistory(); };
     window.addEventListener('centuri:session-updated', reloadForSessionChange);
-    return () => window.removeEventListener('centuri:session-updated', reloadForSessionChange);
+    window.addEventListener('centuri:dkp-changed', reloadForSessionChange);
+    return () => {
+      window.removeEventListener('centuri:session-updated', reloadForSessionChange);
+      window.removeEventListener('centuri:dkp-changed', reloadForSessionChange);
+    };
   }, [active, loadHistory]);
+  useEffect(() => {
+    if (!active) return;
+    const lockedResetTimes = awards
+      .filter((award) => award.status === 'applied' && award.canModify !== true && award.nextSundayReset)
+      .map((award) => Date.parse(award.nextSundayReset!))
+      .filter(Number.isFinite);
+    if (!lockedResetTimes.length) return;
+    const millisecondsUntilReset = Math.min(...lockedResetTimes) - Date.now();
+    const timeout = window.setTimeout(
+      () => { void loadHistory(); },
+      millisecondsUntilReset > 0 ? millisecondsUntilReset + 1_500 : 60_000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [active, awards, loadHistory]);
 
   const loadMoreHistory = async () => {
     if (!nextCursor || loadingMore || refreshing || historyPending.current) return;
@@ -136,17 +193,26 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
   const saveAttendance = async (awardId: string) => {
     const award = awards.find((entry) => entry.id === awardId);
-    const currentRows = new Set(award?.selectedRows ?? []);
     const nextRows = selectedRows[awardId] ?? [];
-    const removals = [...currentRows].filter((rowIndex) => !nextRows.includes(rowIndex)).length;
+    const removedParticipants = award ? getRemovedParticipants(award, nextRows, roster) : [];
+    const reasonsForRemoval = removedParticipants.map((participant) => ({
+      owner: participant.owner,
+      account: participant.account,
+      reason: removalReasons[awardId]?.[participantKey(participant)],
+    }));
+    if (reasonsForRemoval.some((entry) => !entry.reason)) {
+      setError('Choose a reason for every toon you are removing.');
+      return;
+    }
+    const normalizedRemovalReasons = sortRemovalReasons(reasonsForRemoval as Array<{owner: string; account: string; reason: BossAttendanceRemovalReason}>);
     if (
-      removals > 0 &&
-      !window.confirm(`This reverses ${award?.points ?? 0} DKP per removed toon in the award's original week. Continue?`)
+      removedParticipants.length > 0 &&
+      !window.confirm(`This removes ${removedParticipants.length} toon(s) and reverses ${award?.points ?? 0} DKP per toon in the award's original week. Continue?`)
     ) {
       return;
     }
 
-    const payloadKey = JSON.stringify({kind:'edit',awardId,selectedRows:[...(selectedRows[awardId] ?? [])].sort((a,b) => a-b)});
+    const payloadKey = JSON.stringify({kind:'edit',awardId,selectedRows:[...(selectedRows[awardId] ?? [])].sort((a,b) => a-b),removalReasons:normalizedRemovalReasons});
     const previousAwards = awards;
     const nextSelectedRows = selectedRows[awardId] ?? [];
     const nextParticipants = roster.filter((member) => nextSelectedRows.includes(member.rowIndex));
@@ -162,7 +228,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       const response = await fetch('/api/admin/boss-history', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ awardId, requestId, selectedRows: selectedRows[awardId] ?? [] }),
+        body: JSON.stringify({ awardId, requestId, selectedRows: selectedRows[awardId] ?? [], removalReasons: normalizedRemovalReasons }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to update boss attendance');
@@ -223,11 +289,23 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     try {
       const result = await readResponse<{message:string}>(await fetch(change ? '/api/admin/boss-history' : '/api/dkp', {
         method: change ? change.kind === 'delete' ? 'DELETE' : 'PATCH' : 'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(change ? {awardId:award.id,requestId:change.requestId,selectedRows:change.selectedRows} : {requestId:award.requestId,bossName:award.bossName,selectedRows:award.originalSelectedRows}),
+        body: JSON.stringify(change ? {
+          awardId:award.id,
+          requestId:change.requestId,
+          selectedRows:change.selectedRows,
+          ...(change.removalReasons !== undefined ? {removalReasons:sortRemovalReasons(change.removalReasons)} : {}),
+        } : {requestId:award.requestId,bossName:award.bossName,selectedRows:award.originalSelectedRows}),
       }));
       if (user?.id) {
         const payload = change
-          ? JSON.stringify(change.kind === 'delete' ? {kind:'delete',awardId:award.id} : {kind:'edit',awardId:award.id,selectedRows:[...change.selectedRows].sort((a,b)=>a-b)})
+          ? JSON.stringify(change.kind === 'delete'
+            ? {kind:'delete',awardId:award.id}
+            : {
+              kind:'edit',
+              awardId:award.id,
+              selectedRows:[...change.selectedRows].sort((a,b)=>a-b),
+              ...(change.removalReasons !== undefined ? {removalReasons:sortRemovalReasons(change.removalReasons)} : {}),
+            })
           : JSON.stringify({bossName:award.bossName,selectedRows:[...award.originalSelectedRows].sort((a,b)=>a-b)});
         await completeActionRequest(user.id, change ? 'boss-history' : 'boss-award', payload);
       }
@@ -254,13 +332,12 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
   return (
     <section className="space-y-5 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Review boss rewards and keep attendance accurate.' : 'Explore your clan boss kills and attendance.'}</p></div></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Every attendance change is recorded with its author and reason.' : 'Explore your clan boss kills and attendance.'}</p></div></div>
       <div className="space-y-4">
-        <p className="text-sm text-slate-400">
-          {canManage
-            ? 'Add or remove attendees to adjust the award. Deleting a kill reverses its DKP for every attendee.'
-            : 'Boss history is view-only. Only Chiefs, Generals, and Guardians can change records.'}
-        </p>
+        <div className="flex items-start gap-3 rounded-2xl border border-indigo-400/15 bg-gradient-to-r from-indigo-500/[.08] via-slate-900/60 to-violet-500/[.06] p-4">
+          <span className="mt-0.5 rounded-xl border border-indigo-300/15 bg-indigo-400/10 p-2 text-indigo-200"><Clock3 size={16} /></span>
+          <div><p className="text-sm font-semibold text-slate-200">Attendance locks until the weekly Sunday reset</p><p className="mt-1 text-xs leading-5 text-slate-400">{canManage ? 'New kills stay locked for the rest of the week. After reset, managers can edit names; every addition and removal is logged, and removals need a reason.' : 'Only Chiefs, Generals, and Guardians can change records, and only after the weekly reset.'}</p></div>
+        </div>
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
 
@@ -272,6 +349,15 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
         ) : awards.map((award) => {
           const isEditing = editingId === award.id;
           const selectedCount = selectedRows[award.id]?.length ?? 0;
+          const editRows = selectedRows[award.id] ?? [];
+          const removedParticipants = isEditing ? getRemovedParticipants(award, editRows, roster) : [];
+          const missingRemovalReason = removedParticipants.some((participant) => !removalReasons[award.id]?.[participantKey(participant)]);
+          const auditTrail = award.auditTrail ?? [];
+          const recentAudit = auditTrail.slice(-3).reverse();
+          const olderAudit = auditTrail.slice(0, -3).reverse();
+          const sundayResetLabel = award.nextSundayReset
+            ? new Date(award.nextSundayReset).toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+            : 'the next Sunday reset';
           return (
             <article key={award.id} className="surface p-5 sm:p-6">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -290,10 +376,10 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     {award.updatedBy ? ` · Last edited by ${award.updatedBy}` : ''}
                   </p>
                 </div>
-                {canManage && award.status === 'applied' && !isEditing && (
+                {canManage && award.status === 'applied' && !isEditing && award.canModify === true && (
                   <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => setEditingId(award.id)}
+                      onClick={() => { setRemovalReasons((current) => ({...current,[award.id]:{}})); setEditingId(award.id); }}
                       className="inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-500/40 px-3 py-2 text-sm font-semibold text-indigo-200 hover:bg-indigo-500/10"
                     >
                       <Users className="h-4 w-4" /> Edit toons
@@ -309,6 +395,13 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   </div>
                 )}
               </div>
+
+              {canManage && award.status === 'applied' && award.canModify !== true && (
+                <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-300/15 bg-amber-300/[.05] px-3.5 py-3 text-xs text-amber-100">
+                  <Clock3 size={15} className="shrink-0 text-amber-300" />
+                  <span><strong className="font-semibold">Locked for this week.</strong> Changes open after {sundayResetLabel}.</span>
+                </div>
+              )}
 
               {canManage && ((award.status === 'updating' && award.pendingChange) || (award.status === 'pending' && award.requestId && (award.createdBy === user?.nickname || ['chief','general'].includes(user?.role ?? '')))) && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3"><p className="text-xs text-amber-200">This operation needs to finish before this record can be changed.</p><button type="button" disabled={Boolean(busyId)} onClick={() => void resumeAward(award)} className="secondary-button">{busyId === award.id ? <LoaderCircle size={14} className="animate-spin" /> : <History size={14} />}Resume {award.pendingChange?.kind || 'award'}</button></div>}
               {award.status !== 'applied' && award.failureReason && (
@@ -351,6 +444,31 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     })}
                     {roster.length === 0 && <p className="px-2 py-3 text-sm text-slate-500">No roster records found.</p>}
                   </div>
+                  {removedParticipants.length > 0 && (
+                    <section className="mt-4 overflow-hidden rounded-2xl border border-rose-300/15 bg-gradient-to-br from-rose-500/[.08] via-slate-950/50 to-amber-400/[.04]">
+                      <div className="flex items-start gap-3 border-b border-rose-200/10 px-4 py-3.5">
+                        <span className="mt-0.5 rounded-lg border border-rose-300/15 bg-rose-300/10 p-1.5 text-rose-200"><UserMinus size={14} /></span>
+                        <div><p className="text-sm font-semibold text-rose-100">Why are these names being removed?</p><p className="mt-1 text-xs leading-5 text-slate-400">Choose one reason for every removed toon. The reason and manager will appear in this kill’s audit trail.</p></div>
+                      </div>
+                      <div className="space-y-2 p-3">
+                        {removedParticipants.map((participant) => {
+                          const key = participantKey(participant);
+                          return <label key={key} className="grid gap-2 rounded-xl border border-white/[.06] bg-slate-950/40 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,.8fr)] sm:items-center">
+                            <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-100">{participant.account || 'Unnamed toon'}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{participant.owner}</span></span>
+                            <select
+                              aria-label={`Reason for removing ${participant.account || participant.owner}`}
+                              value={removalReasons[award.id]?.[key] ?? ''}
+                              onChange={(event) => setRemovalReasons((current) => ({...current,[award.id]:{...current[award.id],[key]:event.target.value as BossAttendanceRemovalReason | ''}}))}
+                              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 outline-none transition focus:border-rose-300/60 focus:ring-2 focus:ring-rose-300/10"
+                            >
+                              <option value="">Select a reason…</option>
+                              {BOSS_ATTENDANCE_REMOVAL_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                            </select>
+                          </label>;
+                        })}
+                      </div>
+                    </section>
+                  )}
                   <div className="mt-3 flex justify-end gap-2">
                     <button
                       onClick={() => {
@@ -358,6 +476,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                           ...current,
                           [award.id]: award.selectedRows,
                         }));
+                        setRemovalReasons((current) => ({...current,[award.id]:{}}));
                         setEditingId('');
                       }}
                       disabled={busyId === award.id}
@@ -367,11 +486,11 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     </button>
                     <button
                       onClick={() => void saveAttendance(award.id)}
-                      disabled={busyId === award.id}
+                      disabled={busyId === award.id || missingRemovalReason}
                       className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
                     >
                       {busyId === award.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      {busyId === award.id ? 'Saving changes…' : 'Save changes'}
+                      {busyId === award.id ? 'Saving changes…' : missingRemovalReason ? 'Choose removal reasons' : 'Save changes'}
                     </button>
                   </div>
                 </div>
@@ -389,6 +508,32 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   )}
                 </div>
               )}
+
+              <section className="mt-4 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/35">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 px-4 py-3">
+                  <div className="flex items-center gap-2.5"><span className="rounded-lg border border-indigo-300/15 bg-indigo-300/[.08] p-1.5 text-indigo-200"><MessageSquareText size={14} /></span><div><h3 className="text-xs font-semibold text-slate-200">Attendance activity</h3><p className="mt-0.5 text-[10px] text-slate-500">Names added or removed, with author and reason</p></div></div>
+                  <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-300">{auditTrail.length} {auditTrail.length === 1 ? 'entry' : 'entries'}</span>
+                </div>
+                {auditTrail.length === 0 ? <p className="px-4 py-3 text-xs text-slate-500">No name changes recorded for this older kill.</p> : <>
+                  <ol className="divide-y divide-slate-800/70 px-4">
+                    {recentAudit.map((event, index) => <li key={`${event.occurredAt}-${event.actor}-${index}`} className="flex gap-3 py-3">
+                      <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? 'border-rose-300/15 bg-rose-300/[.07] text-rose-200' : 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200'}`}>
+                        {event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? <UserMinus size={13} /> : <UserPlus size={13} />}
+                      </span>
+                      <div className="min-w-0 flex-1"><p className="text-xs leading-5 text-slate-300">{describeAuditEvent(event)}</p><time className="mt-1 block text-[10px] text-slate-500">{new Date(event.occurredAt).toLocaleString()}</time></div>
+                    </li>)}
+                  </ol>
+                  {olderAudit.length > 0 && <details className="group border-t border-slate-800/70 px-4 py-3">
+                    <summary className="cursor-pointer list-none text-[11px] font-semibold text-indigo-200 marker:hidden hover:text-indigo-100">View {olderAudit.length} earlier {olderAudit.length === 1 ? 'entry' : 'entries'} <span className="ml-1 text-slate-500 transition group-open:inline-block group-open:rotate-90">›</span></summary>
+                    <ol className="mt-2 divide-y divide-slate-800/70">
+                      {olderAudit.map((event, index) => <li key={`${event.occurredAt}-${event.actor}-older-${index}`} className="flex gap-3 py-3">
+                        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border ${event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? 'border-rose-300/15 bg-rose-300/[.07] text-rose-200' : 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200'}`}>{event.kind === 'participant_removed' || event.kind === 'kill_deleted' ? <UserMinus size={13} /> : <UserPlus size={13} />}</span>
+                        <div className="min-w-0 flex-1"><p className="text-xs leading-5 text-slate-300">{describeAuditEvent(event)}</p><time className="mt-1 block text-[10px] text-slate-500">{new Date(event.occurredAt).toLocaleString()}</time></div>
+                      </li>)}
+                    </ol>
+                  </details>}
+                </>}
+              </section>
             </article>
           );
         })}

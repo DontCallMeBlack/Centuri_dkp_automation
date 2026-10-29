@@ -6,10 +6,19 @@ export interface IBossAwardParticipant {
   account: string;
 }
 
+export interface IBossAwardAuditEntry {
+  kind: 'participant_added' | 'participant_removed' | 'kill_deleted';
+  participant?: IBossAwardParticipant;
+  reason?: 'underperforming' | 'afk' | 'not helping with boss mechanics' | "didn't attend" | 'other';
+  actor: string;
+  occurredAt: Date;
+}
+
 export interface IBossAward extends Document {
   bossName: string;
   points: number;
   participants: IBossAwardParticipant[];
+  auditTrail?: IBossAwardAuditEntry[];
   createdBy: string;
   updatedBy?: string;
   requestId?: string;
@@ -20,6 +29,11 @@ export interface IBossAward extends Document {
     fingerprint: string;
     kind: 'edit' | 'delete';
     participants: IBossAwardParticipant[];
+    removalReasons?: Array<{
+      owner: string;
+      account: string;
+      reason: NonNullable<IBossAwardAuditEntry['reason']>;
+    }>;
     updatedBy: string;
   };
   status: 'pending' | 'applied' | 'failed' | 'updating' | 'deleted';
@@ -34,10 +48,19 @@ const ParticipantSchema = new Schema<IBossAwardParticipant>({
   account: { type: String, default: '' },
 }, { _id: false });
 
+const AuditEntrySchema = new Schema<IBossAwardAuditEntry>({
+  kind: { type: String, enum: ['participant_added', 'participant_removed', 'kill_deleted'], required: true },
+  participant: { type: ParticipantSchema },
+  reason: { type: String, enum: ['underperforming', 'afk', 'not helping with boss mechanics', "didn't attend", 'other'] },
+  actor: { type: String, required: true },
+  occurredAt: { type: Date, required: true },
+}, { _id: false });
+
 const BossAwardSchema: Schema<IBossAward> = new Schema({
   bossName: { type: String, required: true },
   points: { type: Number, required: true },
   participants: { type: [ParticipantSchema], default: [] },
+  auditTrail: { type: [AuditEntrySchema], default: [] },
   createdBy: { type: String, required: true },
   updatedBy: { type: String },
   requestId: { type: String },
