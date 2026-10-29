@@ -8,12 +8,12 @@ export default function BossIcon({ bossName, className = 'h-10 w-10' }: { bossNa
     : boss === 'prime'
       ? { glow: '#f4c95d', edge: '#ffebad', main: '#dba936', dark: '#8c5d1d', accent: '#fff0a8' }
       : boss === 'bt'
-        ? { glow: '#75e38d', edge: '#c1ff82', main: '#61c967', dark: '#27694e', accent: '#f5e978' }
+        ? { glow: '#e35658', edge: '#ffd1a4', main: '#bd4b48', dark: '#4b303b', accent: '#b7eb62' }
         : boss === 'gele'
-          ? { glow: '#b39aff', edge: '#e7d8ff', main: '#9574e8', dark: '#523d9c', accent: '#ffd17d' }
+          ? { glow: '#a78bfa', edge: '#e7ddff', main: '#8165c9', dark: '#352c63', accent: '#89f0cb' }
           : boss === 'dino'
             ? { glow: '#62d8ff', edge: '#c4f4ff', main: '#38a9e5', dark: '#20568e', accent: '#a7f1ff' }
-            : { glow: '#eea66b', edge: '#ffe0bb', main: '#986c60', dark: '#503d4a', accent: '#ffd092' };
+            : { glow: '#a78bfa', edge: '#e8e1ff', main: '#777b91', dark: '#252b3b', accent: '#c4b5fd' };
   const metal = `boss-metal-${id}`;
 
   return (
@@ -68,23 +68,27 @@ export default function BossIcon({ bossName, className = 'h-10 w-10' }: { bossNa
         </g>
       ) : boss === 'bt' ? (
         <g stroke="#12251d" strokeLinejoin="round" strokeWidth="2">
-          <path d="M31 49c-11-1-15-7-13-16 1-5 5-9 11-11-1-5 1-10 5-14 5 6 7 11 6 16 6 2 10 7 9 13-1 9-8 13-18 12Z" fill={`url(#${metal})`} />
-          <path d="M30 27c-7 0-11 4-11 9 0 4 4 7 12 7l2-7-3-9Z" fill="#d2ff9d" />
-          <path d="M34 27c8 0 12 4 12 9 0 4-4 7-12 7l-2-7 2-9Z" fill="#91e979" />
-          <path d="m21 32 4 3-3 1 4 3M43 32l-4 3 3 1-4 3" fill="none" stroke="#2d6b47" strokeLinecap="round" />
-          <path d="M31 43 26 51h12l-5-8" fill={colors.dark} />
-          <path d="m37 19 7-7-1 11" fill={colors.edge} />
-          <ellipse cx="48" cy="20" rx="4" ry="2.5" transform="rotate(-30 48 20)" fill={colors.accent} />
-          <path d="m45 18-4-4m5 5-1-6m2 6 4-4m-5 6 1 5" stroke="#ffe994" strokeLinecap="round" strokeWidth="1.5" />
+          <path d="M31 45c-1 5-4 8-9 12m13-12c3 5 6 8 10 11" fill="none" stroke="#356849" strokeLinecap="round" strokeWidth="3" />
+          <path d="M29 47c-10 1-16-2-20-8 9 0 16 1 23 5m4 3c10 0 16-3 20-9-9 0-16 2-22 6" fill="#579457" stroke="#b7eb62" strokeWidth="1.4" />
+          <path d="M31 47c-10-1-15-7-13-15l-7-3 10-2c0-10 7-16 15-14 9 2 13 10 10 18l8 3-10 3c-1 8-6 11-13 10Z" fill={`url(#${metal})`} />
+          <path d="m24 22-5-7 11 4m7-5 4-7 2 11" fill="#579457" />
+          <path d="M20 29c4-6 19-8 25-1l-3 8c-6 6-15 6-21 0l-1-7Z" fill="#321f2d" stroke="#ffd1a4" />
+          <path d="M22 30c5-4 16-5 22-1m-21 9c5 4 15 4 20 0" fill="none" stroke="#e35658" strokeWidth="2.5" />
+          <path d="m24 30 2 4 2-4 2 4 2-4 2 4 2-4 2 4 2-4 2 3" fill="#f3e6c8" stroke="#4b303b" strokeWidth="1" />
+          <path d="m29 39 2-3 2 3 2-3 2 3" fill="#f3e6c8" stroke="#4b303b" strokeWidth="1" />
+          <path d="m16 22-4-3m7-3-1-5m28 13 5-3m-7-7 2-5m-28 29-6 3m32-1 6 3" fill="none" stroke="#b7eb62" strokeLinecap="round" />
+          <ellipse cx="51" cy="16" rx="3.5" ry="2.2" transform="rotate(-25 51 16)" fill="#f5d56e" stroke="#352e28" />
+          <path d="m49 15-4-4m5 5-1-6m2 6 4-4m-5 6 2 4" fill="none" stroke="#ffe7a1" strokeLinecap="round" strokeWidth="1.3" />
         </g>
       ) : boss === 'crom' ? (
         <g stroke="#19212c" strokeLinejoin="round" strokeWidth="2">
-          <path d="m27 19 5-6 6 5-2 8h-8l-1-7Z" fill={`url(#${metal})`} />
-          <path d="m28 27 9-1 4 14-5 3-1-9-3 19-5-1 2-17-5 8-4-3 8-13Z" fill={colors.dark} />
-          <path d="m24 34-9 7 3 3 10-6M38 34l9 6-2 4-10-6M29 51l-4 8M37 52l6 7" fill="none" stroke={colors.edge} strokeLinecap="round" />
-          <path d="M15 27c6-5 8 7 14 2s6-10 11-7 2 12 9 12" fill="none" stroke={colors.accent} strokeLinecap="round" strokeWidth="3" />
-          <path d="m18 25-2 4m7-1-2 4m14-8-2 4m13 3-2 4" stroke="#fff0cb" strokeLinecap="round" strokeWidth="1.2" />
-          <path d="m26 20-4-2 4-3m15 13 5 2-4 3" fill="none" stroke={colors.main} strokeLinecap="round" />
+          <path d="m28 17 4-6 5 5-1 9-7 1-1-9Z" fill={`url(#${metal})`} />
+          <path d="m28 26 9-1 3 13-4 4-2-8-1 19-5 1-1-18-4 9-4-3 6-16Z" fill={colors.dark} />
+          <path d="m25 33-10 9 3 3 11-7m10-5 9 9-3 4-10-8M29 52l-4 7m9-7 4 7" fill="none" stroke={colors.edge} strokeLinecap="round" />
+          <path d="M17 23c6-7 8 6 15 2s5-11 10-9 3 12 9 15M16 34c7-6 9 6 16 2s6-10 11-8 3 10 8 13" fill="none" stroke={colors.accent} strokeLinecap="round" strokeWidth="2.8" />
+          <path d="m19 22-2 4m7-2-2 4m12-3-2 4m12 3-2 4m-25 3-2 4m13-2-2 4m13-4-2 4m11-2-2 4" fill="none" stroke="#f5f0ff" strokeLinecap="round" strokeWidth="1.1" />
+          <path d="m27 19-4-3 4-3m15 13 5 2-4 4" fill="none" stroke={colors.main} strokeLinecap="round" />
+          <path d="M29 18h6m-6 4h6m-6 4h7" stroke="#172030" strokeLinecap="round" strokeWidth="1" />
         </g>
       ) : (
         <g stroke="#263347" strokeLinejoin="round" strokeWidth="2">

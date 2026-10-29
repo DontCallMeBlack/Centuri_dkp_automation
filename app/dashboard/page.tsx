@@ -415,7 +415,7 @@ function Dashboard() {
               {awardError && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-200">{awardError}</p>}
               <div className="grid gap-3 border-b border-slate-800 px-5 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)] sm:px-6">
                 <label className="block text-[10px] font-bold uppercase tracking-[.14em] text-slate-400">
-                  <span className="mb-1.5 flex items-center gap-2"><BossIcon bossName={selectedBoss} className="h-8 w-8" /> Boss defeated</span>
+                  <span className="mb-1.5 flex items-center gap-2"><BossIcon bossName={selectedBoss} className="h-9 w-9" /> Boss defeated</span>
                   <select
                     value={selectedBoss}
                     onChange={(event) => setSelectedBoss(event.target.value)}
@@ -463,7 +463,7 @@ function Dashboard() {
                 <section aria-label={`Top ten ${selectedBoss} attendees`} className="mb-2 rounded-xl border border-violet-300/15 bg-gradient-to-br from-violet-950/35 via-slate-900/75 to-slate-950/70 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <BossIcon bossName={selectedBoss} className="h-8 w-8 shrink-0" />
+                      <BossIcon bossName={selectedBoss} className="h-10 w-10 shrink-0" />
                       <div className="min-w-0">
                         <h4 className="text-xs font-bold text-white">{selectedBoss} hall of fame</h4>
                         <p className="mt-0.5 text-[10px] text-slate-500">Top 10 by recorded appearances</p>
