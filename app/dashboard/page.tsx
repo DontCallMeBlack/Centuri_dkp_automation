@@ -484,7 +484,7 @@ function Dashboard() {
                   {pickerRefreshing ? (
                     <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-400">Updating raid history…</p>
                   ) : bossSuggestions.length > 0 ? (
-                    <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                    <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-3 2xl:grid-cols-4">
                       {bossSuggestions.map(({ toon, count }, index) => {
                         const selected = selectedMembers.includes(toon.rowIndex);
                         const rankStyle = index === 0
@@ -502,15 +502,15 @@ function Dashboard() {
                             disabled={pickerRefreshing}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => toggleMemberSelection(toon.rowIndex)}
-                            title={`${toon.account || toon.owner} · ${toon.owner} · ${count} recorded ${selectedBoss} appearances`}
-                            className={`group relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/45 bg-emerald-300/[.08]' : 'border-slate-800/90 bg-slate-950/45 hover:border-violet-300/30 hover:bg-slate-900'}`}
+                            title={`${toon.account || toon.owner} · ${toon.owner}`}
+                            className={`group relative flex min-h-11 min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/45 bg-emerald-300/[.08]' : 'border-slate-800/90 bg-slate-950/45 hover:border-violet-300/30 hover:bg-slate-900'}`}
                           >
                             <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[9px] font-black ${rankStyle}`}>{index + 1}</span>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[11px] font-semibold text-white">{toon.account || toon.owner}</span>
+                              <span className="block truncate text-[11px] font-bold leading-tight text-white">{toon.account || toon.owner}</span>
+                              {toon.account && toon.owner.toLocaleLowerCase() !== toon.account.toLocaleLowerCase() && <span className="mt-0.5 block truncate text-[9px] leading-tight text-slate-500">{toon.owner}</span>}
                             </span>
                             <RoleBadge role={toon.subClass} gameClass compact />
-                            <span className="shrink-0 text-[10px] font-bold tabular-nums text-slate-300">{count}×</span>
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-700 text-slate-600'}`}>{selected ? '✓' : '+'}</span>
                             <span className="absolute inset-x-0 bottom-0 h-[2px] bg-slate-800/80"><span className={`block h-full ${index === 0 ? 'bg-gradient-to-r from-amber-300 to-yellow-100' : 'bg-gradient-to-r from-violet-500 to-cyan-300'}`} style={{ width: `${Math.max(8, Math.round(count / highestBossActivity * 100))}%` }} /></span>
                           </button>
