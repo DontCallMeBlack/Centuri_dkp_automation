@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
-import BossAward, { type IBossAwardParticipant } from '@/lib/models/BossAward';
+import BossAward, { type IBossAwardAuditEntry, type IBossAwardParticipant } from '@/lib/models/BossAward';
 import { getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import User from '@/lib/models/User';
@@ -8,7 +8,8 @@ import RosterMutation from '@/lib/models/RosterMutation';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { adjustPlayersDKP, getSheetRoster, isDkpMutationApplied } from '@/lib/googleSheets';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
-import { getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
+import { getBossRequestFingerprint, isBossAttendanceRemovalReason, isDkpRequestId, isRosterRowArray, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
+import { getCurrentDkpWeekStart, getNextDkpWeekStart } from '@/lib/dkpCycle';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
@@ -34,6 +35,50 @@ function resolveHistoricalParticipant(participant: IBossAwardParticipant, roster
   return record;
 }
 
+function validateRemovalReasons(
+  value: unknown,
+  previousParticipants: IBossAwardParticipant[],
+  nextParticipants: Array<{ owner: string; account: string }>,
+) {
+  const nextKeys = new Set(nextParticipants.map(getSheetRecordKey));
+  const removed = previousParticipants.filter((participant) => !nextKeys.has(getSheetRecordKey(participant)));
+  const expectedByKey = new Map(removed.map((participant) => [getSheetRecordKey(participant), participant]));
+
+  if (expectedByKey.size !== removed.length) {
+    throw new DkpIntegrityError('This award has duplicate toon identities. Reconcile the record before changing attendance.');
+  }
+  if (removed.length === 0 && value === undefined) return [];
+  if (!Array.isArray(value) || value.length !== removed.length) {
+    throw new RequestValidationError('Choose a reason for every toon being removed from this kill.', 400);
+  }
+
+  const reasonByKey = new Map<string, BossAttendanceRemovalReason>();
+  for (const entry of value) {
+    if (typeof entry !== 'object' || entry === null || !('owner' in entry) || !('account' in entry) || !('reason' in entry)) {
+      throw new RequestValidationError('Each removal needs a toon and a valid reason.', 400);
+    }
+    const candidate = entry as { owner: unknown; account: unknown; reason: unknown };
+    if (typeof candidate.owner !== 'string' || typeof candidate.account !== 'string' || !isBossAttendanceRemovalReason(candidate.reason)) {
+      throw new RequestValidationError('Each removal needs a toon and a valid reason.', 400);
+    }
+    const key = getSheetRecordKey({ owner: candidate.owner, account: candidate.account });
+    if (!expectedByKey.has(key) || reasonByKey.has(key)) {
+      throw new RequestValidationError('Removal reasons must match each removed toon exactly once.', 400);
+    }
+    reasonByKey.set(key, candidate.reason);
+  }
+
+  if (reasonByKey.size !== expectedByKey.size) {
+    throw new RequestValidationError('Choose a reason for every toon being removed from this kill.', 400);
+  }
+
+  return removed.map((participant) => ({
+    owner: participant.owner,
+    account: participant.account,
+    reason: reasonByKey.get(getSheetRecordKey(participant)) as NonNullable<IBossAwardAuditEntry['reason']>,
+  }));
+}
+
 export async function GET(request: Request) {
   try {
     const user = await getSessionUser();
@@ -44,6 +89,9 @@ export async function GET(request: Request) {
       BossAward.find({ status: { $ne: 'deleted' }, ...page }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean(),
       canManage ? getSheetRoster() : Promise.resolve([]),
     ]);
+    const now = new Date();
+    const currentWeekStart = getCurrentDkpWeekStart(now);
+    const nextSundayReset = getNextDkpWeekStart(now);
     const awards = results.slice(0, HISTORY_PAGE_SIZE);
     const selectedRowsFor = (participants: IBossAwardParticipant[]) => participants.flatMap((participant) => {
       try { return [resolveParticipant(participant, roster).rowIndex]; } catch { return []; }
@@ -56,6 +104,9 @@ export async function GET(request: Request) {
         participants: award.participants, status: award.status,
         createdAt: award.createdAt, updatedAt: award.updatedAt,
         createdBy: award.createdBy, updatedBy: award.updatedBy,
+        auditTrail: award.auditTrail ?? [],
+        canModify: award.status === 'applied' && award.createdAt < currentWeekStart,
+        nextSundayReset,
         selectedRows: selectedRowsFor(award.participants),
         ...(canManage ? {
           failureReason: award.status === 'failed'
@@ -67,6 +118,7 @@ export async function GET(request: Request) {
             requestId: award.pendingChange.requestId,
             kind: award.pendingChange.kind,
             selectedRows: award.pendingChange.participants.map((participant) => participant.rowIndex),
+            removalReasons: award.pendingChange.removalReasons,
           } : undefined,
         } : {}),
       })),
@@ -104,23 +156,33 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
     }
 
     if (award.status === 'applied') {
+      const weeklyResetStart = getCurrentDkpWeekStart();
+      if (award.createdAt >= weeklyResetStart) {
+        return NextResponse.json({
+          error: 'Attendance changes are locked until the next Sunday DKP reset.',
+        }, { status: 409 });
+      }
       const roster = await getSheetRoster({ fresh: true });
       const rosterByRow = new Map(roster.map((record) => [record.rowIndex, record]));
       const nextParticipants = selectedRows.map((rowIndex) => rosterByRow.get(rowIndex));
       if (nextParticipants.some((record) => record === undefined)) {
         return NextResponse.json({ error: 'One or more selected roster records no longer exist.' }, { status: 400 });
       }
+      const removalReasons = kind === 'edit'
+        ? validateRemovalReasons(body.removalReasons, award.participants, nextParticipants as Array<{ owner: string; account: string }>)
+        : [];
       const claimed = await withClanAdministrationTransaction(async (session) => {
         const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
         if (!actor) throw new RequestValidationError('Your role no longer permits attendance changes.', 403);
         const keys = nextParticipants.filter((record) => record !== undefined).map((record) => getSheetRecordKey(record!));
         if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: keys } }).session(session)) throw new RequestValidationError('This kill includes a permanently removed toon. Its forfeited DKP cannot be changed through old attendance records.', 409);
-        return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied' }, {
+        return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied', createdAt: { $lt: weeklyResetStart } }, {
         $set: {
           status: 'updating',
           pendingChange: {
             requestId, fingerprint, kind, updatedBy: user.nickname,
             participants: nextParticipants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account })),
+            ...(kind === 'edit' ? { removalReasons } : {}),
           },
         },
         }, { new: true, session });
@@ -147,6 +209,28 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
       ...[...next].filter(([identity]) => !previous.has(identity)).map(([, record]) => ({ ...record, points: award!.points })),
       ...[...previous].filter(([identity]) => !next.has(identity)).map(([, record]) => ({ ...record, points: -award!.points })),
     ];
+    const auditAt = new Date();
+    const auditEntries: IBossAwardAuditEntry[] = kind === 'delete'
+      ? [{ kind: 'kill_deleted', actor: pending.updatedBy, occurredAt: auditAt }]
+      : (() => {
+        const previousKeys = new Set(award!.participants.map(getSheetRecordKey));
+        const nextKeys = new Set(pending.participants.map(getSheetRecordKey));
+        const reasonByKey = new Map((pending.removalReasons ?? []).map((entry) => [getSheetRecordKey(entry), entry.reason]));
+        return [
+          ...pending.participants
+            .filter((participant) => !previousKeys.has(getSheetRecordKey(participant)))
+            .map((participant) => ({ kind: 'participant_added' as const, participant, actor: pending.updatedBy, occurredAt: auditAt })),
+          ...award!.participants
+            .filter((participant) => !nextKeys.has(getSheetRecordKey(participant)))
+            .map((participant) => ({
+              kind: 'participant_removed' as const,
+              participant,
+              ...(reasonByKey.has(getSheetRecordKey(participant)) ? { reason: reasonByKey.get(getSheetRecordKey(participant))! } : {}),
+              actor: pending.updatedBy,
+              occurredAt: auditAt,
+            })),
+        ];
+      })();
     const adjustmentCount = adjustments.length;
     let financialOperationApplied = await isDkpMutationApplied(operationKey);
     if (!financialOperationApplied) {
@@ -162,7 +246,10 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
         participants: kind === 'delete' ? [] : pending.participants,
         status: kind === 'delete' ? 'deleted' : 'applied', updatedBy: pending.updatedBy,
       },
-      $push: { completedRequests: { requestId, fingerprint } },
+      $push: {
+        completedRequests: { requestId, fingerprint },
+        ...(auditEntries.length ? { auditTrail: { $each: auditEntries } } : {}),
+      },
       $unset: { pendingChange: 1, failureReason: 1 },
     }, { session });
     if (financialOperationApplied) {

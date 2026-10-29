@@ -174,6 +174,22 @@ export function getCurrentDkpWeekStart(now = new Date()) {
   );
 }
 
+export function getNextDkpWeekStart(now = new Date()) {
+  const currentWeekStart = getCurrentDkpWeekStart(now);
+  const localParts = getZonedParts(currentWeekStart);
+  const nextWeekLocalDate = new Date(Date.UTC(
+    localParts.year,
+    localParts.month - 1,
+    localParts.day + 7,
+  ));
+
+  return zonedMidnightToUtc(
+    nextWeekLocalDate.getUTCFullYear(),
+    nextWeekLocalDate.getUTCMonth() + 1,
+    nextWeekLocalDate.getUTCDate(),
+  );
+}
+
 /** Calendar weeks, including 167/169-hour weeks at daylight saving changes. */
 export function getDkpElapsedWeeks(start: Date, end: Date) {
   const first = getZonedParts(getCurrentDkpWeekStart(start));
