@@ -385,7 +385,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
               <div className={`h-0.5 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
               <div className="flex flex-col justify-between gap-3 border-b border-slate-800/80 bg-slate-900/45 px-4 py-3 sm:flex-row sm:items-center sm:px-4">
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <BossIcon bossName={award.bossName} className="h-10 w-10 shrink-0" />
+                  <BossIcon bossName={award.bossName} className="h-12 w-12 shrink-0" />
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <h2 className="text-sm font-bold tracking-tight text-white">{award.bossName}</h2>
