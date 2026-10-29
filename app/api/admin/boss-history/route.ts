@@ -230,7 +230,9 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
     ];
     const auditAt = new Date();
     const auditEntries: IBossAwardAuditEntry[] = kind === 'delete'
-      ? [{ kind: 'kill_deleted', changeId: requestId, actor: pending.updatedBy, occurredAt: auditAt }]
+      ? (award!.participants.length > 0
+        ? award!.participants.map((participant) => ({ kind: 'kill_deleted' as const, changeId: requestId, participant, actor: pending.updatedBy, occurredAt: auditAt }))
+        : [{ kind: 'kill_deleted', changeId: requestId, actor: pending.updatedBy, occurredAt: auditAt }])
       : (() => {
         const previousKeys = new Set(award!.participants.map(getSheetRecordKey));
         const nextKeys = new Set(pending.participants.map(getSheetRecordKey));
