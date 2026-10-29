@@ -9,7 +9,7 @@ import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { adjustPlayersDKP, getSheetRoster, isDkpMutationApplied } from '@/lib/googleSheets';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { getBossRequestFingerprint, isBossAttendanceRemovalReason, isDkpRequestId, isRosterRowArray, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
-import { getCurrentDkpWeekStart, getNextDkpWeekStart } from '@/lib/dkpCycle';
+import { getCurrentDkpWeekStart } from '@/lib/dkpCycle';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
@@ -91,7 +91,6 @@ export async function GET(request: Request) {
     ]);
     const now = new Date();
     const currentWeekStart = getCurrentDkpWeekStart(now);
-    const nextSundayReset = getNextDkpWeekStart(now);
     const awards = results.slice(0, HISTORY_PAGE_SIZE);
     const selectedRowsFor = (participants: IBossAwardParticipant[]) => participants.flatMap((participant) => {
       try { return [resolveParticipant(participant, roster).rowIndex]; } catch { return []; }
@@ -105,8 +104,7 @@ export async function GET(request: Request) {
         createdAt: award.createdAt, updatedAt: award.updatedAt,
         createdBy: award.createdBy, updatedBy: award.updatedBy,
         auditTrail: award.auditTrail ?? [],
-        canModify: award.status === 'applied' && award.createdAt < currentWeekStart,
-        nextSundayReset,
+        canModify: award.status === 'applied' && award.createdAt >= currentWeekStart,
         selectedRows: selectedRowsFor(award.participants),
         ...(canManage ? {
           failureReason: award.status === 'failed'
@@ -157,9 +155,9 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
 
     if (award.status === 'applied') {
       const weeklyResetStart = getCurrentDkpWeekStart();
-      if (award.createdAt >= weeklyResetStart) {
+      if (award.createdAt < weeklyResetStart) {
         return NextResponse.json({
-          error: 'Attendance changes are locked until the next Sunday DKP reset.',
+          error: 'This kill is from a previous week and is locked after the Sunday DKP reset.',
         }, { status: 409 });
       }
       const roster = await getSheetRoster({ fresh: true });
@@ -176,7 +174,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
         if (!actor) throw new RequestValidationError('Your role no longer permits attendance changes.', 403);
         const keys = nextParticipants.filter((record) => record !== undefined).map((record) => getSheetRecordKey(record!));
         if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: keys } }).session(session)) throw new RequestValidationError('This kill includes a permanently removed toon. Its forfeited DKP cannot be changed through old attendance records.', 409);
-        return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied', createdAt: { $lt: weeklyResetStart } }, {
+        return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied', createdAt: { $gte: weeklyResetStart } }, {
         $set: {
           status: 'updating',
           pendingChange: {
