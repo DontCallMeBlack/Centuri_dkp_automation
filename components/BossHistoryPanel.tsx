@@ -8,7 +8,7 @@ import BossIcon from '@/components/BossIcon';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { History, LoaderCircle, MessageCircle, Save, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { History, LoaderCircle, MessageCircle, Save, Search, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
 interface RosterMember {
@@ -43,7 +43,7 @@ interface BossAward {
   canModify?: boolean;
   createdBy: string;
   updatedBy?: string;
-  status: 'pending' | 'applied' | 'failed' | 'updating';
+  status: 'pending' | 'applied' | 'failed' | 'updating' | 'deleted';
   failureReason?: string;
   createdAt: string;
 }
@@ -112,6 +112,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const [selectedRows, setSelectedRows] = useState<Record<string, number[]>>(() => Object.fromEntries((initialHistory?.awards ?? []).map((award) => [award.id, award.selectedRows])));
   const [removalReasons, setRemovalReasons] = useState<Record<string, Record<string, BossAttendanceRemovalReason | ''>>>({});
   const [editingId, setEditingId] = useState('');
+  const [editRosterQuery, setEditRosterQuery] = useState('');
   const [commentsOpenId, setCommentsOpenId] = useState('');
   const editingRef = useRef('');
   editingRef.current = editingId;
@@ -163,7 +164,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   }, [applyData, router]);
   useEffect(() => {
     mountedRef.current=true;
-    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setRemovalReasons({}); setEditingId(''); setCommentsOpenId(''); setCanManage(false); setLoading(true); };
+    const clear = () => { initialLoadStarted.current = false; historySequence.current += 1; historyPending.current = 0; pageCount.current = 1; setNextCursor(null); setLoadingMore(false); setRefreshing(false); setAwards([]); setRoster([]); setSelectedRows({}); setRemovalReasons({}); setEditingId(''); setEditRosterQuery(''); setCommentsOpenId(''); setCanManage(false); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mountedRef.current=false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -253,6 +254,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       await completeActionRequest(user.id, 'boss-history', payloadKey);
       setNotice(data.message);
       setEditingId(''); editingRef.current='';
+      setEditRosterQuery('');
       notifyDkpChanged();
     } catch (saveError) {
       setAwards(previousAwards);
@@ -290,6 +292,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
       await completeActionRequest(user.id, 'boss-history', payloadKey);
       setNotice(data.message);
       setEditingId(''); editingRef.current='';
+      setEditRosterQuery('');
       notifyDkpChanged();
     } catch (deleteError) {
       setAwards(previousAwards);
@@ -380,6 +383,11 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const missingRemovalReason = removedParticipants.some((participant) => !removalReasons[award.id]?.[participantKey(participant)]);
           const auditTrail = award.auditTrail ?? [];
           const commentGroups = groupAuditComments(auditTrail);
+          const deletionEvent = [...auditTrail].reverse().find((event) => event.kind === 'kill_deleted');
+          const rosterQuery = editRosterQuery.trim().toLocaleLowerCase();
+          const filteredRoster = rosterQuery
+            ? roster.filter((record) => [record.account, record.owner, record.subClass].some((value) => value?.toLocaleLowerCase().includes(rosterQuery)))
+            : roster;
           return (
             <article key={award.id} className="surface relative overflow-hidden p-0">
               <div className={`h-0.5 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
@@ -389,16 +397,17 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <h2 className="text-sm font-bold tracking-tight text-white">{award.bossName}</h2>
-                      <span className="rounded-md bg-emerald-300/[.08] px-1.5 py-0.5 text-[10px] font-bold text-emerald-200">+{award.points}</span>
-                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[.1em] ${award.status === 'applied' ? award.canModify ? 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300' : 'border-amber-300/15 bg-amber-300/[.06] text-amber-200'}`}>{award.status === 'applied' ? award.canModify ? 'Current' : 'Archive' : award.status}</span>
+                      <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${award.status === 'deleted' ? 'bg-rose-300/[.08] text-rose-200' : 'bg-emerald-300/[.08] text-emerald-200'}`}>{award.status === 'deleted' ? `${award.points} reversed` : `+${award.points}`}</span>
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[.1em] ${award.status === 'deleted' ? 'border-rose-300/20 bg-rose-300/[.08] text-rose-200' : award.status === 'applied' ? award.canModify ? 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300' : 'border-amber-300/15 bg-amber-300/[.06] text-amber-200'}`}>{award.status === 'deleted' ? 'Deleted' : award.status === 'applied' ? award.canModify ? 'Current' : 'Archive' : award.status}</span>
                     </div>
                     <p className="mt-1 truncate text-[10px] text-slate-500">{new Date(award.createdAt).toLocaleString()} <span className="text-slate-700">·</span> {award.createdBy}</p>
+                    {deletionEvent && <p className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-rose-200"><Trash2 size={11} />Deleted by {deletionEvent.actor} <span className="font-normal text-rose-200/55">· {new Date(deletionEvent.occurredAt).toLocaleString()}</span></p>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
                   {canManage && award.status === 'applied' && !isEditing && award.canModify === true && <>
                     <button
-                      onClick={() => { setRemovalReasons((current) => ({...current,[award.id]:{}})); setEditingId(award.id); }}
+                      onClick={() => { setRemovalReasons((current) => ({...current,[award.id]:{}})); setEditRosterQuery(''); setEditingId(award.id); }}
                       className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-indigo-300/20 bg-indigo-300/[.06] px-2.5 text-[11px] font-semibold text-indigo-100 transition hover:border-indigo-200/35 hover:bg-indigo-300/[.12]"
                     ><Users size={13} /> Edit</button>
                     <button
@@ -428,8 +437,20 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     <span>Select attendees</span>
                     <span>{selectedCount} selected</span>
                   </div>
+                  <label className="relative mb-2 block">
+                    <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="search"
+                      value={editRosterQuery}
+                      onChange={(event) => setEditRosterQuery(event.target.value)}
+                      placeholder="Search toon, owner, or subrole"
+                      aria-label="Search attendees"
+                      autoComplete="off"
+                      className="h-9 w-full rounded-lg border border-slate-800 bg-slate-950/60 pl-9 pr-3 text-xs text-slate-100 outline-none placeholder:text-slate-600 transition focus:border-indigo-300/40 focus:ring-2 focus:ring-indigo-300/[.08]"
+                    />
+                  </label>
                   <div className="boss-history-roster-scroll grid max-h-60 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border border-slate-800 p-1.5 sm:grid-cols-2">
-                    {roster.map((record) => {
+                    {filteredRoster.map((record) => {
                       const isSelected = (selectedRows[award.id] ?? []).includes(record.rowIndex);
                       return (
                         <label
@@ -455,6 +476,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                       );
                     })}
                     {roster.length === 0 && <p className="px-2 py-3 text-sm text-slate-500">No roster records found.</p>}
+                    {roster.length > 0 && filteredRoster.length === 0 && <p className="col-span-full px-2 py-3 text-sm text-slate-500">No toons match: {editRosterQuery}</p>}
                   </div>
                   {removedParticipants.length > 0 && (
                     <section className="mt-4 overflow-hidden rounded-2xl border border-rose-300/15 bg-gradient-to-br from-rose-500/[.08] via-slate-950/50 to-amber-400/[.04]">
@@ -490,6 +512,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                         }));
                         setRemovalReasons((current) => ({...current,[award.id]:{}}));
                         setEditingId('');
+                        setEditRosterQuery('');
                       }}
                       disabled={busyId === award.id}
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
@@ -530,7 +553,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                 <div className="space-y-2 p-2.5">
                   {commentGroups.map((comment) => <article key={comment.id} className="rounded-lg border border-white/[.06] bg-slate-950/50 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-100">{comment.actor} <span className="font-normal text-slate-400">updated the roster</span></p>
+                      <p className="text-xs font-semibold text-slate-100">{comment.actor} <span className="font-normal text-slate-400">{comment.deleted ? 'deleted this kill' : 'updated the roster'}</span></p>
                       <time className="text-[10px] text-slate-500">{new Date(comment.occurredAt).toLocaleString()}</time>
                     </div>
                     {comment.deleted && <p className="mt-3 rounded-lg bg-rose-300/[.07] px-3 py-2 text-xs text-rose-100">The kill record was deleted.</p>}

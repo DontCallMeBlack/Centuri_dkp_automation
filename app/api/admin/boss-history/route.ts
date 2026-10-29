@@ -86,7 +86,17 @@ export async function GET(request: Request) {
     const canManage = canManageBossHistory(user.role);
     const page = readHistoryPage(new URL(request.url));
     const [results, roster] = await Promise.all([
-      BossAward.find({ status: { $ne: 'deleted' }, ...page }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean(),
+      BossAward.find({
+        $and: [
+          {
+            $or: [
+              { status: { $ne: 'deleted' } },
+              { status: 'deleted', auditTrail: { $elemMatch: { kind: 'kill_deleted' } } },
+            ],
+          },
+          page,
+        ],
+      }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean(),
       getSheetRoster(),
     ]);
     const now = new Date();
