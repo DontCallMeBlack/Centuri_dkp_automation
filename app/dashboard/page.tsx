@@ -5,6 +5,7 @@ import { Suspense, useCallback, useState, useEffect, useRef, useDeferredValue } 
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import RoleBadge from '@/components/RoleBadge';
+import BossIcon from '@/components/BossIcon';
 import Dialog from '@/components/Dialog';
 import LoadingSurface from '@/components/LoadingSurface';
 import { useSessionUser } from '@/components/AppShell';
@@ -14,7 +15,7 @@ import type { ReadableRosterRecord } from '@/lib/sheetRoster';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Users, Zap, X, Swords, Sparkles, TrendingUp } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Users, Zap, X, Swords } from 'lucide-react';
 const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Every kill. Every contribution." /> });
 const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Find your next upgrade." /> });
 const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Great loot starts here." /> });
@@ -389,13 +390,13 @@ function Dashboard() {
 
       {pickerOpen && (
         <Dialog labelledBy="award-picker-title" busy={submitting} onClose={() => setPickerOpen(false)}>
-            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950 via-slate-900 to-violet-950 p-5 sm:p-6">
+            <div className="relative shrink-0 overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950/80 via-slate-900 to-violet-950/80 px-4 py-3.5 sm:px-5">
               <div className="pointer-events-none absolute -right-8 -top-16 h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl" />
               <div className="relative flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-300">Raid operations</p>
-                  <h2 id="award-picker-title" className="mt-1 break-words text-lg font-black leading-tight text-white sm:text-2xl">Choose boss &amp; participants</h2>
-                  <p className="mt-2 text-sm leading-snug text-slate-400">Search every toon in the sheet and select everyone who attended.</p>
+                  <p className="text-[9px] font-bold uppercase tracking-[.18em] text-indigo-300">Raid operations</p>
+                  <h2 id="award-picker-title" className="mt-0.5 break-words text-lg font-black leading-tight text-white">Record a boss kill</h2>
+                  <p className="mt-1 text-xs leading-snug text-slate-400">Choose the boss and its attendees.</p>
                 </div>
                 <button
                   type="button"
@@ -411,13 +412,13 @@ function Dashboard() {
 
             <form onSubmit={handleDkpSubmit} className="flex min-h-0 flex-1 flex-col"><fieldset disabled={submitting} className="contents"><legend className="sr-only">Boss and participants</legend>
               {awardError && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-200">{awardError}</p>}
-              <div className="grid gap-4 border-b border-slate-800 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] sm:p-6">
-                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Boss defeated
+              <div className="grid gap-3 border-b border-slate-800 px-5 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)] sm:px-6">
+                <label className="block text-[10px] font-bold uppercase tracking-[.14em] text-slate-400">
+                  <span className="mb-1.5 flex items-center gap-2"><BossIcon bossName={selectedBoss} className="h-8 w-8" /> Boss defeated</span>
                   <select
                     value={selectedBoss}
                     onChange={(event) => setSelectedBoss(event.target.value)}
-                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm font-semibold normal-case text-white outline-none focus:border-indigo-400"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold normal-case text-white outline-none focus:border-indigo-400"
                   >
                     {BOSSES.map((boss) => (
                       <option key={boss.name} value={boss.name}>
@@ -426,24 +427,23 @@ function Dashboard() {
                     ))}
                   </select>
                 </label>
-                <div className="flex items-center justify-between rounded-xl border border-indigo-400/20 bg-indigo-500/10 px-4 py-3">
+                <div className="flex items-center justify-between rounded-lg border border-emerald-300/15 bg-emerald-300/[.04] px-3 py-2">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">Raid reward</p>
-                    <p className="mt-1 text-sm text-slate-300">{selectedBoss} attendance award</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Attendance reward</p>
+                    <p className="mt-0.5 text-[11px] text-slate-300">{selectedBoss}</p>
                   </div>
-                  <p className="text-2xl font-black text-emerald-300">
+                  <p className="text-lg font-black text-emerald-300">
                     +{BOSSES.find((boss) => boss.name === selectedBoss)?.points ?? 0}
                   </p>
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col p-5 sm:p-6">
+              <div className="flex min-h-0 flex-1 flex-col p-4 sm:p-5">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <h3 className="font-bold text-white">All sheet toons</h3>
-                    <p className="mt-1 text-xs text-slate-500">{selectedMembers.length} selected · select any toon that attended</p>
+                    <h3 className="text-sm font-bold text-white">Attendees <span className="ml-1.5 text-xs font-medium text-slate-500">{selectedMembers.length} selected</span></h3>
                   </div>
-                  <span className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-semibold text-slate-300">
+                  <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold text-slate-300">
                     {roster.length} toons
                   </span>
                 </div>
@@ -455,20 +455,17 @@ function Dashboard() {
                     placeholder="Search owner, toon, or class..."
                     value={pickerQuery}
                     onChange={(event) => setPickerQuery(event.target.value)}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-white placeholder:text-slate-600 outline-none focus:border-indigo-400"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-white placeholder:text-slate-600 outline-none focus:border-indigo-400"
                   />
                 </div>
 
-                <section aria-label={`${selectedBoss} attendance suggestions`} className="relative mb-3 overflow-hidden rounded-2xl border border-violet-300/20 bg-[radial-gradient(ellipse_at_top_right,rgba(139,92,246,0.2),transparent_48%),linear-gradient(120deg,rgba(30,27,75,0.78),rgba(15,23,42,0.9))] p-3.5 shadow-lg shadow-violet-950/20 sm:p-4">
-                  <div className="pointer-events-none absolute -right-8 -top-12 h-32 w-32 rounded-full bg-fuchsia-400/10 blur-3xl" />
-                  <div className="relative flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-300/20 bg-violet-300/10 text-violet-200">
-                        <Sparkles className="h-4 w-4" />
-                      </span>
+                <section aria-label={`${selectedBoss} attendance suggestions`} className="mb-2 rounded-xl border border-slate-800 bg-slate-900/55 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <BossIcon bossName={selectedBoss} className="h-8 w-8 shrink-0" />
                       <div className="min-w-0">
-                        <h4 className="flex items-center gap-1.5 text-sm font-bold text-white"><TrendingUp className="h-3.5 w-3.5 text-emerald-300" /> {selectedBoss} regulars</h4>
-                        <p className="mt-0.5 text-[11px] text-slate-400">Most recorded appearances on this boss</p>
+                        <h4 className="text-xs font-bold text-white">{selectedBoss} regulars</h4>
+                        <p className="mt-0.5 text-[10px] text-slate-500">Most appearances on this boss</p>
                       </div>
                     </div>
                     {bossSuggestions.length > 0 && (
@@ -477,16 +474,16 @@ function Dashboard() {
                         disabled={pickerRefreshing}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => setSelectedMembers((previous) => [...new Set([...previous, ...bossSuggestions.map(({ toon }) => toon.rowIndex)])])}
-                        className="rounded-lg border border-violet-200/20 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-bold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-300/10 disabled:opacity-50"
+                        className="rounded-md border border-violet-300/20 bg-violet-300/[.06] px-2 py-1 text-[10px] font-bold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-300/10 disabled:opacity-50"
                       >
                         Add top {bossSuggestions.length}
                       </button>
                     )}
                   </div>
                   {pickerRefreshing ? (
-                    <p className="relative mt-3 rounded-xl border border-white/[0.06] bg-slate-950/30 px-3 py-3 text-xs text-slate-400">Updating raid history…</p>
+                    <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-400">Updating raid history…</p>
                   ) : bossSuggestions.length > 0 ? (
-                    <div className="relative mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                       {bossSuggestions.map(({ toon, count }, index) => {
                         const selected = selectedMembers.includes(toon.rowIndex);
                         return (
@@ -497,34 +494,33 @@ function Dashboard() {
                             disabled={pickerRefreshing}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => toggleMemberSelection(toon.rowIndex)}
-                            className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left transition ${selected ? 'border-emerald-300/45 bg-emerald-300/10' : 'border-white/[0.07] bg-slate-950/35 hover:border-violet-200/30 hover:bg-white/[0.07]'}`}
+                            className={`flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/40 bg-emerald-300/[.08]' : 'border-slate-800 bg-slate-950/35 hover:border-slate-600 hover:bg-slate-800/70'}`}
                           >
-                            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-black ${index === 0 ? 'bg-amber-300/15 text-amber-200' : 'bg-violet-300/10 text-violet-200'}`}>{index + 1}</span>
+                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-black ${index === 0 ? 'bg-amber-300/15 text-amber-200' : 'bg-slate-800 text-slate-400'}`}>{index + 1}</span>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-xs font-bold text-white">{toon.account || toon.owner}</span>
-                              <span className="mt-0.5 block truncate text-[10px] text-slate-500">{toon.owner}</span>
+                              <span className="block truncate text-[11px] font-semibold text-white">{toon.account || toon.owner}</span>
                             </span>
                             <RoleBadge role={toon.subClass} gameClass compact />
-                            <span className="shrink-0 rounded-full border border-white/[0.08] bg-black/20 px-2 py-1 text-[10px] font-semibold tabular-nums text-slate-300">{count} {count === 1 ? 'kill' : 'kills'}</span>
-                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-600 text-slate-500'}`}>{selected ? '✓' : '+'}</span>
+                            <span className="shrink-0 text-[10px] font-semibold tabular-nums text-slate-500" title={`${count} recorded ${selectedBoss} appearances`}>{count}×</span>
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-600 text-slate-500'}`}>{selected ? '✓' : '+'}</span>
                           </button>
                         );
                       })}
                     </div>
                   ) : (
-                    <p className="relative mt-3 rounded-xl border border-white/[0.06] bg-slate-950/30 px-3 py-3 text-xs text-slate-400">No recorded {selectedBoss} attendance yet. The regulars will rise as kills are logged.</p>
+                    <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-500">No recorded {selectedBoss} attendance yet.</p>
                   )}
                 </section>
 
-                <div aria-live="polite" className="boss-picker-scroll mb-3 flex h-16 shrink-0 flex-wrap content-start gap-2 overflow-y-auto rounded-xl border border-slate-800/80 bg-slate-950/35 p-2">
+                <div aria-live="polite" className="boss-picker-scroll mb-2 flex h-10 shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-lg border border-slate-800/80 bg-slate-950/35 px-2">
                   {selectedMembers.length > 0 ? roster.filter((toon) => selectedMembers.includes(toon.rowIndex)).map((toon) => (
-                    <span key={toon.rowIndex} className="h-fit rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200">
+                    <span key={toon.rowIndex} className="shrink-0 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-medium text-indigo-200">
                       {toon.account || toon.owner}
                     </span>
-                  )) : <p className="self-center px-1 text-xs text-slate-500">Selected attendees will appear here.</p>}
+                  )) : <p className="px-1 text-[10px] text-slate-500">Selected attendees</p>}
                 </div>
 
-                <div className="boss-picker-scroll grid max-h-[35dvh] min-h-0 flex-1 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                <div className="boss-picker-scroll grid max-h-[31dvh] min-h-0 flex-1 grid-cols-1 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
                   {filteredRoster.map((toon) => {
                     const selected = selectedMembers.includes(toon.rowIndex);
                     return (
@@ -535,17 +531,18 @@ function Dashboard() {
                         disabled={pickerRefreshing}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => toggleMemberSelection(toon.rowIndex)}
-                        className={`flex items-center justify-between gap-3 rounded-xl border p-3 text-left transition disabled:cursor-wait disabled:opacity-60 ${
+                        className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left transition disabled:cursor-wait disabled:opacity-60 ${
                           selected
                             ? 'border-indigo-400/60 bg-indigo-500/15 shadow-lg shadow-indigo-950/30'
                             : 'border-slate-800 bg-slate-900/60 hover:border-slate-600 hover:bg-slate-800/80'
                         }`}
                       >
                         <span className="min-w-0">
-                          <span className="block truncate font-semibold text-white">{toon.account || toon.owner}</span>
-                          <span className="mt-1 block truncate text-xs text-slate-500">{toon.owner} · {toon.subClass || 'Class not listed'}</span>
+                          <span className="block truncate text-xs font-semibold text-white">{toon.account || toon.owner}</span>
+                          <span className="mt-0.5 block truncate text-[10px] text-slate-500">{toon.owner}</span>
                         </span>
-                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                        <span className="shrink-0"><RoleBadge role={toon.subClass} gameClass compact /></span>
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
                           selected ? 'border-indigo-300 bg-indigo-400 text-slate-950' : 'border-slate-700 text-slate-500'
                         }`}>
                           {selected ? '✓' : '+'}
@@ -559,19 +556,19 @@ function Dashboard() {
                 </div>
               </div>
 
-              <div className="flex flex-col-reverse gap-2 border-t border-slate-800 bg-slate-950/70 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <div className="flex flex-col-reverse gap-1.5 border-t border-slate-800 bg-slate-950/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <button
                   type="button"
                   onClick={() => setPickerOpen(false)}
                   disabled={submitting}
-                  className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                  className="h-8 rounded-lg border border-slate-700 px-3 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting || selectedMembers.length === 0}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-3.5 text-xs font-bold text-white shadow-md shadow-indigo-950/30 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? <Zap className="h-4 w-4 animate-pulse" /> : <Plus className="h-4 w-4" />}
                   {submitting ? 'Recording kill...' : `Record kill · ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
