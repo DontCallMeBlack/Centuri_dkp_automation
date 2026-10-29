@@ -103,7 +103,11 @@ export async function GET(request: Request) {
         participants: award.participants, status: award.status,
         createdAt: award.createdAt, updatedAt: award.updatedAt,
         createdBy: award.createdBy, updatedBy: award.updatedBy,
-        auditTrail: award.auditTrail ?? [],
+        auditTrail: (award.auditTrail ?? []).filter((entry) => !(
+          entry.kind === 'participant_added' &&
+          entry.actor === award.createdBy &&
+          entry.occurredAt.getTime() <= award.createdAt.getTime()
+        )),
         canModify: award.status === 'applied' && award.createdAt >= currentWeekStart,
         selectedRows: selectedRowsFor(award.participants),
         ...(canManage ? {
@@ -209,7 +213,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
     ];
     const auditAt = new Date();
     const auditEntries: IBossAwardAuditEntry[] = kind === 'delete'
-      ? [{ kind: 'kill_deleted', actor: pending.updatedBy, occurredAt: auditAt }]
+      ? [{ kind: 'kill_deleted', changeId: requestId, actor: pending.updatedBy, occurredAt: auditAt }]
       : (() => {
         const previousKeys = new Set(award!.participants.map(getSheetRecordKey));
         const nextKeys = new Set(pending.participants.map(getSheetRecordKey));
@@ -217,11 +221,12 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
         return [
           ...pending.participants
             .filter((participant) => !previousKeys.has(getSheetRecordKey(participant)))
-            .map((participant) => ({ kind: 'participant_added' as const, participant, actor: pending.updatedBy, occurredAt: auditAt })),
+            .map((participant) => ({ kind: 'participant_added' as const, changeId: requestId, participant, actor: pending.updatedBy, occurredAt: auditAt })),
           ...award!.participants
             .filter((participant) => !nextKeys.has(getSheetRecordKey(participant)))
             .map((participant) => ({
               kind: 'participant_removed' as const,
+              changeId: requestId,
               participant,
               ...(reasonByKey.has(getSheetRecordKey(participant)) ? { reason: reasonByKey.get(getSheetRecordKey(participant))! } : {}),
               actor: pending.updatedBy,
