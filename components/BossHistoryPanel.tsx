@@ -4,10 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import LoadingSurface from '@/components/LoadingSurface';
 import RoleBadge from '@/components/RoleBadge';
+import BossIcon from '@/components/BossIcon';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { Check, Clock3, History, LoaderCircle, MessageCircle, Save, Shield, Swords, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { Check, History, LoaderCircle, MessageCircle, Save, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
 interface RosterMember {
@@ -48,6 +49,15 @@ interface BossAward {
 }
 
 interface HistoryData {canManage:boolean; awards:BossAward[]; roster:RosterMember[]; nextCursor?:string|null}
+
+const BOSS_ACCENTS: Record<string, string> = {
+  Base: 'from-slate-200 via-slate-400 to-slate-700',
+  Prime: 'from-yellow-200 via-amber-400 to-orange-700',
+  Bt: 'from-lime-300 via-green-400 to-emerald-800',
+  Gele: 'from-violet-200 via-purple-400 to-indigo-800',
+  Dino: 'from-cyan-200 via-sky-400 to-blue-800',
+  Crom: 'from-orange-200 via-amber-500 to-stone-800',
+};
 
 function participantKey(participant: Pick<RosterMember, 'owner' | 'account'>) {
   return JSON.stringify([participant.owner.trim().toLowerCase(), participant.account.trim().toLowerCase()]);
@@ -340,12 +350,8 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
 
   return (
     <section className="space-y-5 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The raid record</p><h1 className="page-title">Every kill. Every contribution.</h1><p className="page-description">{canManage ? 'Every attendance change is recorded with its author and reason.' : 'Explore your clan boss kills and attendance.'}</p></div></div>
-      <div className="space-y-4">
-        <div className="flex items-start gap-3 rounded-2xl border border-indigo-400/15 bg-gradient-to-r from-indigo-500/[.08] via-slate-900/60 to-violet-500/[.06] p-4">
-          <span className="mt-0.5 rounded-xl border border-indigo-300/15 bg-indigo-400/10 p-2 text-indigo-200"><Clock3 size={16} /></span>
-          <div><p className="text-sm font-semibold text-slate-200">Current week · previous weeks archived</p>{canManage && <p className="mt-1 text-xs leading-5 text-slate-400">Edit this week’s attendance anytime. Changes leave a comment; removals need a reason.</p>}</div>
-        </div>
+      <div><h1 className="page-title">Boss history</h1><p className="page-description">{canManage ? 'Kills, attendance changes, and comments.' : 'Boss kills and attendance.'}</p></div>
+      <div className="space-y-3">
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
 
@@ -364,63 +370,59 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const commentGroups = groupAuditComments(auditTrail);
           return (
             <article key={award.id} className="surface relative overflow-hidden p-0">
-              <div className="h-1 bg-gradient-to-r from-indigo-400 via-violet-400 to-cyan-300" />
-              <div className="flex flex-col justify-between gap-4 border-b border-slate-800/80 bg-gradient-to-r from-indigo-950/45 via-slate-900/70 to-violet-950/35 px-5 py-5 sm:flex-row sm:items-center sm:px-6">
-                <div className="flex min-w-0 items-center gap-3.5">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-indigo-200/15 bg-indigo-300/[.08] text-indigo-200 shadow-inner shadow-indigo-300/[.06]"><Swords size={19} /></span>
+              <div className={`h-0.5 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
+              <div className="flex flex-col justify-between gap-3 border-b border-slate-800/80 bg-slate-900/45 px-4 py-3 sm:flex-row sm:items-center sm:px-4">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <BossIcon bossName={award.bossName} className="h-10 w-10 shrink-0" />
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <h2 className="text-lg font-bold tracking-tight text-white">{award.bossName}</h2>
-                      <span className="rounded-full border border-emerald-300/15 bg-emerald-300/[.07] px-2.5 py-1 text-[11px] font-bold text-emerald-200">+{award.points} DKP</span>
-                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[.12em] ${award.status === 'applied' ? award.canModify ? 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300' : 'border-amber-300/15 bg-amber-300/[.06] text-amber-200'}`}>{award.status === 'applied' ? award.canModify ? 'This week' : 'Archive' : award.status}</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <h2 className="text-sm font-bold tracking-tight text-white">{award.bossName}</h2>
+                      <span className="rounded-md bg-emerald-300/[.08] px-1.5 py-0.5 text-[10px] font-bold text-emerald-200">+{award.points}</span>
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[.1em] ${award.status === 'applied' ? award.canModify ? 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300' : 'border-amber-300/15 bg-amber-300/[.06] text-amber-200'}`}>{award.status === 'applied' ? award.canModify ? 'Current' : 'Archive' : award.status}</span>
                     </div>
-                    <p className="mt-1.5 truncate text-[11px] text-slate-400">{new Date(award.createdAt).toLocaleString()} <span className="text-slate-600">·</span> Recorded by <span className="font-semibold text-slate-300">{award.createdBy}</span></p>
+                    <p className="mt-1 truncate text-[10px] text-slate-500">{new Date(award.createdAt).toLocaleString()} <span className="text-slate-700">·</span> {award.createdBy}</p>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
                   {canManage && award.status === 'applied' && !isEditing && award.canModify === true && <>
                     <button
                       onClick={() => { setRemovalReasons((current) => ({...current,[award.id]:{}})); setEditingId(award.id); }}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-300/20 bg-indigo-300/[.07] px-3.5 py-2.5 text-xs font-semibold text-indigo-100 transition hover:border-indigo-200/35 hover:bg-indigo-300/[.12]"
-                    ><Users size={14} /> Edit roster</button>
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-indigo-300/20 bg-indigo-300/[.06] px-2.5 text-[11px] font-semibold text-indigo-100 transition hover:border-indigo-200/35 hover:bg-indigo-300/[.12]"
+                    ><Users size={13} /> Edit</button>
                     <button
                       onClick={() => void deleteAward(award)}
                       disabled={busyId === award.id}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300/15 px-3.5 py-2.5 text-xs font-semibold text-rose-200 transition hover:border-rose-300/30 hover:bg-rose-300/[.07] disabled:opacity-50"
-                    >{busyId === award.id ? <LoaderCircle size={14} className="animate-spin" /> : <Trash2 size={14} />}Delete kill</button>
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-rose-300/15 px-2.5 text-[11px] font-semibold text-rose-200 transition hover:border-rose-300/30 hover:bg-rose-300/[.07] disabled:opacity-50"
+                    >{busyId === award.id ? <LoaderCircle size={13} className="animate-spin" /> : <Trash2 size={13} />}Delete</button>
                   </>}
                   {commentGroups.length > 0 && <button
                     type="button"
                     aria-expanded={commentsOpenId === award.id}
                     onClick={() => setCommentsOpenId((current) => current === award.id ? '' : award.id)}
-                    className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3.5 py-2.5 text-xs font-semibold transition ${commentsOpenId === award.id ? 'border-cyan-200/30 bg-cyan-200/[.1] text-cyan-100' : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-200/25 hover:text-cyan-100'}`}
-                  ><MessageCircle size={14} /> Comments <span className="rounded-full bg-white/[.08] px-1.5 py-0.5 text-[10px] tabular-nums">{commentGroups.length}</span></button>}
+                    className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold transition ${commentsOpenId === award.id ? 'border-cyan-200/30 bg-cyan-200/[.1] text-cyan-100' : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-cyan-200/25 hover:text-cyan-100'}`}
+                  ><MessageCircle size={13} /> Comments <span className="rounded-full bg-white/[.08] px-1.5 py-0.5 text-[9px] tabular-nums">{commentGroups.length}</span></button>}
                 </div>
               </div>
-              <div className="p-5 sm:p-6">
+              <div className="p-3.5 sm:p-4">
 
-              {canManage && ((award.status === 'updating' && award.pendingChange) || (award.status === 'pending' && award.requestId && (award.createdBy === user?.nickname || ['chief','general'].includes(user?.role ?? '')))) && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-3"><p className="text-xs text-amber-200">This operation needs to finish before this record can be changed.</p><button type="button" disabled={Boolean(busyId)} onClick={() => void resumeAward(award)} className="secondary-button">{busyId === award.id ? <LoaderCircle size={14} className="animate-spin" /> : <History size={14} />}Resume {award.pendingChange?.kind || 'award'}</button></div>}
+              {canManage && ((award.status === 'updating' && award.pendingChange) || (award.status === 'pending' && award.requestId && (award.createdBy === user?.nickname || ['chief','general'].includes(user?.role ?? '')))) && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-400/20 bg-amber-400/[.04] px-3 py-2"><p className="text-[11px] text-amber-200">Finish the pending operation to edit this record.</p><button type="button" disabled={Boolean(busyId)} onClick={() => void resumeAward(award)} className="secondary-button px-2.5 py-1.5 text-[11px]">{busyId === award.id ? <LoaderCircle size={13} className="animate-spin" /> : <History size={13} />}Resume</button></div>}
               {award.status !== 'applied' && award.failureReason && (
                 <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-200">{award.failureReason}</p>
               )}
 
               {canManage && isEditing ? (
-                <div className="mt-4">
-                  <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-300/15 bg-amber-300/[.045] px-3.5 py-3 text-xs leading-5 text-amber-100/90">
-                    <History size={14} className="mt-0.5 shrink-0 text-amber-300" />
-                    <p>This kill is in the current DKP week. Changes update <strong className="font-semibold text-amber-100">weekly earned</strong>; the audit trail records each name, author, and reason for removals.</p>
-                  </div>
-                  <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
-                    <span>Select who should receive this boss award; clear all to reverse it for everyone.</span>
+                <div className="mt-3">
+                  <div className="mb-2 flex items-center justify-between gap-3 text-[11px] text-slate-400">
+                    <span>Select attendees</span>
                     <span>{selectedCount} selected</span>
                   </div>
-                  <div className="grid max-h-72 grid-cols-1 gap-x-3 overflow-y-auto rounded-lg border border-slate-800 p-2 sm:grid-cols-2">
+                  <div className="grid max-h-60 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border border-slate-800 p-1.5 sm:grid-cols-2">
                     {roster.map((record) => {
                       const isSelected = (selectedRows[award.id] ?? []).includes(record.rowIndex);
                       return (
                         <label
                           key={record.rowIndex}
-                          className={`flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm transition ${
+                          className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-xs transition ${
                             isSelected
                               ? 'border-indigo-400/40 bg-indigo-500/10 text-white shadow-sm shadow-indigo-950/30'
                               : 'border-slate-800/80 bg-slate-950/40 text-slate-300 hover:border-slate-700 hover:bg-slate-800/60'
@@ -432,12 +434,12 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                             onChange={() => toggleRow(award.id, record.rowIndex)}
                             className="peer sr-only"
                           />
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
-                            <Check className={`h-3.5 w-3.5 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
+                            <Check className={`h-3 w-3 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
-                            <span className="mt-0.5 block truncate text-xs text-slate-500">{record.owner}</span>
+                            <span className="mt-0.5 block truncate text-[10px] text-slate-500">{record.owner}</span>
                           </span>
                           <RoleBadge role={record.subClass} gameClass compact />
                         </label>
@@ -447,20 +449,20 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   </div>
                   {removedParticipants.length > 0 && (
                     <section className="mt-4 overflow-hidden rounded-2xl border border-rose-300/15 bg-gradient-to-br from-rose-500/[.08] via-slate-950/50 to-amber-400/[.04]">
-                      <div className="flex items-start gap-3 border-b border-rose-200/10 px-4 py-3.5">
-                        <span className="mt-0.5 rounded-lg border border-rose-300/15 bg-rose-300/10 p-1.5 text-rose-200"><UserMinus size={14} /></span>
-                        <div><p className="text-sm font-semibold text-rose-100">Why are these names being removed?</p><p className="mt-1 text-xs leading-5 text-slate-400">Choose one reason for every removed toon. The reason and manager will appear in this kill’s audit trail.</p></div>
+                      <div className="flex items-center gap-2 border-b border-rose-200/10 px-3 py-2.5">
+                        <span className="rounded-md border border-rose-300/15 bg-rose-300/10 p-1 text-rose-200"><UserMinus size={12} /></span>
+                        <div><p className="text-xs font-semibold text-rose-100">Removal reason</p><p className="text-[10px] text-slate-500">Required for each removed toon</p></div>
                       </div>
-                      <div className="space-y-2 p-3">
+                      <div className="space-y-1.5 p-2">
                         {removedParticipants.map((participant) => {
                           const key = participantKey(participant);
-                          return <label key={key} className="grid gap-2 rounded-xl border border-white/[.06] bg-slate-950/40 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,.8fr)] sm:items-center">
-                            <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-100">{participant.account || 'Unnamed toon'}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{participant.owner}</span></span>
+                          return <label key={key} className="grid gap-1.5 rounded-lg border border-white/[.06] bg-slate-950/40 p-2 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,.8fr)] sm:items-center">
+                            <span className="min-w-0"><span className="block truncate text-xs font-semibold text-slate-100">{participant.account || 'Unnamed toon'}</span><span className="mt-0.5 block truncate text-[10px] text-slate-500">{participant.owner}</span></span>
                             <select
                               aria-label={`Reason for removing ${participant.account || participant.owner}`}
                               value={removalReasons[award.id]?.[key] ?? ''}
                               onChange={(event) => setRemovalReasons((current) => ({...current,[award.id]:{...current[award.id],[key]:event.target.value as BossAttendanceRemovalReason | ''}}))}
-                              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-slate-200 outline-none transition focus:border-rose-300/60 focus:ring-2 focus:ring-rose-300/10"
+                              className="w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-2 text-[11px] text-slate-200 outline-none transition focus:border-rose-300/60 focus:ring-2 focus:ring-rose-300/10"
                             >
                               <option value="">Select a reason…</option>
                               {BOSS_ATTENDANCE_REMOVAL_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
@@ -470,7 +472,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                       </div>
                     </section>
                   )}
-                  <div className="mt-3 flex justify-end gap-2">
+                  <div className="mt-2 flex justify-end gap-1.5">
                     <button
                       onClick={() => {
                         setSelectedRows((current) => ({
@@ -481,14 +483,14 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                         setEditingId('');
                       }}
                       disabled={busyId === award.id}
-                      className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-[11px] font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-50"
                     >
                       <X className="h-4 w-4" /> Cancel
                     </button>
                     <button
                       onClick={() => void saveAttendance(award.id)}
                       disabled={busyId === award.id || missingRemovalReason}
-                      className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
                     >
                       {busyId === award.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       {busyId === award.id ? 'Saving changes…' : missingRemovalReason ? 'Choose removal reasons' : 'Save changes'}
@@ -496,28 +498,28 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   </div>
                 </div>
               ) : (
-                <div className="mt-1">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[.16em] text-slate-500">Raid roster</p>
-                    <span className="rounded-full border border-slate-700/80 bg-slate-900/70 px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-400">{award.participants.length} attendees</span>
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-[9px] font-bold uppercase tracking-[.14em] text-slate-500">Attendees</p>
+                    <span className="rounded-md bg-slate-900/70 px-2 py-0.5 text-[9px] font-semibold tabular-nums text-slate-500">{award.participants.length}</span>
                   </div>
                   {award.participants.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-slate-800 px-4 py-5 text-center text-xs text-slate-500">No toons currently receive this award.</p>
+                    <p className="rounded-lg border border-dashed border-slate-800 px-3 py-3 text-center text-[11px] text-slate-500">No attendees</p>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {award.participants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-2.5 rounded-xl border border-white/[.07] bg-gradient-to-br from-slate-800/70 to-slate-900/65 px-2.5 py-2 text-xs text-slate-100 shadow-sm shadow-black/15"><RoleBadge role={participant.subClass} gameClass compact /><span className="max-w-40 truncate font-medium sm:max-w-56">{participant.account || participant.owner}</span></span>)}
+                    <div className="flex flex-wrap gap-1.5">
+                      {award.participants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-white/[.06] bg-slate-900/65 px-2 py-1 text-[11px] text-slate-200"><RoleBadge role={participant.subClass} gameClass compact /><span className="max-w-36 truncate font-medium sm:max-w-48">{participant.account || participant.owner}</span></span>)}
                     </div>
                   )}
                 </div>
               )}
 
-              {commentsOpenId === award.id && commentGroups.length > 0 && <section className="mt-5 overflow-hidden rounded-2xl border border-cyan-200/15 bg-gradient-to-br from-cyan-950/25 via-slate-950/70 to-indigo-950/25 shadow-lg shadow-black/10">
-                <div className="flex items-center justify-between gap-3 border-b border-cyan-100/[.08] px-4 py-3.5">
-                  <div className="flex items-center gap-2.5"><span className="rounded-lg border border-cyan-100/15 bg-cyan-100/[.06] p-1.5 text-cyan-100"><MessageCircle size={14} /></span><div><h3 className="text-xs font-bold text-cyan-50">Kill comments</h3><p className="mt-0.5 text-[10px] text-slate-400">Attendance changes · {commentGroups.length} {commentGroups.length === 1 ? 'update' : 'updates'}</p></div></div>
-                  <button type="button" onClick={() => setCommentsOpenId('')} className="rounded-lg border border-slate-700/80 px-2.5 py-1.5 text-[10px] font-semibold text-slate-400 transition hover:border-slate-500 hover:text-white">Close</button>
+              {commentsOpenId === award.id && commentGroups.length > 0 && <section className="mt-3 overflow-hidden rounded-xl border border-cyan-200/10 bg-slate-950/45">
+                <div className="flex items-center justify-between gap-3 border-b border-cyan-100/[.08] px-3 py-2.5">
+                  <div className="flex items-center gap-2"><span className="rounded-md border border-cyan-100/15 bg-cyan-100/[.06] p-1 text-cyan-100"><MessageCircle size={12} /></span><div><h3 className="text-[11px] font-bold text-cyan-50">Kill comments</h3><p className="text-[9px] text-slate-500">{commentGroups.length} {commentGroups.length === 1 ? 'update' : 'updates'}</p></div></div>
+                  <button type="button" onClick={() => setCommentsOpenId('')} className="rounded-md border border-slate-700/80 px-2 py-1 text-[9px] font-semibold text-slate-400 transition hover:border-slate-500 hover:text-white">Close</button>
                 </div>
-                <div className="space-y-3 p-3 sm:p-4">
-                  {commentGroups.map((comment) => <article key={comment.id} className="rounded-xl border border-white/[.06] bg-slate-950/50 p-3.5 sm:p-4">
+                <div className="space-y-2 p-2.5">
+                  {commentGroups.map((comment) => <article key={comment.id} className="rounded-lg border border-white/[.06] bg-slate-950/50 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-semibold text-slate-100">{comment.actor} <span className="font-normal text-slate-400">updated the roster</span></p>
                       <time className="text-[10px] text-slate-500">{new Date(comment.occurredAt).toLocaleString()}</time>
@@ -532,7 +534,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
             </article>
           );
         })}
-        {nextCursor && <button type="button" className="secondary-button w-full" disabled={loadingMore || refreshing} onClick={() => void loadMoreHistory()}>{loadingMore ? <LoaderCircle size={15} className="animate-spin" /> : <History size={15} />}Load older kills</button>}
+        {nextCursor && <button type="button" className="secondary-button mx-auto min-h-8 w-auto px-3 py-1.5 text-[11px]" disabled={loadingMore || refreshing} onClick={() => void loadMoreHistory()}>{loadingMore ? <LoaderCircle size={13} className="animate-spin" /> : <History size={13} />}Load older kills</button>}
       </div>
     </section>
   );
