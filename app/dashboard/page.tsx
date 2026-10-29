@@ -273,7 +273,8 @@ function Dashboard() {
       left.toon.owner.localeCompare(right.toon.owner, undefined, { sensitivity: 'base' }) ||
       left.toon.rowIndex - right.toon.rowIndex
     )
-    .slice(0, 5);
+    .slice(0, 10);
+  const highestBossActivity = bossSuggestions[0]?.count ?? 1;
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(sessionUser?.role ?? userSession?.role ?? '');
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
@@ -459,13 +460,13 @@ function Dashboard() {
                   />
                 </div>
 
-                <section aria-label={`${selectedBoss} attendance suggestions`} className="mb-2 rounded-xl border border-slate-800 bg-slate-900/55 p-3">
+                <section aria-label={`Top ten ${selectedBoss} attendees`} className="mb-2 rounded-xl border border-violet-300/15 bg-gradient-to-br from-violet-950/35 via-slate-900/75 to-slate-950/70 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <BossIcon bossName={selectedBoss} className="h-8 w-8 shrink-0" />
                       <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-white">{selectedBoss} regulars</h4>
-                        <p className="mt-0.5 text-[10px] text-slate-500">Most appearances on this boss</p>
+                        <h4 className="text-xs font-bold text-white">{selectedBoss} hall of fame</h4>
+                        <p className="mt-0.5 text-[10px] text-slate-500">Top 10 by recorded appearances</p>
                       </div>
                     </div>
                     {bossSuggestions.length > 0 && (
@@ -474,7 +475,7 @@ function Dashboard() {
                         disabled={pickerRefreshing}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => setSelectedMembers((previous) => [...new Set([...previous, ...bossSuggestions.map(({ toon }) => toon.rowIndex)])])}
-                        className="rounded-md border border-violet-300/20 bg-violet-300/[.06] px-2 py-1 text-[10px] font-bold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-300/10 disabled:opacity-50"
+                        className="rounded-md border border-violet-200/20 bg-violet-200/[.08] px-2 py-1 text-[10px] font-bold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-300/15 disabled:opacity-50"
                       >
                         Add top {bossSuggestions.length}
                       </button>
@@ -483,9 +484,16 @@ function Dashboard() {
                   {pickerRefreshing ? (
                     <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-400">Updating raid history…</p>
                   ) : bossSuggestions.length > 0 ? (
-                    <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
                       {bossSuggestions.map(({ toon, count }, index) => {
                         const selected = selectedMembers.includes(toon.rowIndex);
+                        const rankStyle = index === 0
+                          ? 'border-amber-300/35 bg-amber-300/[.08] text-amber-200'
+                          : index === 1
+                            ? 'border-slate-300/25 bg-slate-300/[.06] text-slate-200'
+                            : index === 2
+                              ? 'border-orange-300/25 bg-orange-300/[.06] text-orange-200'
+                              : 'border-slate-700 bg-slate-950/60 text-slate-500';
                         return (
                           <button
                             key={toon.rowIndex}
@@ -494,15 +502,17 @@ function Dashboard() {
                             disabled={pickerRefreshing}
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => toggleMemberSelection(toon.rowIndex)}
-                            className={`flex min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/40 bg-emerald-300/[.08]' : 'border-slate-800 bg-slate-950/35 hover:border-slate-600 hover:bg-slate-800/70'}`}
+                            title={`${toon.account || toon.owner} · ${toon.owner} · ${count} recorded ${selectedBoss} appearances`}
+                            className={`group relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/45 bg-emerald-300/[.08]' : 'border-slate-800/90 bg-slate-950/45 hover:border-violet-300/30 hover:bg-slate-900'}`}
                           >
-                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-black ${index === 0 ? 'bg-amber-300/15 text-amber-200' : 'bg-slate-800 text-slate-400'}`}>{index + 1}</span>
+                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[9px] font-black ${rankStyle}`}>{index + 1}</span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-[11px] font-semibold text-white">{toon.account || toon.owner}</span>
                             </span>
                             <RoleBadge role={toon.subClass} gameClass compact />
-                            <span className="shrink-0 text-[10px] font-semibold tabular-nums text-slate-500" title={`${count} recorded ${selectedBoss} appearances`}>{count}×</span>
-                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-600 text-slate-500'}`}>{selected ? '✓' : '+'}</span>
+                            <span className="shrink-0 text-[10px] font-bold tabular-nums text-slate-300">{count}×</span>
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-700 text-slate-600'}`}>{selected ? '✓' : '+'}</span>
+                            <span className="absolute inset-x-0 bottom-0 h-[2px] bg-slate-800/80"><span className={`block h-full ${index === 0 ? 'bg-gradient-to-r from-amber-300 to-yellow-100' : 'bg-gradient-to-r from-violet-500 to-cyan-300'}`} style={{ width: `${Math.max(8, Math.round(count / highestBossActivity * 100))}%` }} /></span>
                           </button>
                         );
                       })}
