@@ -83,6 +83,7 @@ interface AuditComment {
   occurredAt: string;
   added: RosterMember[];
   removed: Array<{participant?: RosterMember; reason?: BossAttendanceRemovalReason}>;
+  deletedParticipants: RosterMember[];
   deleted: boolean;
 }
 
@@ -92,12 +93,15 @@ function groupAuditComments(events: BossAuditEvent[]) {
     const id = event.changeId || `${event.actor}:${event.occurredAt}`;
     let group = groups.get(id);
     if (!group) {
-      group = { id, actor: event.actor, occurredAt: event.occurredAt, added: [], removed: [], deleted: false };
+      group = { id, actor: event.actor, occurredAt: event.occurredAt, added: [], removed: [], deletedParticipants: [], deleted: false };
       groups.set(id, group);
     }
     if (event.kind === 'participant_added' && event.participant) group.added.push(event.participant);
     else if (event.kind === 'participant_removed') group.removed.push({ participant: event.participant, reason: event.reason });
-    else if (event.kind === 'kill_deleted') group.deleted = true;
+    else if (event.kind === 'kill_deleted') {
+      group.deleted = true;
+      if (event.participant) group.deletedParticipants.push(event.participant);
+    }
   }
   return [...groups.values()].reverse();
 }
@@ -556,7 +560,17 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                       <p className="text-xs font-semibold text-slate-100">{comment.actor} <span className="font-normal text-slate-400">{comment.deleted ? 'deleted this kill' : 'updated the roster'}</span></p>
                       <time className="text-[10px] text-slate-500">{new Date(comment.occurredAt).toLocaleString()}</time>
                     </div>
-                    {comment.deleted && <p className="mt-3 rounded-lg bg-rose-300/[.07] px-3 py-2 text-xs text-rose-100">The kill record was deleted.</p>}
+                    {comment.deleted && <section className="mt-3 rounded-lg border border-rose-200/10 bg-rose-300/[.05] p-2.5">
+                      <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-rose-200"><UserMinus size={12} />Toons removed with this kill</p>
+                      {comment.deletedParticipants.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {comment.deletedParticipants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.account || participant.owner} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-rose-200/15 bg-rose-200/[.06] px-2 py-1 text-[11px] text-rose-50">
+                            <RoleBadge role={participant.subClass} gameClass compact />
+                            <span className="min-w-0"><span className="block truncate font-semibold">{participant.account || participant.owner}</span>{participant.account && participant.owner.toLocaleLowerCase() !== participant.account.toLocaleLowerCase() && <span className="block truncate text-[9px] text-rose-100/55">{participant.owner}</span>}</span>
+                          </span>)}
+                        </div>
+                      ) : <p className="text-[10px] text-slate-400">Names were not captured for this older deletion.</p>}
+                    </section>}
                     {comment.added.length > 0 && <div className="mt-3 flex flex-wrap items-start gap-2"><span className="inline-flex items-center gap-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-emerald-200"><UserPlus size={12} /> Added</span><div className="flex flex-wrap gap-1.5">{comment.added.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} className="inline-flex items-center gap-2 rounded-lg border border-emerald-200/15 bg-emerald-200/[.06] px-2.5 py-1.5 text-[11px] font-medium text-emerald-50"><RoleBadge role={participant.subClass} gameClass compact />{participant.account || participant.owner}</span>)}</div></div>}
                     {comment.removed.length > 0 && <div className="mt-3 flex flex-wrap items-start gap-2"><span className="inline-flex items-center gap-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-rose-200"><UserMinus size={12} /> Removed</span><div className="flex flex-col gap-1.5">{comment.removed.map((entry, index) => <div key={`${comment.id}:removed:${index}`} className="flex flex-wrap items-center gap-1.5"><span className="inline-flex items-center gap-2 rounded-lg border border-rose-200/15 bg-rose-200/[.06] px-2.5 py-1.5 text-[11px] font-medium text-rose-50"><RoleBadge role={entry.participant?.subClass} gameClass compact />{entry.participant?.account || entry.participant?.owner || 'Toon'}</span><span className="text-[10px] text-slate-400">Reason: {entry.reason || 'not recorded'}</span></div>)}</div></div>}
                   </article>)}
