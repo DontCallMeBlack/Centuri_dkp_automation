@@ -8,7 +8,7 @@ import BossIcon from '@/components/BossIcon';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { Check, History, LoaderCircle, MessageCircle, Save, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { History, LoaderCircle, MessageCircle, Save, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
 interface RosterMember {
@@ -416,7 +416,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     <span>Select attendees</span>
                     <span>{selectedCount} selected</span>
                   </div>
-                  <div className="grid max-h-60 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border border-slate-800 p-1.5 sm:grid-cols-2">
+                  <div className="boss-history-roster-scroll grid max-h-60 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border border-slate-800 p-1.5 sm:grid-cols-2">
                     {roster.map((record) => {
                       const isSelected = (selectedRows[award.id] ?? []).includes(record.rowIndex);
                       return (
@@ -432,11 +432,8 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => toggleRow(award.id, record.rowIndex)}
-                            className="peer sr-only"
+                            className="h-4 w-4 shrink-0 cursor-pointer accent-indigo-400 focus-visible:outline-indigo-200"
                           />
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-600 bg-slate-900 text-white transition peer-checked:border-indigo-400 peer-checked:bg-indigo-500 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-300 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950">
-                            <Check className={`h-3 w-3 transition ${isSelected ? 'opacity-100' : 'opacity-0'}`} />
-                          </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-semibold">{record.account || 'Unnamed toon'}</span>
                             <span className="mt-0.5 block truncate text-[10px] text-slate-500">{record.owner}</span>
