@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",
+    "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^3.0.3",
     "googleapis": "^183.0.0",
     "lucide-react": "^1.51.0",
