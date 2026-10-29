@@ -348,9 +348,21 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     );
   }
 
+  const currentWeekKillCount = awards.filter((award) => award.status === 'applied' && award.canModify === true).length;
+  const distinctAttendeeCount = new Set(awards
+    .filter((award) => award.status === 'applied')
+    .flatMap((award) => award.participants.map(participantKey))).size;
+
   return (
     <section className="space-y-5 text-slate-100">
-      <div><h1 className="page-title">Boss history</h1><p className="page-description">{canManage ? 'Kills, attendance changes, and comments.' : 'Boss kills and attendance.'}</p></div>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div><p className="page-kicker">Raid archive</p><h1 className="page-title">Boss history</h1><p className="page-description">{canManage ? 'Kill records, attendance, and manager notes.' : 'Boss kills and attendance.'}</p></div>
+        <div className="flex flex-wrap gap-1.5 pb-0.5">
+          <div title="Kill records currently loaded" className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><History size={13} className="text-violet-300" /><span className="text-xs font-bold tabular-nums text-white">{awards.length}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">loaded</span></div>
+          <div className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /><span className="text-xs font-bold tabular-nums text-white">{currentWeekKillCount}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">this week</span></div>
+          <div title="Distinct toons in loaded kill records" className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><Users size={13} className="text-cyan-300" /><span className="text-xs font-bold tabular-nums text-white">{distinctAttendeeCount}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">seen</span></div>
+        </div>
+      </div>
       <div className="space-y-3">
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
