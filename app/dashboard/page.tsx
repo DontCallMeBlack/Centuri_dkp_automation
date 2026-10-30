@@ -288,11 +288,13 @@ function Dashboard() {
         .includes(deferredMemberQuery.toLowerCase())
     );
 
-  const filteredRoster = roster.filter((member) =>
-    `${member.owner} ${member.account} ${member.subClass}`
-      .toLowerCase()
-      .includes(pickerQuery.toLowerCase())
-  );
+  const filteredRoster = roster
+    .filter((member) =>
+      `${member.owner} ${member.account} ${member.subClass}`
+        .toLowerCase()
+        .includes(pickerQuery.toLowerCase())
+    )
+    .sort(compareBossAttendeeToons);
   const bossSuggestions = bossActivity
     .filter((entry) => entry.bossName === selectedBoss)
     .flatMap((entry) => {
