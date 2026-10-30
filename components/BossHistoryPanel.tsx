@@ -519,7 +519,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   <div className="flex items-center justify-between gap-3 border-b border-white/[.06] px-3.5 py-2.5 sm:px-4">
                     <div className="flex min-w-0 items-center gap-2.5">
                       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-cyan-200/10 bg-cyan-200/[.05] text-cyan-200"><Users size={14} /></span>
-                      <div className="min-w-0"><h3 className="text-xs font-bold text-slate-100">{award.status === 'deleted' ? 'Attendees before deletion' : 'Raid party'}</h3><p className="mt-0.5 text-[9px] text-slate-500">Sorted by subrole, then toon name</p></div>
+                      <div className="min-w-0"><h3 className="text-xs font-bold text-slate-100">{award.status === 'deleted' ? 'Attendees before deletion' : 'Raid party'}</h3></div>
                     </div>
                     <span className="shrink-0 rounded-lg border border-white/[.07] bg-white/[.025] px-2 py-1 text-[10px] font-bold tabular-nums text-slate-300">{sortedParticipants.length} <span className="font-medium text-slate-500">toons</span></span>
                   </div>
