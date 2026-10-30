@@ -526,11 +526,11 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   {sortedParticipants.length === 0 ? (
                     <p className="px-3 py-5 text-center text-[11px] text-slate-500">No attendee names recorded</p>
                   ) : (
-                    <div className="grid grid-cols-1 gap-1.5 p-2 sm:grid-cols-2 xl:grid-cols-3">
-                      {sortedParticipants.map((participant) => <div key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="flex min-w-0 items-center gap-2.5 rounded-xl border border-white/[.055] bg-slate-900/55 px-2.5 py-2 transition hover:border-cyan-200/15 hover:bg-slate-900/85">
+                    <div className="flex flex-wrap gap-1.5 p-2.5">
+                      {sortedParticipants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[.07] bg-slate-900/65 px-2.5 py-1.5 text-[11px] text-slate-200 transition hover:border-cyan-200/20 hover:bg-slate-900">
                         <RoleBadge role={participant.subClass} gameClass compact />
-                        <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold text-slate-100">{participant.account || participant.owner}</span><span className="mt-0.5 block truncate text-[9px] text-slate-500">{participant.owner}</span></span>
-                      </div>)}
+                        <span className="max-w-40 truncate font-semibold sm:max-w-52">{participant.account || participant.owner}</span>
+                      </span>)}
                     </div>
                   )}
                 </section>
