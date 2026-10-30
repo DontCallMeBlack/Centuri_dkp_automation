@@ -25,9 +25,9 @@ export function RoleIcon({ role = '', className = 'h-4 w-4' }: { role?: string; 
   return <Icon className={className} aria-hidden="true" />;
 }
 
-export default function RoleBadge({ role = '', gameClass = false, compact = false }: { role?: string; gameClass?: boolean; compact?: boolean }) {
+export default function RoleBadge({ role = '', gameClass = false, compact = false, className = '' }: { role?: string; gameClass?: boolean; compact?: boolean; className?: string }) {
   const key = role.trim().replace(/\s+/g, ' ').toLowerCase();
   const config = gameClass ? classes[key as keyof typeof classes] : ranks[key as keyof typeof ranks];
   const Icon = config?.icon ?? UserRound;
-  return <span className={`role-badge ${config?.tone ?? 'role-slate'}`} title={role || 'Unassigned'}><Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />{!compact && <span className="truncate">{role || 'Unassigned'}</span>}</span>;
+  return <span className={`role-badge ${config?.tone ?? 'role-slate'} ${className}`} title={role || 'Unassigned'}><Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />{!compact && <span className="truncate">{role || 'Unassigned'}</span>}</span>;
 }

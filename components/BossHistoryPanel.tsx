@@ -527,9 +527,9 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     <p className="px-3 py-5 text-center text-[11px] text-slate-500">No attendee names recorded</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5 p-2.5">
-                      {sortedParticipants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[.07] bg-slate-900/65 px-2.5 py-1.5 text-[11px] text-slate-200 transition hover:border-cyan-200/20 hover:bg-slate-900">
-                        <RoleBadge role={participant.subClass} gameClass compact />
-                        <span className="max-w-40 truncate font-semibold sm:max-w-52">{participant.account || participant.owner}</span>
+                      {sortedParticipants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.account || participant.owner} · ${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[.07] bg-slate-900/65 px-2 py-1 text-[10px] text-slate-200 transition hover:border-cyan-200/20 hover:bg-slate-900">
+                        <RoleBadge role={participant.subClass} gameClass compact className="!gap-0 !border-0 !bg-transparent !p-0" />
+                        <span className="max-w-24 truncate font-semibold sm:max-w-32">{participant.account || participant.owner}</span>
                       </span>)}
                     </div>
                   )}
