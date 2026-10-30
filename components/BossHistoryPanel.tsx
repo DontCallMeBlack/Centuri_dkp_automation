@@ -9,7 +9,7 @@ import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { compareBossHistoryAttendees, groupBossAuditComments, type BossAuditEvent } from '@/lib/bossHistoryAudit';
-import { History, LoaderCircle, MessageCircle, Save, Search, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
+import { CalendarDays, Clock3, History, LoaderCircle, MessageCircle, Save, Search, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
 interface RosterMember {
@@ -319,9 +319,6 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   }
 
   const currentWeekKillCount = awards.filter((award) => award.status === 'applied' && award.canModify === true).length;
-  const distinctAttendeeCount = new Set(awards
-    .filter((award) => award.status === 'applied')
-    .flatMap((award) => award.participants.map(participantKey))).size;
 
   return (
     <section className="space-y-5 text-slate-100">
@@ -330,7 +327,6 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
         <div className="flex flex-wrap gap-1.5 pb-0.5">
           <div title="Kill records currently loaded" className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><History size={13} className="text-violet-300" /><span className="text-xs font-bold tabular-nums text-white">{awards.length}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">loaded</span></div>
           <div className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /><span className="text-xs font-bold tabular-nums text-white">{currentWeekKillCount}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">this week</span></div>
-          <div title="Distinct toons in loaded kill records" className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><Users size={13} className="text-cyan-300" /><span className="text-xs font-bold tabular-nums text-white">{distinctAttendeeCount}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">seen</span></div>
         </div>
       </div>
       <div className="space-y-3">
@@ -350,29 +346,50 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const missingRemovalReason = removedParticipants.some((participant) => !removalReasons[award.id]?.[participantKey(participant)]);
           const auditTrail = award.auditTrail ?? [];
           const commentGroups = groupBossAuditComments(auditTrail);
-          const sortedParticipants = [...award.participants].sort(compareBossHistoryAttendees);
+          const deletedParticipants = commentGroups.find((comment) => comment.deleted)?.deletedParticipants ?? [];
+          const sortedParticipants = [...(award.status === 'deleted' ? deletedParticipants : award.participants)].sort(compareBossHistoryAttendees);
           const deletionEvent = [...auditTrail].reverse().find((event) => event.kind === 'kill_deleted');
+          const createdAt = new Date(award.createdAt);
+          const createdDateLabel = createdAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+          const createdTimeLabel = createdAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          const statusLabel = award.status === 'deleted' ? 'Deleted' : award.status === 'applied' ? award.canModify ? 'Current' : 'Archive' : award.status;
+          const statusTone = award.status === 'deleted'
+            ? 'border-rose-300/20 bg-rose-300/[.08] text-rose-200'
+            : award.status === 'applied'
+              ? award.canModify ? 'border-emerald-300/20 bg-emerald-300/[.07] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300'
+              : 'border-amber-300/20 bg-amber-300/[.06] text-amber-200';
           const rosterQuery = editRosterQuery.trim().toLocaleLowerCase();
           const filteredRoster = rosterQuery
             ? roster.filter((record) => [record.account, record.owner, record.subClass].some((value) => value?.toLocaleLowerCase().includes(rosterQuery)))
             : roster;
           return (
-            <article key={award.id} className="surface relative overflow-hidden p-0">
-              <div className={`h-0.5 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
-              <div className="flex flex-col justify-between gap-3 border-b border-slate-800/80 bg-slate-900/45 px-4 py-3 sm:flex-row sm:items-center sm:px-4">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <BossIcon bossName={award.bossName} className="h-12 w-12 shrink-0" />
-                  <div className="min-w-0">
+            <article key={award.id} className="surface group relative overflow-hidden p-0 transition duration-200 hover:border-slate-600/70">
+              <div className={`h-1 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
+              <div className={`relative flex flex-col justify-between gap-3 overflow-hidden border-b border-slate-800/80 px-3.5 py-3.5 sm:flex-row sm:items-center sm:px-4 ${award.status === 'deleted' ? 'bg-gradient-to-r from-rose-950/35 via-slate-900/65 to-slate-950/50' : 'bg-gradient-to-r from-slate-900/80 via-slate-900/55 to-slate-950/60'}`}>
+                <div className="pointer-events-none absolute -right-12 -top-24 h-48 w-48 rounded-full bg-indigo-400/[.06] blur-3xl" />
+                <div className="relative flex min-w-0 flex-1 items-center gap-3">
+                  <div className={`relative grid h-14 w-14 shrink-0 place-items-center rounded-2xl border bg-slate-950/60 shadow-inner ${award.status === 'deleted' ? 'border-rose-200/15' : 'border-white/[.08]'}`}>
+                    <BossIcon bossName={award.bossName} className="h-12 w-12" />
+                    <span className={`absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full ring-2 ring-slate-950 ${award.status === 'deleted' ? 'bg-rose-300' : award.canModify ? 'bg-emerald-300' : 'bg-slate-500'}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <h2 className="text-sm font-bold tracking-tight text-white">{award.bossName}</h2>
-                      <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${award.status === 'deleted' ? 'bg-rose-300/[.08] text-rose-200' : 'bg-emerald-300/[.08] text-emerald-200'}`}>{award.status === 'deleted' ? `${award.points} reversed` : `+${award.points}`}</span>
-                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[.1em] ${award.status === 'deleted' ? 'border-rose-300/20 bg-rose-300/[.08] text-rose-200' : award.status === 'applied' ? award.canModify ? 'border-emerald-300/15 bg-emerald-300/[.06] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300' : 'border-amber-300/15 bg-amber-300/[.06] text-amber-200'}`}>{award.status === 'deleted' ? 'Deleted' : award.status === 'applied' ? award.canModify ? 'Current' : 'Archive' : award.status}</span>
+                      <span className="text-[9px] font-bold uppercase tracking-[.16em] text-slate-500">Raid encounter</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${statusTone}`}>{statusLabel}</span>
                     </div>
-                    <p className="mt-1 truncate text-[10px] text-slate-500">{new Date(award.createdAt).toLocaleString()} <span className="text-slate-700">·</span> {award.createdBy}</p>
-                    {deletionEvent && <p className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold text-rose-200"><Trash2 size={11} />Deleted by {deletionEvent.actor} <span className="font-normal text-rose-200/55">· {new Date(deletionEvent.occurredAt).toLocaleString()}</span></p>}
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <h2 className="text-base font-extrabold tracking-tight text-white">{award.bossName}</h2>
+                      <span className={`rounded-lg border px-2 py-1 text-[10px] font-bold tabular-nums ${award.status === 'deleted' ? 'border-rose-200/15 bg-rose-200/[.06] text-rose-100' : 'border-emerald-200/15 bg-emerald-200/[.06] text-emerald-100'}`}>{award.status === 'deleted' ? `${award.points} DKP reversed` : `+${award.points} DKP`}</span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
+                      <span className="inline-flex items-center gap-1.5"><CalendarDays size={11} className="text-slate-500" />{createdDateLabel}</span>
+                      <span className="inline-flex items-center gap-1.5"><Clock3 size={11} className="text-slate-500" />{createdTimeLabel}</span>
+                      <span className="text-slate-700">by</span><span className="font-semibold text-slate-300">{award.createdBy}</span>
+                    </div>
+                    {deletionEvent && <p className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md border border-rose-200/10 bg-rose-200/[.04] px-2 py-1 text-[10px] font-semibold text-rose-200"><Trash2 size={11} />Deleted by {deletionEvent.actor}<span className="font-normal text-rose-200/55">at {new Date(deletionEvent.occurredAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></p>}
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                <div className="relative flex flex-wrap items-center gap-1.5 sm:justify-end">
                   {canManage && award.status === 'applied' && !isEditing && award.canModify === true && <>
                     <button
                       onClick={() => { setRemovalReasons((current) => ({...current,[award.id]:{}})); setEditRosterQuery(''); setEditingId(award.id); }}
@@ -498,19 +515,25 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                   </div>
                 </div>
               ) : (
-                <div>
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <p className="text-[9px] font-bold uppercase tracking-[.14em] text-slate-500">Attendees</p>
-                    <span className="rounded-md bg-slate-900/70 px-2 py-0.5 text-[9px] font-semibold tabular-nums text-slate-500">{award.participants.length}</span>
+                <section className="overflow-hidden rounded-2xl border border-white/[.07] bg-slate-950/25">
+                  <div className="flex items-center justify-between gap-3 border-b border-white/[.06] px-3.5 py-2.5 sm:px-4">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-cyan-200/10 bg-cyan-200/[.05] text-cyan-200"><Users size={14} /></span>
+                      <div className="min-w-0"><h3 className="text-xs font-bold text-slate-100">{award.status === 'deleted' ? 'Attendees before deletion' : 'Raid party'}</h3><p className="mt-0.5 text-[9px] text-slate-500">Sorted by subrole, then toon name</p></div>
+                    </div>
+                    <span className="shrink-0 rounded-lg border border-white/[.07] bg-white/[.025] px-2 py-1 text-[10px] font-bold tabular-nums text-slate-300">{sortedParticipants.length} <span className="font-medium text-slate-500">toons</span></span>
                   </div>
-                  {award.participants.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-slate-800 px-3 py-3 text-center text-[11px] text-slate-500">No attendees</p>
+                  {sortedParticipants.length === 0 ? (
+                    <p className="px-3 py-5 text-center text-[11px] text-slate-500">No attendee names recorded</p>
                   ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {sortedParticipants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-white/[.06] bg-slate-900/65 px-2 py-1 text-[11px] text-slate-200"><RoleBadge role={participant.subClass} gameClass compact /><span className="max-w-36 truncate font-medium sm:max-w-48">{participant.account || participant.owner}</span></span>)}
+                    <div className="grid grid-cols-1 gap-1.5 p-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {sortedParticipants.map((participant) => <div key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="flex min-w-0 items-center gap-2.5 rounded-xl border border-white/[.055] bg-slate-900/55 px-2.5 py-2 transition hover:border-cyan-200/15 hover:bg-slate-900/85">
+                        <RoleBadge role={participant.subClass} gameClass compact />
+                        <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold text-slate-100">{participant.account || participant.owner}</span><span className="mt-0.5 block truncate text-[9px] text-slate-500">{participant.owner}</span></span>
+                      </div>)}
                     </div>
                   )}
-                </div>
+                </section>
               )}
 
               {commentsOpenId === award.id && commentGroups.length > 0 && <section className="mt-3 overflow-hidden rounded-xl border border-cyan-200/10 bg-slate-950/45">
