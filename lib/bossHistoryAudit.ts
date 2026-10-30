@@ -1,5 +1,37 @@
 import type { IBossAwardAuditEntry, IBossAwardParticipant } from './models/BossAward.ts';
 
+const BOSS_HISTORY_ROLE_ORDER = [
+  'tank',
+  'support druid',
+  'support rogue',
+  'dps druid',
+  'fire mage',
+  'ice mage',
+  'ranger',
+  'dps warrior',
+  'dps rogue',
+];
+const BOSS_HISTORY_ROLE_RANK = new Map(BOSS_HISTORY_ROLE_ORDER.map((role, index) => [role, index]));
+const BOSS_HISTORY_ROLE_ALIASES: Record<string, string> = {
+  'supp druid': 'support druid',
+  'supp rogue': 'support rogue',
+  fire: 'fire mage',
+  ice: 'ice mage',
+};
+
+function getBossHistoryRoleRank(role = '') {
+  const normalizedRole = role.trim().replace(/\s+/g, ' ').toLowerCase();
+  const canonicalRole = BOSS_HISTORY_ROLE_ALIASES[normalizedRole] ?? normalizedRole;
+  return BOSS_HISTORY_ROLE_RANK.get(canonicalRole) ?? BOSS_HISTORY_ROLE_ORDER.length;
+}
+
+export function compareBossHistoryAttendees(left: IBossAwardParticipant, right: IBossAwardParticipant) {
+  return getBossHistoryRoleRank(left.subClass) - getBossHistoryRoleRank(right.subClass) ||
+    (left.account || left.owner).localeCompare(right.account || right.owner, undefined, { sensitivity: 'base' }) ||
+    left.owner.localeCompare(right.owner, undefined, { sensitivity: 'base' }) ||
+    left.rowIndex - right.rowIndex;
+}
+
 export interface BossAuditEvent {
   kind: IBossAwardAuditEntry['kind'];
   changeId?: string;

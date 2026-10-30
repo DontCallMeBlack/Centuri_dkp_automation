@@ -8,7 +8,7 @@ import BossIcon from '@/components/BossIcon';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
-import { groupBossAuditComments, type BossAuditEvent } from '@/lib/bossHistoryAudit';
+import { compareBossHistoryAttendees, groupBossAuditComments, type BossAuditEvent } from '@/lib/bossHistoryAudit';
 import { History, LoaderCircle, MessageCircle, Save, Search, Shield, Trash2, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { BOSS_ATTENDANCE_REMOVAL_REASONS, type BossAttendanceRemovalReason } from '@/lib/bossDkp';
 
@@ -350,6 +350,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
           const missingRemovalReason = removedParticipants.some((participant) => !removalReasons[award.id]?.[participantKey(participant)]);
           const auditTrail = award.auditTrail ?? [];
           const commentGroups = groupBossAuditComments(auditTrail);
+          const sortedParticipants = [...award.participants].sort(compareBossHistoryAttendees);
           const deletionEvent = [...auditTrail].reverse().find((event) => event.kind === 'kill_deleted');
           const rosterQuery = editRosterQuery.trim().toLocaleLowerCase();
           const filteredRoster = rosterQuery
@@ -506,7 +507,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     <p className="rounded-lg border border-dashed border-slate-800 px-3 py-3 text-center text-[11px] text-slate-500">No attendees</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5">
-                      {award.participants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-white/[.06] bg-slate-900/65 px-2 py-1 text-[11px] text-slate-200"><RoleBadge role={participant.subClass} gameClass compact /><span className="max-w-36 truncate font-medium sm:max-w-48">{participant.account || participant.owner}</span></span>)}
+                      {sortedParticipants.map((participant) => <span key={`${participant.rowIndex}:${participant.owner}:${participant.account}`} title={`${participant.subClass || 'Unknown subrole'} · ${participant.owner}`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-white/[.06] bg-slate-900/65 px-2 py-1 text-[11px] text-slate-200"><RoleBadge role={participant.subClass} gameClass compact /><span className="max-w-36 truncate font-medium sm:max-w-48">{participant.account || participant.owner}</span></span>)}
                     </div>
                   )}
                 </div>

@@ -69,38 +69,6 @@ function normalizeRole(role: string) {
   return role.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-const BOSS_ATTENDANCE_ROLE_ORDER = [
-  'tank',
-  'support druid',
-  'support rogue',
-  'dps druid',
-  'fire mage',
-  'ice mage',
-  'ranger',
-  'dps warrior',
-  'dps rogue',
-];
-const BOSS_ATTENDANCE_ROLE_RANK = new Map(BOSS_ATTENDANCE_ROLE_ORDER.map((role, index) => [role, index]));
-const BOSS_ATTENDANCE_ROLE_ALIASES: Record<string, string> = {
-  'supp druid': 'support druid',
-  'supp rogue': 'support rogue',
-  fire: 'fire mage',
-  ice: 'ice mage',
-};
-
-function getBossAttendanceRoleRank(role: string) {
-  const normalizedRole = normalizeRole(role);
-  const canonicalRole = BOSS_ATTENDANCE_ROLE_ALIASES[normalizedRole] ?? normalizedRole;
-  return BOSS_ATTENDANCE_ROLE_RANK.get(canonicalRole) ?? BOSS_ATTENDANCE_ROLE_ORDER.length;
-}
-
-function compareBossAttendeeToons(left: RosterMember, right: RosterMember) {
-  return getBossAttendanceRoleRank(left.subClass) - getBossAttendanceRoleRank(right.subClass) ||
-    (left.account || left.owner).localeCompare(right.account || right.owner, undefined, { sensitivity: 'base' }) ||
-    left.owner.localeCompare(right.owner, undefined, { sensitivity: 'base' }) ||
-    left.rowIndex - right.rowIndex;
-}
-
 const ROLE_STYLES: Record<string, string> = {
   ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',
   'dps rogue': 'border-violet-400/30 bg-violet-400/10 text-violet-300',
@@ -288,13 +256,11 @@ function Dashboard() {
         .includes(deferredMemberQuery.toLowerCase())
     );
 
-  const filteredRoster = roster
-    .filter((member) =>
-      `${member.owner} ${member.account} ${member.subClass}`
-        .toLowerCase()
-        .includes(pickerQuery.toLowerCase())
-    )
-    .sort(compareBossAttendeeToons);
+  const filteredRoster = roster.filter((member) =>
+    `${member.owner} ${member.account} ${member.subClass}`
+      .toLowerCase()
+      .includes(pickerQuery.toLowerCase())
+  );
   const bossSuggestions = bossActivity
     .filter((entry) => entry.bossName === selectedBoss)
     .flatMap((entry) => {
@@ -307,17 +273,11 @@ function Dashboard() {
       left.toon.owner.localeCompare(right.toon.owner, undefined, { sensitivity: 'base' }) ||
       left.toon.rowIndex - right.toon.rowIndex
     )
-    .slice(0, 10)
-    .map((suggestion, index) => ({ ...suggestion, activityRank: index + 1 }))
-    .sort((left, right) => compareBossAttendeeToons(left.toon, right.toon));
-  const highestBossActivity = Math.max(1, ...bossSuggestions.map(({ count }) => count));
+    .slice(0, 10);
+  const highestBossActivity = bossSuggestions[0]?.count ?? 1;
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(sessionUser?.role ?? userSession?.role ?? '');
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
-  const selectedAttendees = roster
-    .filter((toon) => selectedMembers.includes(toon.rowIndex))
-    .sort(compareBossAttendeeToons);
-
   return (
     <div className="space-y-6">
       {activeView === 'dkp' && <><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
@@ -505,7 +465,7 @@ function Dashboard() {
                       <BossIcon bossName={selectedBoss} className="h-10 w-10 shrink-0" />
                       <div className="min-w-0">
                         <h4 className="text-xs font-bold text-white">{selectedBoss} hall of fame</h4>
-                        <p className="mt-0.5 text-[10px] text-slate-500">Top 10 by appearances · sorted by subrole, then name</p>
+                        <p className="mt-0.5 text-[10px] text-slate-500">Top 10 by recorded appearances</p>
                       </div>
                     </div>
                     {bossSuggestions.length > 0 && (
@@ -524,13 +484,13 @@ function Dashboard() {
                     <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-400">Updating raid history…</p>
                   ) : bossSuggestions.length > 0 ? (
                     <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-3 2xl:grid-cols-4">
-                      {bossSuggestions.map(({ toon, count, activityRank }) => {
+                      {bossSuggestions.map(({ toon, count }, index) => {
                         const selected = selectedMembers.includes(toon.rowIndex);
-                        const rankStyle = activityRank === 1
+                        const rankStyle = index === 0
                           ? 'border-amber-300/35 bg-amber-300/[.08] text-amber-200'
-                          : activityRank === 2
+                          : index === 1
                             ? 'border-slate-300/25 bg-slate-300/[.06] text-slate-200'
-                            : activityRank === 3
+                            : index === 2
                               ? 'border-orange-300/25 bg-orange-300/[.06] text-orange-200'
                               : 'border-slate-700 bg-slate-950/60 text-slate-500';
                         return (
@@ -544,14 +504,14 @@ function Dashboard() {
                             title={`${toon.account || toon.owner} · ${toon.owner}`}
                             className={`group relative flex min-h-11 min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/45 bg-emerald-300/[.08]' : 'border-slate-800/90 bg-slate-950/45 hover:border-violet-300/30 hover:bg-slate-900'}`}
                           >
-                            <span title={`Activity rank ${activityRank}`} className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[9px] font-black ${rankStyle}`}>{activityRank}</span>
+                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[9px] font-black ${rankStyle}`}>{index + 1}</span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-[11px] font-bold leading-tight text-white">{toon.account || toon.owner}</span>
                               {toon.account && toon.owner.toLocaleLowerCase() !== toon.account.toLocaleLowerCase() && <span className="mt-0.5 block truncate text-[9px] leading-tight text-slate-500">{toon.owner}</span>}
                             </span>
                             <RoleBadge role={toon.subClass} gameClass compact />
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-700 text-slate-600'}`}>{selected ? '✓' : '+'}</span>
-                            <span className="absolute inset-x-0 bottom-0 h-[2px] bg-slate-800/80"><span className={`block h-full ${activityRank === 1 ? 'bg-gradient-to-r from-amber-300 to-yellow-100' : 'bg-gradient-to-r from-violet-500 to-cyan-300'}`} style={{ width: `${Math.max(8, Math.round(count / highestBossActivity * 100))}%` }} /></span>
+                            <span className="absolute inset-x-0 bottom-0 h-[2px] bg-slate-800/80"><span className={`block h-full ${index === 0 ? 'bg-gradient-to-r from-amber-300 to-yellow-100' : 'bg-gradient-to-r from-violet-500 to-cyan-300'}`} style={{ width: `${Math.max(8, Math.round(count / highestBossActivity * 100))}%` }} /></span>
                           </button>
                         );
                       })}
@@ -562,9 +522,8 @@ function Dashboard() {
                 </section>
 
                 <div aria-live="polite" className="boss-picker-scroll mb-2 flex h-10 shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-lg border border-slate-800/80 bg-slate-950/35 px-2">
-                  {selectedAttendees.length > 0 ? selectedAttendees.map((toon) => (
-                    <span key={toon.rowIndex} className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2 py-1 text-[10px] font-medium text-indigo-200">
-                      <RoleBadge role={toon.subClass} gameClass compact />
+                  {selectedMembers.length > 0 ? roster.filter((toon) => selectedMembers.includes(toon.rowIndex)).map((toon) => (
+                    <span key={toon.rowIndex} className="shrink-0 rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2.5 py-1 text-[10px] font-medium text-indigo-200">
                       {toon.account || toon.owner}
                     </span>
                   )) : <p className="px-1 text-[10px] text-slate-500">Selected attendees</p>}
