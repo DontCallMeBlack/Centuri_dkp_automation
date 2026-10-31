@@ -352,7 +352,7 @@ function Dashboard() {
                                 {toon.account || toon.owner}
                               </span>
                             </td>
-                            <td className="roster-role-cell overflow-hidden px-2 py-2.5 sm:px-3">
+                            <td className="roster-role-cell px-2 py-2.5 sm:px-3">
                               <RoleBadge role={toon.subClass} gameClass className={roleStyle} />
                             </td>
                             <td className="hidden max-w-36 px-3 py-2.5 text-sm text-slate-300 lg:table-cell">
