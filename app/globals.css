@@ -84,6 +84,8 @@ svg { flex-shrink: 0; }
 .roster-table td { padding: 15px 18px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.045); }
 .roster-table tbody tr:last-child td { border-bottom: none; }
 .roster-table tbody tr:hover { background: rgba(151,145,255,.045); }
+.roster-role-cell { text-align: center; vertical-align: middle; }
+.roster-role-cell .role-badge { margin-inline: auto; white-space: nowrap; max-width: none; }
 .role-badge { display: inline-flex; align-items: center; justify-content: center; gap: 7px; max-width: 100%; border: 1px solid currentColor; border-color: color-mix(in srgb,currentColor 26%,transparent); padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb,currentColor 9%,transparent); font-size: 10px; font-weight: 650; text-transform: capitalize; line-height: 1.2; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
 .role-gold { color: #d8b969; }.role-violet { color: #afa1e9; }.role-cyan { color: #83baca; }.role-slate { color: #92a0ba; }.role-orange { color: #df9d80; }.role-green { color: #84b99b; }.role-rose { color: #cd96ac; }
 .skeleton-surface { padding: 24px; min-height: 240px; }
@@ -331,8 +333,7 @@ svg { flex-shrink: 0; }
   .stat-label { font-size: 11px; line-height: 1.5; }
   .roster-table { white-space: normal; table-layout: fixed; }
   .roster-table th, .roster-table td { padding-inline: 8px; }
-  .roster-table .role-badge { max-width: 100%; overflow-wrap: anywhere; font-size: 10px; padding: 5px 6px; }
-  .roster-table .role-badge > span { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.4; }
+  .roster-table .role-badge { gap: 5px; font-size: 10px; padding: 5px 7px; }
   .roster-table th { font-size: 9px; letter-spacing: .03em; }
   .connection-notice { margin-inline: 16px; }
   .auth-form-side { padding-bottom: max(32px, env(safe-area-inset-bottom)); }
