@@ -798,7 +798,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     : filteredAuctions;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 pb-8">
+    <div className="auction-page mx-auto max-w-6xl space-y-5 pb-8">
       <section className="auction-heading surface relative overflow-hidden">
         <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl" />
         <div className="relative flex flex-col gap-5 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
@@ -1214,7 +1214,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
                     <div className="@container min-w-0">
                       {auction.highBid ? (
-                        <div className="relative grid gap-2 overflow-hidden rounded-xl border border-amber-300/20 bg-gradient-to-br from-amber-300/[0.12] via-amber-400/[0.04] to-slate-950/70 p-4 text-center shadow-inner shadow-amber-200/[0.03] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
+                        <div className="auction-leading-bid relative grid gap-2 overflow-hidden rounded-xl border border-amber-300/20 bg-gradient-to-br from-amber-300/[0.12] via-amber-400/[0.04] to-slate-950/70 p-4 text-center shadow-inner shadow-amber-200/[0.03] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:text-left">
                           <div className="min-w-0">
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{auction.status === 'completed' ? 'Winning toon' : isActive ? 'Leading toon' : 'Last leading bid'}</p>
                             <p className="mt-1 break-all text-lg font-bold leading-snug text-slate-100">{auction.highBid.account || auction.highBid.owner}</p>

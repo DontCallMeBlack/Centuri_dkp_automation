@@ -1,0 +1,109 @@
+/* Presentation only: preserve permissions, form controls, data and action handlers. */
+.workspace {
+  --refresh-border: #9ab3ce26;
+  --refresh-soft: #0d1724;
+  background: radial-gradient(ellipse at 85% 0, #284a5b20, transparent 46%), #0a101a;
+}
+.workspace .workspace-content { max-width: 1480px; padding-top: 34px; }
+.workspace .workspace-header { height: 68px; background: #0b131fee; }
+.workspace .desktop-sidebar { background: linear-gradient(180deg, #111e2d, #0b131f 70%); }
+.workspace .shell-nav-link { min-height: 48px; gap: 13px; }
+.workspace .shell-nav-link.is-active { border-color: #dfbd8045; background: #dfbd8014; box-shadow: inset 3px 0 #dfbd80; }
+.workspace .shell-nav-link.is-active::after { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #dfbd80; margin-left: auto; }
+.workspace .shell-nav-link.is-active .nav-end { display: none; }
+.workspace .profile-card { border-top-color: #dfbd8040; background: #172434; }
+.workspace .page-title { font-size: clamp(28px, 2.7vw, 40px); font-weight: 650; letter-spacing: -.04em; line-height: 1.18; }
+.workspace .page-description { max-width: 66ch; line-height: 1.65; }
+.workspace .page-kicker { letter-spacing: .14em; }
+.workspace .surface { border-radius: 16px; border-color: var(--refresh-border); background: linear-gradient(125deg, #152232, #111b29); box-shadow: 0 8px 24px #00000012; }
+.workspace .stat-card { min-height: 112px; padding: 20px; }
+.workspace .stat-value { font-size: 32px; line-height: 1.1; }
+.workspace .stat-card:hover, .workspace .member-account-card:hover { transform: none; box-shadow: none; }
+.workspace .section-tabs { padding: 6px; border-radius: 12px; gap: 5px; background: #0b1421; }
+.workspace .section-tab { min-height: 44px; }
+.workspace .section-tab[aria-pressed='true'] { background: #dfbd8019; border-color: #dfbd8040; box-shadow: inset 0 -2px #dfbd80; }
+.workspace .section-tab > span:last-child { border: 1px solid #ffffff14; border-radius: 6px; min-width: 24px; padding: 2px 5px; text-align: center; font-variant-numeric: tabular-nums; }
+.workspace .primary-button, .workspace .secondary-button { line-height: 1.4; }
+.workspace .primary-button:hover, .workspace .secondary-button:hover { transform: none; }
+.workspace .search-field input { background: #0b1522; border-color: #9ab3ce32; }
+.workspace .empty-state { min-height: 160px; background: #0b142180; border-color: #9ab3ce30; }
+.workspace .empty-state-icon { background: #dfbd800a; box-shadow: none; }
+.workspace .toon-balance { border-radius: 13px; border-color: #a6bcd329; background: #0d1826; }
+.workspace .toon-balance::before { width: 3px; background: #dfbd8070; }
+.workspace .toon-balance > div:nth-of-type(2) > p { font-size: 38px; font-weight: 650; }
+.workspace .toon-balance > div:last-child { padding-top: 14px; font-size: 11px; }
+.workspace .roster-table th { padding-block: 14px; color: #aebbd0; background: #0e1928; }
+.workspace .roster-table td { padding-block: 15px; border-bottom-color: #a6bcd312; }
+.workspace .roster-table td:last-child { font-size: 15px; font-weight: 700; }
+.workspace .roster-table tbody tr:hover { background: #b4c9e00b; }
+/* Keep the approved role dimensions, icons, colors and unclipped rounded ends. */
+.workspace .roster-role-cell { overflow: visible; }
+.workspace .role-badge { box-shadow: none; }
+.workspace .member-account-card { border-radius: 13px; border-color: #a6bcd326; background: #111e2d; }
+.workspace .member-account-card > div { gap: 18px; }
+.workspace .member-account-card h3 { font-size: 16px; letter-spacing: -.015em; }
+.workspace .member-account-card .secondary-button { background: #172638; box-shadow: none; }
+.workspace .clan-toons-panel > div > article { border-radius: 13px; border-color: #a6bcd326; background: #101c2a; box-shadow: none; }
+.workspace .clan-toons-panel article h3 { font-size: 15px; }
+.workspace .clan-toons-panel article button { font-size: 11px; }
+.workspace .activity-record { position: relative; padding: 18px 20px 18px 30px; background: #101b29; border-left: 2px solid #8ebdce40; }
+.workspace .activity-record::before { content: ''; position: absolute; top: 25px; left: 12px; width: 6px; height: 6px; background: #8ebdce; border-radius: 50%; }
+.workspace .activity-record > div > p:first-child { font-weight: 500; line-height: 1.6; }
+.workspace .activity-record[data-undone='true'] { border-left-color: #dfbd8030; background: #111a25; }
+.workspace .activity-record[data-undone='true']::before { background: #dfbd80; }
+.workspace .activity-record[data-undone='true'] > div > p:first-child { color: #a7b5c8; }
+.workspace .raid-record { border-radius: 14px; }
+.workspace .raid-record > div:first-child { height: 2px; }
+.workspace .raid-record > div:nth-child(2) { background: #111f2e; border-color: #a6bcd31c; }
+.workspace .raid-record[data-record-status='deleted'] { border-color: #d28a9a26; background: #111923; }
+.workspace .raid-record[data-record-status='deleted'] > div:nth-child(2) { background: #201b27; }
+.workspace .raid-record[data-record-status='deleted'] h2 { color: #c5b7c2; }
+.workspace .raid-record h2 { font-size: 19px; font-weight: 650; }
+.workspace .raid-history > div:first-child { padding-bottom: 8px; }
+.workspace .auction-heading { border-top: 2px solid #dfbd8060; padding-bottom: 0; }
+.workspace .auction-heading h1 { font-size: clamp(28px, 3vw, 38px); font-weight: 650; }
+.workspace .auction-card { border-radius: 15px; box-shadow: none; background: #111e2d; }
+.workspace .auction-card:hover { transform: none; box-shadow: none; }
+.workspace .auction-card > header { border-bottom: 1px solid #a6bcd318; padding: 20px; margin-bottom: 16px; }
+.workspace .auction-card h4 { font-size: 20px; font-weight: 650; line-height: 1.4; }
+.workspace .auction-card img, .workspace .auction-card:hover img { transform: none; }
+.workspace .auction-leading-bid { background: #dfbd800b; border-color: #dfbd8045; box-shadow: none; padding: 18px; }
+.workspace .auction-leading-bid > p { filter: none; font-weight: 650; }
+.workspace .item-catalog-card { border-radius: 14px; }
+.workspace .item-catalog-card h4 { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; font-size: 15px; }
+.workspace .item-catalog-card > div:first-child { border-color: #a6bcd330; background: #0a1420; }
+.workspace .item-catalog fieldset { border-radius: 12px; }
+.workspace .item-catalog fieldset label { border-radius: 9px; }
+.workspace .role-changes-heading { border-radius: 16px; background: #142334; padding: 24px; }
+.workspace .role-changes-heading h1 { font-weight: 650; letter-spacing: -.035em; }
+.workspace .role-changes-heading > [aria-hidden='true'] { display: none; }
+.workspace .role-changes-page > section { border-radius: 16px; border-color: #a6bcd326; background: #111d2b; box-shadow: none; }
+.workspace .role-changes-page article { border-radius: 12px; background: #0c1724; box-shadow: none; }
+.workspace .role-changes-page article h3 { font-size: 15px; }
+.app-dialog:not(.mobile-nav-dialog) { border-radius: 18px; border-color: #a6bcd340; background: #111e2d; box-shadow: 0 28px 90px #0008; }
+.app-dialog:not(.mobile-nav-dialog) input:not([type='checkbox']):not([type='radio']):not([type='range']), .app-dialog select, .app-dialog textarea { border-radius: 10px; }
+.auth-grid .auth-story { background: radial-gradient(ellipse at 0 0, #33576d35, transparent 65%), #101e2d; }
+.auth-grid .auth-headline { font-size: clamp(40px, 4.4vw, 66px); line-height: 1.13; }
+.auth-grid .auth-feature { padding-block: 18px; }
+.auth-grid .auth-form-side { background: #0b131f; }
+.auth-grid .auth-form-side > div { max-width: 410px; }
+.auth-grid .auth-form-side h1 { font-size: 36px; font-weight: 600; }
+.auth-grid .auth-input { height: 54px; background: #101e2d; border-color: #a6bcd335; }
+@media (max-width: 767px) {
+  .workspace .workspace-content { padding: 24px 16px 40px; }
+  .workspace .workspace-header { height: 64px; }
+  .workspace .page-title { font-size: 29px; }
+  .workspace .stat-card { min-height: 100px; padding: 16px 12px; }
+  .workspace .stat-value { font-size: 28px; }
+  .workspace .roster-table td { padding-block: 14px; }
+  .workspace .roster-table td:last-child { font-size: 14px; }
+  .workspace .auction-card > header { padding: 16px; }
+  .workspace .auction-card h4 { font-size: 18px; }
+  .workspace .clan-administration > .surface { padding: 14px; }
+  .workspace .clan-administration .section-tab { padding-inline: 10px; gap: 6px; }
+  .workspace .activity-record { padding-right: 14px; }
+  .workspace .activity-record > button { align-self: flex-end; }
+  .workspace .role-changes-heading { padding: 20px; }
+  .auth-grid .auth-form-side { padding: 28px 22px; }
+  .auth-grid .auth-form-side h1 { font-size: 32px; }
+}

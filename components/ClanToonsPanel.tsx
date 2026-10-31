@@ -99,7 +99,7 @@ export default function ClanToonsPanel({ active, accountId, onChanged }: { activ
   const blocked = busy || Boolean(data?.pending);
   const amount = (value: number | null) => value === null ? 'Needs review' : value.toLocaleString();
 
-  return <div className="mt-6 space-y-5">
+  return <div className="clan-toons-panel mt-6 space-y-5">
     <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan roster</p><h2 className="mt-1 text-xl font-bold text-white">Every toon starts here.</h2><p className="mt-2 text-sm leading-6 text-slate-400">Add a new clan toon with zero DKP, then link it to an account from Members.</p></div><button type="button" className="primary-button self-start" disabled={blocked || !data} onClick={() => { setError(''); setCreating(true); }}><Plus size={16} />Add a toon</button></header>
     {(error || readError) && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-200">{error || readError}</p>}
     {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${busy ? 'border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'}`}>{busy && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}

@@ -128,7 +128,7 @@ export default function RoleChangesPage() {
       Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') ||
       first.rowIndex - second.rowIndex);
 
-  return <div className="mx-auto max-w-5xl space-y-6">
+  return <div className="role-changes-page mx-auto max-w-5xl space-y-6">
     <header className="role-changes-heading relative isolate flex flex-col gap-4 overflow-hidden rounded-3xl border border-indigo-300/15 bg-gradient-to-br from-indigo-500/[.12] via-slate-900/90 to-violet-500/[.08] p-5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:flex-row sm:items-center sm:justify-between sm:p-7 [&>p]:inline-flex [&>p]:w-fit [&>p]:items-center [&>p]:gap-2 [&>p]:rounded-xl [&>p]:border [&>p]:border-white/10 [&>p]:bg-slate-950/45 [&>p]:px-3.5 [&>p]:py-2.5 [&>p]:shadow-inner [&>p]:shadow-black/20 [&>p]:backdrop-blur">
       <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-20 -z-10 h-64 w-64 rounded-full bg-indigo-400/15 blur-3xl" />
       <div aria-hidden="true" className="pointer-events-none absolute -bottom-28 left-1/3 -z-10 h-52 w-52 rounded-full bg-violet-400/10 blur-3xl" />
