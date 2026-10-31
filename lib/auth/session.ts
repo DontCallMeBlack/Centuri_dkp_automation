@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import type { Types } from 'mongoose';
 import dbConnect from '@/lib/mongodb';
 import AuthSession from '@/lib/models/AuthSession';
-import User from '@/lib/models/User';
+import User, { type IUser } from '@/lib/models/User';
 import { SESSION_MAX_AGE_SECONDS } from './validation';
 import { hashSessionToken, newSessionToken, sessionCookieOptions, SESSION_TOKEN_PATTERN } from './tokens';
 
@@ -29,10 +29,21 @@ export async function getSessionUser() {
   // Old JWTs are intentionally invalid after the server-session migration.
   if (!token || !SESSION_TOKEN_PATTERN.test(token)) return null;
   await dbConnect();
-  const session = await AuthSession.findOne({ _id: hashSessionToken(token), expiresAt: { $gt: new Date() } }).lean();
-  if (!session) return null;
-  const user = await User.findById(session.userId).select('_id nickname role status sheetRecordName sheetRecords').lean();
-  return user?.status === 'approved' ? user : null;
+  // Keep revocation and current permissions authoritative, in one database round trip.
+  type SessionUser = Pick<IUser, 'nickname' | 'role' | 'status' | 'sheetRecordName' | 'sheetRecords'> & { _id: Types.ObjectId };
+  const users = await AuthSession.aggregate<SessionUser>([
+    { $match: { _id: hashSessionToken(token), expiresAt: { $gt: new Date() } } },
+    { $lookup: {
+      from: User.collection.name, localField: 'userId', foreignField: '_id', as: 'user',
+      pipeline: [
+        { $match: { status: 'approved' } },
+        { $project: { nickname: 1, role: 1, status: 1, sheetRecordName: 1, sheetRecords: 1 } },
+      ],
+    } },
+    { $unwind: '$user' },
+    { $replaceRoot: { newRoot: '$user' } },
+  ]);
+  return users[0] ?? null;
 }
 
 export function canManageClan(role: string) {

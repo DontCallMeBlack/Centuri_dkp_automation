@@ -29,7 +29,9 @@ export async function GET(req: Request) {
         .select('nickname role sheetRecordName sheetRecords')
         .sort({ nickname: 1 })
         .lean(),
-      BossAward.aggregate<{ bossName: string; owner: string; account: string; count: number }>([
+      // Attendance suggestions are only needed when a manager opens the award
+      // picker (fresh=1), not on every member's leaderboard visit or refresh.
+      fresh ? BossAward.aggregate<{ bossName: string; owner: string; account: string; count: number }>([
         { $match: { status: 'applied' } },
         { $unwind: '$participants' },
         { $group: {
@@ -37,7 +39,7 @@ export async function GET(req: Request) {
           count: { $sum: 1 },
         } },
         { $project: { _id: 0, bossName: '$_id.bossName', owner: '$_id.owner', account: '$_id.account', count: 1 } },
-      ]).exec(),
+      ]).exec() : Promise.resolve([]),
     ]);
     const roster = rosterSnapshot.roster;
     const identities = roster.map(getSheetRecordKey);

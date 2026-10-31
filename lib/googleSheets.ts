@@ -1,7 +1,8 @@
 // lib/googleSheets.ts
 import { createHash, randomUUID } from 'node:crypto';
 import mongoose, { type ClientSession, type Types } from 'mongoose';
-import { google } from 'googleapis';
+// Import only Sheets; the root SDK eagerly loads hundreds of unrelated APIs.
+import { sheets as googleSheets, auth as googleAuth } from 'googleapis/build/src/apis/sheets';
 import AuctionHold from '@/lib/models/AuctionHold';
 import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
@@ -43,7 +44,7 @@ const WEEKLY_RESET_POLL_MS = 250;
 type SheetValueUpdate = { range: string; values: number[][] };
 type SheetIdentity = { rowIndex: number; owner: string; account: string };
 
-const auth = new google.auth.GoogleAuth({
+const auth = new googleAuth.GoogleAuth({
   credentials: {
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
@@ -108,10 +109,10 @@ async function withGoogleSheetsRetry<T>(operation: () => Promise<T>, retryTransi
 }
 
 function createSheetsClient() {
-  return google.sheets({ version: 'v4', auth, timeout: 20_000 });
+  return googleSheets({ version: 'v4', auth, timeout: 20_000 });
 }
 
-async function getRosterSheetId(sheets: ReturnType<typeof google.sheets>) {
+async function getRosterSheetId(sheets: ReturnType<typeof googleSheets>) {
   const response = await withGoogleSheetsRetry(() => sheets.spreadsheets.get({
     spreadsheetId: getSpreadsheetId(), fields: 'sheets.properties(sheetId,title)',
   }), true);
@@ -218,7 +219,7 @@ function assertRecoveryIdentities(identities: SheetIdentity[] | undefined, rows:
   }
 }
 
-async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnType<typeof google.sheets>, lockId: string) {
+async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnType<typeof googleSheets>, lockId: string) {
   const pending = await DkpSheetMutation.findOne({ spreadsheetId, status: 'pending' }).sort({ createdAt: 1 });
   if (!pending) return false;
   const rows = await readSheetRows(sheets);
@@ -565,13 +566,29 @@ function isRosterCacheFresh(fetchedAt: Date | undefined, now: number) {
   return fetchedAt instanceof Date && now - fetchedAt.getTime() < ROSTER_CACHE_TTL_MS;
 }
 
-export async function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
+let rosterRead: ReturnType<typeof readSheetRosterSnapshot> | null = null;
+
+export function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
+  // Share concurrent display reads in this instance, without retaining a stale
+  // balance or weakening explicit fresh reads used before an award.
+  if (options.fresh) return readSheetRosterSnapshot(options);
+  if (rosterRead) return rosterRead;
+  const request = readSheetRosterSnapshot(options).finally(() => {
+    if (rosterRead === request) rosterRead = null;
+  });
+  rosterRead = request;
+  return request;
+}
+
+async function readSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
   await dbConnect();
   const cacheKey = getSpreadsheetId();
   // Read-only views must remain available while a different toon's data needs
   // repair. Rollover/recovery still runs under the ledger lock before writes.
   const now = Date.now();
-  const staleAtRequest = await ensureSheetRosterCacheDocument(cacheKey);
+  // Ordinary reads must not queue writes against the same shared document.
+  const staleAtRequest = await SheetRosterCache.findOne({ cacheKey }).lean()
+    ?? await ensureSheetRosterCacheDocument(cacheKey);
 
   const requestStartedAt = new Date(now);
   if (!options.fresh && staleAtRequest && isRosterCacheFresh(staleAtRequest.fetchedAt, now)) {
@@ -707,6 +724,7 @@ export async function getSheetRoster(options: { fresh?: boolean } = {}) {
 }
 
 export async function invalidateSheetRosterCache() {
+  rosterRead = null;
   const cacheKey = getSpreadsheetId();
   await SheetRosterCache.updateOne(
     { cacheKey },

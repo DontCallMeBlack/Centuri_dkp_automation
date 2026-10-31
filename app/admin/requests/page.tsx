@@ -137,7 +137,7 @@ export default function AdminRequestsPage() {
   const initialArchiveData = peekData<ArchiveData>(ARCHIVE_DATA_URL);
   const mountedRef = useRef(true);
   const loadSequence = useRef(0);
-  const initialLoadStarted = useRef(Boolean(initialAdminData));
+  const initialLoadStarted = useRef(false);
   const dirtyMappings = useRef(new Set<string>());
   const mutationPending = useRef(false);
   const originalMappings = useRef<Record<string, number[]>>({});
@@ -174,11 +174,11 @@ export default function AdminRequestsPage() {
     if (data.archivedToons) setArchivedToons(data.archivedToons);
     setSelectedMappings((current) => Object.fromEntries([...data.pendingUsers,...data.members].map((member) => [member._id,dirtyMappings.current.has(member._id) ? current[member._id] ?? member.sheetRecordRows ?? [] : member.sheetRecordRows ?? []])));
   }, []);
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (maxAgeMs = 0) => {
     if (!mountedRef.current) return;
     const sequence = ++loadSequence.current;
     try {
-      const data = await getData<AdminData>('/api/admin/requests');
+      const data = await getData<AdminData>('/api/admin/requests', { maxAgeMs });
       if (mountedRef.current && sequence === loadSequence.current) {
         applyData(data);
         setAccessRole(''); setError('');
@@ -226,7 +226,7 @@ export default function AdminRequestsPage() {
   useEffect(() => {
     if (initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void loadData();
+    void loadData(15_000);
   }, [loadData]);
   useEffect(() => {
     const refreshForSessionChange = () => {

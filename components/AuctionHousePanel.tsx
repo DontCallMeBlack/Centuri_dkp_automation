@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
@@ -161,6 +161,31 @@ function formatRemaining(endsAt: string, now: number) {
   return `${hours}h ${minutes}m ${remainingSeconds}s`;
 }
 
+let clockValue = 0;
+let countdownTimer: ReturnType<typeof setInterval> | undefined;
+const clockListeners = new Set<() => void>();
+const readClock = () => clockValue;
+const serverClock = () => 0;
+function subscribeClock(listener: () => void) {
+  clockValue = Date.now();
+  clockListeners.add(listener);
+  countdownTimer ??= setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    clockValue = Date.now();
+    for (const notify of clockListeners) notify();
+  }, 1000);
+  return () => {
+    clockListeners.delete(listener);
+    if (!clockListeners.size) { clearInterval(countdownTimer); countdownTimer = undefined; }
+  };
+}
+
+function AuctionCountdown({ endsAt }: { endsAt: string }) {
+  const now = useSyncExternalStore(subscribeClock, readClock, serverClock);
+  const endingSoon = now > 0 && new Date(endsAt).getTime() - now <= 30_000;
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{now ? formatRemaining(endsAt, now) : '…'}</span>;
+}
+
 function AuctionItemImage({ itemId, imageCount, alt, className }: {itemId:string; imageCount:number; alt:string; className:string}) {
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const [imageIndex, setImageIndex] = useState(0);
@@ -250,7 +275,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const fullRefreshCount = useRef(0);
   const liveEpoch = useRef(0);
   const initialRefreshStarted = useRef(false);
-  const refreshRef = useRef<() => Promise<unknown>>(async () => undefined);
+  const refreshRef = useRef<(maxAgeMs?: number) => Promise<unknown>>(async () => undefined);
   const [loading, setLoading] = useState(() => !initialAuctionData);
   const [syncing, setSyncing] = useState(() => Boolean(initialAuctionData));
   const [lastSyncedAt, setLastSyncedAt] = useState<number>(0);
@@ -350,20 +375,32 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     };
     // Poll live auction state less often when the next auction is far from ending.
     schedulePoll();
-    const clockTimer = window.setInterval(() => { if (activeRef.current && document.visibilityState === 'visible') setNow(Date.now()); }, 1000);
     return () => {
       mounted = false;
       window.clearTimeout(refreshTimer);
-      window.clearInterval(clockTimer);
     };
   }, [active, data?.auctions]);
 
-  const refresh = async () => {
+  // Re-render the auction list at expiry; only countdown text updates each second.
+  useEffect(() => {
+    if (!active) return;
+    const tick = () => setNow(Date.now());
+    const nextEnd = Math.min(...(data?.auctions ?? [])
+      .filter((auction) => auction.status === 'active' && !auction.biddingClosed)
+      .map((auction) => new Date(auction.endsAt).getTime())
+      .filter((end) => end > now));
+    const timer = Number.isFinite(nextEnd)
+      ? window.setTimeout(tick, Math.min(2_147_483_647, Math.max(0, nextEnd - Date.now()))) : undefined;
+    document.addEventListener('visibilitychange', tick);
+    return () => { window.clearTimeout(timer); document.removeEventListener('visibilitychange', tick); };
+  }, [active, data?.auctions, now]);
+
+  const refresh = async (maxAgeMs = 0) => {
     fullRefreshCount.current += 1; liveEpoch.current += 1;
     setSyncing(true);
     const version = clientDataVersion();
     try {
-      const result = await getData<AuctionData>('/api/auction');
+      const result = await getData<AuctionData>('/api/auction', { maxAgeMs });
       if (version !== clientDataVersion()) return;
       setError('');
       dataRef.current = result;
@@ -385,7 +422,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   useEffect(() => {
     if (!active || initialRefreshStarted.current) return;
     initialRefreshStarted.current = true;
-    void refreshRef.current().catch((cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed.'));
+    void refreshRef.current(15_000).catch((cause) => setError(cause instanceof Error ? cause.message : 'Auction updates are delayed.'));
   }, [active]);
 
   useEffect(() => {
@@ -1129,8 +1166,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <div className="grid w-full gap-4 xl:grid-cols-2">
             {visibleAuctions.map((auction) => {
               const isActive = auction.status === 'active' && !auction.biddingClosed && new Date(auction.endsAt).getTime() > now;
-              const secondsLeft = Math.max(0, Math.floor((new Date(auction.endsAt).getTime() - now) / 1000));
-              const endingSoon = isActive && secondsLeft <= 30;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
               const eligibleToons = data.toons.filter((toon) =>
                 toon.canBid !== false && toon.available !== null && canRoleBid(toon.subClass, auctionRoles),
@@ -1172,7 +1207,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-black tracking-wider ${isActive ? 'bg-emerald-300 text-emerald-950' : auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{isActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-900" />}{isActive ? 'LIVE' : auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>
                       {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}
                       <span className="rounded-full border border-slate-700 bg-slate-950/60 px-2 py-1 text-[10px] font-semibold text-slate-400">{auction.bossType}</span>
-                      {isActive && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{formatRemaining(auction.endsAt, now)}</span>}
+                      {isActive && active && <AuctionCountdown endsAt={auction.endsAt} />}
                       {!isActive && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400">{auction.status === 'settlement-failed' ? <ShieldAlert className="h-3.5 w-3.5 text-rose-300" /> : <Trophy className="h-3.5 w-3.5 text-amber-300" />}{auction.status === 'settlement-failed' ? 'Settlement needs review' : auction.status === 'completed' ? 'Auction closed' : 'Confirming auction result'}</span>}
                     </div>
 

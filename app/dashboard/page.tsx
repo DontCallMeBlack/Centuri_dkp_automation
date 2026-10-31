@@ -1,7 +1,7 @@
 // app/dashboard/page.tsx
 'use client';
 
-import { Suspense, useCallback, useState, useEffect, useRef, useDeferredValue } from 'react';
+import { Suspense, useCallback, useState, useEffect, useRef, useDeferredValue, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import RoleBadge from '@/components/RoleBadge';
@@ -13,10 +13,11 @@ import ToonDkpCards from '@/components/ToonDkpCards';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { ReadableRosterRecord } from '@/lib/sheetRoster';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
+import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, CheckCircle2, Users, Zap, X, Swords } from 'lucide-react';
-const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Every kill. Every contribution." /> });
+const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Boss history" /> });
 const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Find your next upgrade." /> });
 const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Great loot starts here." /> });
 
@@ -81,7 +82,7 @@ const ROLE_STYLES: Record<string, string> = {
   tank: 'border-pink-400/30 bg-pink-400/10 text-pink-300',
 };
 
-export default function DashboardPage() { return <Suspense fallback={<LoadingSurface fullLayout label="Preparing your dashboard" title="Welcome to Centuri." />}><Dashboard /></Suspense>; }
+export default function DashboardPage() { return <Suspense fallback={<LoadingSurface fullLayout label="Preparing your dashboard" title="Welcome back." />}><Dashboard /></Suspense>; }
 
 function Dashboard() {
   const searchParams = useSearchParams();
@@ -92,7 +93,6 @@ function Dashboard() {
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
-  const dkpLoaded = useRef(Boolean(initialDkpData));
   const [roster, setRoster] = useState<RosterMember[]>(() => initialDkpData?.roster ?? []);
   const [bossActivity, setBossActivity] = useState<BossActivityScore[]>(() => initialDkpData?.bossActivity ?? []);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>(() => initialDkpData?.clanMembers ?? []);
@@ -106,6 +106,8 @@ function Dashboard() {
   const [pickerRefreshing, setPickerRefreshing] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
   const deferredMemberQuery = useDeferredValue(memberQuery);
+  const [rosterLimit, setRosterLimit] = useState(50);
+  useEffect(() => { setRosterLimit(50); }, [deferredMemberQuery]);
   const [submitting, setSubmitting] = useState(false);
   const [pendingAward, setPendingAward] = useState<{ rows: number[]; points: number; bossName: string } | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
@@ -113,7 +115,7 @@ function Dashboard() {
 
   useEffect(() => {
     activeRef.current = true;
-    const clear = () => { dkpLoaded.current = false; setRoster([]); setBossActivity([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setPickerRefreshing(false); setMemberQuery(''); setLoading(true); };
+    const clear = () => { setRoster([]); setBossActivity([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setPickerRefreshing(false); setMemberQuery(''); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { activeRef.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -121,9 +123,9 @@ function Dashboard() {
   useEffect(() => { setVisitedViews((current) => current.has(activeView) ? current : new Set([...current, activeView])); }, [activeView]);
 
 
-  const fetchData = useCallback(async (fresh = false) => {
+  const fetchData = useCallback(async (fresh = false, maxAgeMs = 0) => {
     try {
-      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp');
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp', { maxAgeMs: fresh ? 0 : maxAgeMs });
       if (!data.success) throw new Error('The roster could not be refreshed.');
       if (!activeRef.current) return;
       setRoster(data.roster); setBossActivity(data.bossActivity ?? []); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSyncError('');
@@ -137,20 +139,7 @@ function Dashboard() {
       if (activeRef.current) setLoading(false);
     }
   }, [router]);
-  useEffect(() => {
-    if (activeView !== 'dkp' || dkpLoaded.current) return;
-    dkpLoaded.current = true;
-    void fetchData();
-  }, [activeView, fetchData]);
-  useEffect(() => {
-    const refreshAfterDkpChange = () => {
-      if (activeView !== 'dkp') { dkpLoaded.current = false; return; }
-      dkpLoaded.current = true;
-      void fetchData();
-    };
-    window.addEventListener('centuri:dkp-changed', refreshAfterDkpChange);
-    return () => window.removeEventListener('centuri:dkp-changed', refreshAfterDkpChange);
-  }, [activeView, fetchData]);
+  useAutoRefresh(() => fetchData(false, 15_000), { active: activeView === 'dkp' });
 
   const toggleMemberSelection = (rowIndex: number) => {
     setSelectedMembers((prev) =>
@@ -220,41 +209,43 @@ function Dashboard() {
     }
   };
 
-  const activeToons: ActiveToon[] = clanMembers.flatMap((member) =>
-    member.toons.map((toon) => ({ ...toon, memberNickname: member.nickname }))
-  );
-  const sortedActiveToons = [...activeToons].sort((first, second) => {
-    const firstRole = normalizeRole(first.subClass);
-    const secondRole = normalizeRole(second.subClass);
-    const firstRoleIndex = ROLE_ORDER.indexOf(firstRole);
-    const secondRoleIndex = ROLE_ORDER.indexOf(secondRole);
-    const firstHasOrderedRole = firstRoleIndex >= 0;
-    const secondHasOrderedRole = secondRoleIndex >= 0;
-    const roleDifference = firstHasOrderedRole && secondHasOrderedRole
-      ? firstRoleIndex - secondRoleIndex
-      : firstHasOrderedRole
-        ? -1
-        : secondHasOrderedRole
-          ? 1
-          : firstRole.localeCompare(secondRole, undefined, { sensitivity: 'base' });
-    return roleDifference ||
-      (second.available ?? -Infinity) - (first.available ?? -Infinity) ||
-      first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
-      (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
-  });
-  const roleRanks = new Map<string, number>();
-  const rankedActiveToons = sortedActiveToons
-    .map((toon, index) => {
-      const role = normalizeRole(toon.subClass) || 'unassigned';
-      const roleRank = (roleRanks.get(role) ?? 0) + 1;
-      roleRanks.set(role, roleRank);
-      return { ...toon, rank: index + 1, roleRank };
-    })
-    .filter((toon) =>
-      `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`
-        .toLowerCase()
-        .includes(deferredMemberQuery.toLowerCase())
+  const rankedToons = useMemo(() => {
+    const activeToons: ActiveToon[] = clanMembers.flatMap((member) =>
+      member.toons.map((toon) => ({ ...toon, memberNickname: member.nickname }))
     );
+    const sortedActiveToons = [...activeToons].sort((first, second) => {
+      const firstRole = normalizeRole(first.subClass);
+      const secondRole = normalizeRole(second.subClass);
+      const firstRoleIndex = ROLE_ORDER.indexOf(firstRole);
+      const secondRoleIndex = ROLE_ORDER.indexOf(secondRole);
+      const firstHasOrderedRole = firstRoleIndex >= 0;
+      const secondHasOrderedRole = secondRoleIndex >= 0;
+      const roleDifference = firstHasOrderedRole && secondHasOrderedRole
+        ? firstRoleIndex - secondRoleIndex
+        : firstHasOrderedRole
+          ? -1
+          : secondHasOrderedRole
+            ? 1
+            : firstRole.localeCompare(secondRole, undefined, { sensitivity: 'base' });
+      return roleDifference ||
+        (second.available ?? -Infinity) - (first.available ?? -Infinity) ||
+        first.owner.localeCompare(second.owner, undefined, { sensitivity: 'base' }) ||
+        (first.account || first.owner).localeCompare(second.account || second.owner, undefined, { sensitivity: 'base' });
+    });
+    const roleRanks = new Map<string, number>();
+    return sortedActiveToons
+      .map((toon, index) => {
+        const role = normalizeRole(toon.subClass) || 'unassigned';
+        const roleRank = (roleRanks.get(role) ?? 0) + 1;
+        roleRanks.set(role, roleRank);
+        return { ...toon, rank: index + 1, roleRank };
+      });
+
+  }, [clanMembers]);
+  const rankedActiveToons = useMemo(() => {
+    const query = deferredMemberQuery.trim().toLowerCase();
+    return rankedToons.filter((toon) => `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`.toLowerCase().includes(query));
+  }, [rankedToons, deferredMemberQuery]);
 
   const filteredRoster = roster.filter((member) =>
     `${member.owner} ${member.account} ${member.subClass}`
@@ -287,7 +278,7 @@ function Dashboard() {
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
       <RosterDataIssues issues={roster.flatMap((toon) => toon.dkpIssues ?? [])} />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
-        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',activeToons.length,'Linked to your clan']].map(([Icon,label,value,caption]) => {
+        {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',rankedToons.length,'Linked to your clan']].map(([Icon,label,value,caption]) => {
           const I = Icon as typeof Users;
           return <div key={String(label)} className="surface stat-card"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
         })}
@@ -344,7 +335,7 @@ function Dashboard() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80">
-                      {rankedActiveToons.map((toon) => {
+                      {rankedActiveToons.slice(0, rosterLimit).map((toon) => {
                         const roleStyle = ROLE_STYLES[toon.subClass.trim().toLowerCase()]
                           ?? 'border-slate-700 bg-slate-800 text-slate-300';
                         return (
@@ -377,6 +368,10 @@ function Dashboard() {
                       })}
                     </tbody>
                   </table>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/5 px-4 py-3 text-xs text-slate-400">
+                    <span role="status">Showing {Math.min(rosterLimit, rankedActiveToons.length)} of {rankedActiveToons.length} toons</span>
+                    {rosterLimit < rankedActiveToons.length && <button type="button" className="secondary-button" onClick={() => setRosterLimit((limit) => limit + 50)}>Show more toons</button>}
+                  </div>
                 </div>
               )}
             </section>

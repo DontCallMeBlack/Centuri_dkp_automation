@@ -101,14 +101,14 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     setCanManage(data.canManage === true); setAwards(data.awards); setRoster(data.roster); setNextCursor(data.nextCursor ?? null);
     setSelectedRows((previous) => ({...Object.fromEntries(data.awards.map((award) => [award.id,award.selectedRows])),...(editingRef.current ? {[editingRef.current]:previous[editingRef.current]} : {})}));
   }, []);
-  const loadHistory = useCallback(async (clearReadError = true) => {
+  const loadHistory = useCallback(async (clearReadError = true, maxAgeMs = 0) => {
     if (!mountedRef.current || historyPending.current) return;
     const version = clientDataVersion();
     const sequence = ++historySequence.current;
     historyPending.current = sequence;
     setRefreshing(true);
     try {
-      const data = await getData<HistoryData>('/api/admin/boss-history');
+      const data = await getData<HistoryData>('/api/admin/boss-history', { maxAgeMs });
       const combined = [...data.awards];
       let cursor = data.nextCursor;
       for (let page = 1; page < pageCount.current && cursor; page += 1) {
@@ -138,7 +138,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   useEffect(() => {
     if (!active || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void loadHistory();
+    void loadHistory(true, 15_000);
   }, [active, loadHistory]);
   useEffect(() => {
     if (!active) return;
