@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Dialog from '@/components/Dialog';
+import EmptyState from '@/components/EmptyState';
 import RoleBadge from '@/components/RoleBadge';
 import ItemSubrolePicker from '@/components/ItemSubrolePicker';
 import { resolveItemSubroles } from '@/lib/auctionRules';
@@ -530,7 +531,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
 
   return (
     <div className="item-catalog min-w-0 max-w-full space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Great loot starts here.</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">The clan collection</p><h1 className="page-title">Item catalog</h1><p className="page-description">Manage item images, eligible classes, and the boss they came from.</p></div><button type="button" className="primary-button" onClick={() => setCreateOpen((current) => !current)} aria-expanded={createOpen} aria-controls="create-catalog-form"><Plus size={15} />{createOpen ? 'Close new item' : 'Add an item'}</button></div>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
       {notice && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{notice}</p>}
@@ -583,8 +584,8 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-lg font-bold text-white">Catalog items</h3>
-            <p className="text-xs text-slate-400">{items.length} saved item{items.length === 1 ? '' : 's'}</p>
+            <h2 className="text-lg font-bold text-white">Catalog items</h2>
+            <p role="status" className="text-xs text-slate-400">{search.trim() ? `${filteredItems.length} of ${items.length}` : items.length} saved item{items.length === 1 ? '' : 's'}</p>
           </div>
           <label className="relative block sm:w-80">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
@@ -604,9 +605,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
             {Array.from({ length: 5 }, (_, index) => <article key={index} className="surface flex items-center gap-4 p-4"><div className="skeleton h-16 w-16 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><div className="skeleton h-4 w-2/5" /><div className="mt-3 flex gap-2"><div className="skeleton h-5 w-20 rounded-full" /><div className="skeleton h-5 w-16 rounded-full" /></div></div><div className="skeleton h-9 w-20 shrink-0 rounded-lg" /></article>)}
           </div>
         ) : filteredItems.length === 0 && !saving ? (
-          <p className="rounded-2xl border border-dashed border-slate-800 py-10 text-center text-sm text-slate-500">
-            {items.length ? 'No items match your search.' : 'No saved items yet.'}
-          </p>
+          <EmptyState title={items.length ? 'No items match your search' : 'Your item catalog is ready to grow'} description={items.length ? 'Try a shorter item name or clear your search.' : 'Choose Add an item to upload images and set eligible classes.'} onReset={search.trim() ? () => setSearch('') : undefined} />
         ) : (
           <div className="grid gap-3">
             {saving && <article role="status" aria-label="Adding item to catalog" className="surface flex items-center gap-4 border-indigo-400/20 p-4"><div className="skeleton h-16 w-16 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><p className="flex items-center gap-2 text-sm font-semibold text-indigo-200"><LoaderCircle size={14} className="animate-spin" />Adding item…</p><p className="mt-2 text-xs text-slate-500">The catalog will update when the upload is confirmed.</p></div></article>}

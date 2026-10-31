@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeftRight, ArrowRight, CalendarDays, Check, CircleAlert, LoaderCircle, ShieldCheck, X } from 'lucide-react';
+import { ArrowLeftRight, ArrowRight, CalendarDays, Check, CircleAlert, LoaderCircle, Search, ShieldCheck, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
+import EmptyState from '@/components/EmptyState';
 import RoleBadge from '@/components/RoleBadge';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clearClientData, getData, invalidateData, notifyDkpChanged, peekData, readResponse } from '@/lib/client/api';
@@ -56,6 +57,7 @@ export default function RoleChangesPage() {
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async (maxAgeMs = 0) => {
     if (!mounted.current) return false;
@@ -121,6 +123,7 @@ export default function RoleChangesPage() {
   const visibleToons = data?.toons ?? [];
   const orderedToons = [...visibleToons]
     .filter((toon) => !data?.canApprove || toon.isOwned || toon.request !== null)
+    .filter((toon) => `${toon.account} ${toon.owner} ${toon.currentRole} ${toon.request?.requestedRole ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((first, second) => Number(second.isOwned) - Number(first.isOwned) ||
       Number(second.request?.status === 'pending') - Number(first.request?.status === 'pending') ||
       first.rowIndex - second.rowIndex);
@@ -133,7 +136,8 @@ export default function RoleChangesPage() {
       <p className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-slate-950/45 px-3.5 py-2.5 text-xs text-slate-300 shadow-inner shadow-black/20 backdrop-blur"><CalendarDays size={15} className="text-indigo-200" /><span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cutoff</span><span className="font-semibold text-slate-200">{data ? `${dateLabel(data.nextChangeAt, { month: 'short', day: 'numeric', year: 'numeric' })} · 12 AM EST` : 'Loading…'}</span></p>
     </header>
 
-    {error && <p role="alert" className="flex items-start gap-2 rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-200"><CircleAlert size={16} className="mt-0.5 shrink-0" />{error}</p>}
+    <p className="page-description">Request a different subrole for a linked toon below. Approved changes take effect at the cutoff shown above; pending requests need a General’s approval.</p>
+    {error && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-200"><CircleAlert size={16} className="shrink-0" /><p className="flex-1">{error}</p><button type="button" className="secondary-button" disabled={Boolean(busyKey)} onClick={() => void load()}>Try again</button></div>}
     {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-sm text-emerald-200"><Check size={16} />{notice}</p>}
 
     {data?.canApprove && <section className="relative overflow-hidden rounded-3xl border border-amber-300/20 bg-gradient-to-br from-amber-300/[.09] via-slate-900/90 to-slate-950/80 shadow-xl shadow-black/20" aria-labelledby="approval-queue-title">
@@ -164,8 +168,9 @@ export default function RoleChangesPage() {
 
     <section className="overflow-hidden rounded-3xl border border-white/[.07] bg-gradient-to-br from-slate-900/75 via-slate-950/50 to-slate-950/80 shadow-xl shadow-black/15" aria-labelledby="active-toons-title">
       <header className="flex items-center justify-between gap-3 border-b border-white/[.07] px-4 py-4 sm:px-5"><div><p className="page-kicker">Subroles</p><h2 id="active-toons-title" className="mt-1 text-sm font-bold text-white">{data?.canApprove ? 'Your toons & open changes' : 'Your toons'}</h2></div>{!loading && <span className="rounded-full border border-white/[.08] bg-white/[.03] px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-400">{orderedToons.length}</span>}</header>
-      {loading ? <LoadingSurface rows={4} label="Loading toons" /> : orderedToons.length === 0 ? (
-        <div className="m-3 rounded-2xl border border-dashed border-white/10 bg-slate-950/25 px-4 py-10 text-center text-xs font-medium text-slate-400 sm:m-4">{data?.canApprove ? 'No open changes' : 'No linked toons'}</div>
+      <div className="px-4 pt-4"><label className="search-field"><Search /><input type="search" aria-label="Search role changes" placeholder="Search toon, owner, or subrole…" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
+      {loading ? <LoadingSurface rows={4} label="Loading toons" /> : !data && error ? null : orderedToons.length === 0 ? (
+        <div className="p-4"><EmptyState title={query.trim() ? 'No matching toons' : data?.canApprove ? 'No open changes' : 'No linked toons'} description={query.trim() ? 'Try another toon name or subrole.' : 'Linked toons and their role requests will appear here.'} onReset={query.trim() ? () => setQuery('') : undefined} /></div>
       ) : <div className="grid gap-2.5 p-3 sm:p-4">{orderedToons.map((toon) => {
         const request = toon.request;
         const pending = request?.status === 'pending';

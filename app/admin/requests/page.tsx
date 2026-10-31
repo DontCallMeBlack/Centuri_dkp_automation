@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import EmptyState from '@/components/EmptyState';
 import { useRouter } from 'next/navigation';
 import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/lib/client/api';
 import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
@@ -574,25 +575,25 @@ export default function AdminRequestsPage() {
   };
 
   if (loading) {
-    return <LoadingSurface fullLayout label="Preparing clan administration" title="Good people. Stronger clan." />;
+    return <LoadingSurface fullLayout label="Preparing clan administration" title="Members & access" />;
   }
 
   if (accessRole) {
     return (
-      <main className="surface flex min-h-80 items-center justify-center px-5 text-slate-100">
+      <section className="surface flex min-h-80 items-center justify-center px-5 text-slate-100">
         <section className="w-full max-w-md border-y border-slate-800 py-8 text-center">
           <Shield className="mx-auto h-8 w-8 text-amber-300" />
           <h1 className="mt-4 text-lg font-bold text-white">Manager access required</h1>
           <p className="mt-2 text-sm text-slate-400">This page is for Chief and General accounts. Your current role is <span className="capitalize text-slate-200">{accessRole}</span>.</p>
           <button onClick={() => router.push('/dashboard')} className="mt-5 rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800">Back to dashboard</button>
         </section>
-      </main>
+      </section>
     );
   }
 
   return (
-    <main className="space-y-6 text-slate-100">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Good people. Stronger clan.</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div></div>
+    <section className="space-y-6 text-slate-100">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Clan leadership</p><h1 className="page-title">Members &amp; access</h1><p className="page-description">Welcome new members, connect their toons, and manage access.</p></div></div>
       <div className="grid grid-cols-3 gap-3">{[[UserCheck,'Awaiting approval',pendingUsers.length],[Users,'Clan members',members.length],[ClipboardList,'Recorded actions',auditEvents.length]].map(([Icon,label,count]) => { const I=Icon as typeof Users; return <div key={String(label)} className="surface stat-card"><span className="stat-icon hidden sm:block"><I size={17} /></span><div><p className="stat-label">{String(label)}</p><p className="stat-value">{Number(count)}</p></div></div>; })}</div>
       <div className="surface p-5 sm:p-6">
         <nav aria-label="Administration sections" className="section-tabs !mt-0">
@@ -606,7 +607,7 @@ export default function AdminRequestsPage() {
               key={key}
               onClick={() => setSection(key)}
               aria-pressed={section === key}
-              className={`section-tab ${section === key ? '!border-indigo-400 !text-indigo-300' : ''}`}
+              className="section-tab"
             >
               <Icon className="h-4 w-4" /> {label}
               {count !== undefined && <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">{count}</span>}
@@ -657,7 +658,7 @@ export default function AdminRequestsPage() {
         {section === 'members' && (
           <section className="tab-panel-content mt-6">
             <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="page-kicker">Members</p><h2 className="mt-1 text-xl font-bold tracking-tight text-white">Approved accounts</h2></div><label className="search-field sm:w-72"><Search /><input aria-label="Search approved accounts" type="search" placeholder="Find a clan member..." value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} /></label></div>
-            {members.length === 0 ? <p className="border-y border-slate-800 py-10 text-center text-sm text-slate-500">No approved member accounts.</p> : (
+            {members.filter((member) => member.nickname.toLowerCase().includes(memberQuery.trim().toLowerCase())).length === 0 ? <EmptyState title={memberQuery.trim() ? 'No members match your search' : 'No approved member accounts'} description="Approved accounts and their linked toons appear here." onReset={memberQuery.trim() ? () => setMemberQuery('') : undefined} /> : (
               <div className="space-y-3">
                 {members.filter((member) => member.nickname.toLowerCase().includes(memberQuery.trim().toLowerCase())).map((member) => {
                   const promotedRole = getAdjacentRole(member.role, 'promote');
@@ -849,6 +850,6 @@ export default function AdminRequestsPage() {
           </div>
         </Dialog>;
       })()}
-    </main>
+    </section>
   );
 }

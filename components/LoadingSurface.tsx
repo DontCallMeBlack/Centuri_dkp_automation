@@ -25,7 +25,7 @@ export default function LoadingSurface({
         <div className="skeleton h-10 w-36 rounded-xl" />
       </header>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 sm:grid-cols-3">
         {[0, 1, 2].map((key) => <div key={key} className="surface stat-card"><div className="skeleton h-3 w-24" /><div className="skeleton mt-3 h-6 w-16" /><div className="skeleton mt-2 h-3 w-28" /></div>)}
       </div>
 

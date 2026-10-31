@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
+import EmptyState from '@/components/EmptyState';
 import RoleBadge from '@/components/RoleBadge';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { DkpCellIssue } from '@/lib/sheetRoster';
@@ -186,7 +187,7 @@ function AuctionCountdown({ endsAt }: { endsAt: string }) {
   return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{now ? formatRemaining(endsAt, now) : '…'}</span>;
 }
 
-function AuctionItemImage({ itemId, imageCount, alt, className }: {itemId:string; imageCount:number; alt:string; className:string}) {
+function AuctionItemImage({ itemId, imageCount, alt, className, showNavigation = true }: {itemId:string; imageCount:number; alt:string; className:string; showNavigation?:boolean}) {
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const [imageIndex, setImageIndex] = useState(0);
   const [readyItemId, setReadyItemId] = useState<string | null>(null);
@@ -227,7 +228,7 @@ function AuctionItemImage({ itemId, imageCount, alt, className }: {itemId:string
       </div>
     </div>}
     {failed && <div role="img" aria-label={`${alt}: image unavailable`} className="flex h-full min-h-10 flex-col items-center justify-center gap-1 text-[9px] text-slate-500"><ImageOff size={17} />Image unavailable</div>}
-    {total > 1 && <ImageNavigation imageIndex={imageIndex} imageTotal={total} setImageIndex={changeImage} />}
+    {showNavigation && total > 1 && <ImageNavigation imageIndex={imageIndex} imageTotal={total} setImageIndex={changeImage} />}
   </div>;
 }
 
@@ -736,12 +737,12 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   if (loading) {
-    return <LoadingSurface fullLayout label="Preparing auction house" title="Find your next upgrade." />;
+    return <LoadingSurface fullLayout label="Preparing auction house" title="Auction house" />;
   }
 
   if (!data) {
     return <div className="space-y-4">
-      <LoadingSurface fullLayout label="Auction house is waiting for data" title="Find your next upgrade." />
+      <LoadingSurface fullLayout label="Auction house is waiting for data" title="Auction house" />
       <section className="surface flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-slate-300">
         <p role="alert">{error || 'Auction data is taking longer to arrive.'}</p>
         <button onClick={() => { setLoading(true); void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Refresh failed.')).finally(() => setLoading(false)); }} className="secondary-button">Retry</button>
@@ -805,7 +806,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/25"><Gavel className="h-5 w-5" /></div>
             <div>
               <p className="page-kicker">Centuri loot</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">Find your next upgrade.</h1>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">Auction house</h1>
               <p className="mt-1 text-sm text-slate-400">Browse live items, check the lead, and place a bid.</p>
             </div>
           </div>
@@ -885,7 +886,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                   <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70">
                     {filteredItems.length === 0 ? (
                       <p className="px-3 py-4 text-center text-xs text-slate-500">
-                        {data.items.length === 0 ? 'No saved items yet. Ask a Chief, General, or Guardian to add one from the Items tab.' : 'No items match your search.'}
+                        {data.items.length === 0 ? 'No saved items yet. Ask a Chief, General, or Guardian to add one from the Item catalog.' : 'No items match your search.'}
                       </p>
                     ) : visibleItems.map((item) => (
                       <button
@@ -897,6 +898,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                       >
                         <AuctionItemImage
                           itemId={item.id}
+                          showNavigation={false}
                           imageCount={item.imageCount}
                           alt={item.name}
                           className="h-10 w-10 shrink-0 rounded-lg bg-slate-900"
@@ -1061,13 +1063,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <div><h3 className="text-lg font-bold text-white">Browse auctions</h3><p className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p></div>
-            <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="tablist" aria-label="Auction views">
-              <button type="button" role="tab" aria-selected={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
-              <button type="button" role="tab" aria-selected={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
+            <div><h2 className="text-lg font-bold text-white">Browse auctions</h2><p role="status" className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p></div>
+            <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="group" aria-label="Auction views">
+              <button type="button" aria-pressed={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
+              <button type="button" aria-pressed={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
             </div>
           </div>
-          <div className="flex min-w-0 gap-2">
+          <div className="flex min-w-0 flex-wrap gap-2">
           <label className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <input
@@ -1157,10 +1159,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             <p className="mt-3 text-sm text-slate-400">There are no auctions yet.</p>
           </div>
         ) : visibleAuctions.length === 0 ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
-            <Search className="mx-auto h-7 w-7 text-slate-600" />
-            <p className="mt-3 text-sm text-slate-400">{auctionView === 'live' && liveAuctions.length === 0 ? 'There are no live auctions right now.' : 'No auctions match these filters.'}</p>
-            {auctionView === 'live' && liveAuctions.length === 0 && <button type="button" onClick={() => setAuctionView('all')} className="mt-3 text-xs font-semibold text-indigo-300 hover:text-indigo-200">Browse auction history</button>}
+          <div>
+            <EmptyState title={auctionView === 'live' && liveAuctions.length === 0 ? 'No live auctions right now' : 'No auctions match your filters'} description="Try another search or browse completed auctions." onReset={auctionSearch || activeAuctionFilterCount ? () => { setAuctionSearch(''); setAuctionRoleFilter(''); setAuctionBossFilter(''); setAuctionHolderFilter(''); } : undefined} />
+            {auctionView === 'live' && liveAuctions.length === 0 && <button type="button" onClick={() => setAuctionView('all')} className="secondary-button mt-3">Browse auction history</button>}
           </div>
         ) : (
           <div className="grid w-full gap-4 xl:grid-cols-2">
@@ -1267,7 +1268,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                             <div className="grid grid-cols-1 gap-2">
                               <label className="min-w-0">
                                 <span className="sr-only">Bid amount</span>
-                                <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="Enter bid amount" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
+                                <input aria-label={`Bid on ${auction.itemName}`} aria-describedby={`bid-help-${auction.id}`} inputMode="numeric" type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="Enter bid amount" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
+                                <span id={`bid-help-${auction.id}`} className="mt-2 block text-xs leading-5 text-slate-400">{maxBid < minimumBid ? 'Your available balance is below the minimum bid.' : `Bid ${minimumBid.toLocaleString()}–${maxBid.toLocaleString()} DKP in whole points.`}</span>
                               </label>
                               <button disabled={saving || syncing || !lastSyncedAt || !Number.isSafeInteger(Number(bidAmounts[auction.id])) || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="primary-button disabled:opacity-45">
                                 <Gavel className="h-4 w-4" /> {Number(bidAmounts[auction.id]) >= minimumBid ? `Bid ${Number(bidAmounts[auction.id]).toLocaleString()}` : 'Place bid'}
