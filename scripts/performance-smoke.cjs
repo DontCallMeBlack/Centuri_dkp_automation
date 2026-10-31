@@ -55,11 +55,11 @@ const initialResourceBytes=await page.evaluate(()=>performance.getEntriesByType(
 assert.deepEqual([...new Set(initialRequests)].sort(),['/api/auth/session','/api/dkp']);
 const timings=[];
 const destinations=[
- ['Auction house','/dashboard?view=auction','Find your next upgrade.'],
- ['Kill history','/dashboard?view=boss-history','Boss history'],
- ['Item catalog','/dashboard?view=items','Great loot starts here.'],
+ ['Auction house','/dashboard?view=auction','Auction house'],
+ ['Kill history','/dashboard?view=boss-history','Kill history'],
+ ['Item catalog','/dashboard?view=items','Item catalog'],
  ['My role changes','/admin/role-changes','Subrole changes'],
- ['Members & access','/admin/requests','Good people. Stronger clan.'],
+ ['Members & access','/admin/requests','Members & access'],
  ['Roster','/dashboard','Clan leaderboard'],
 ];
 for(const [name,path,text] of destinations){
@@ -86,11 +86,11 @@ await page.getByRole('heading',{name:'Clan leaderboard'}).waitFor();
 await page.setViewportSize({width:390,height:844});
 await page.getByRole('button',{name:'Open navigation'}).click();
 await page.getByRole('dialog').getByRole('link',{name:'Auction house',exact:true}).click();
-await page.getByRole('heading',{name:'Find your next upgrade.',exact:true}).waitFor();
+await page.getByRole('heading',{name:'Auction house',exact:true}).waitFor();
 assert.equal(await page.getByRole('dialog').count(),0);
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 await page.goto(origin+'/admin/boss-history');
-await page.getByRole('heading',{name:'Boss history',exact:true}).waitFor();
+await page.getByRole('heading',{name:'Kill history',exact:true}).waitFor();
 fixtures['/api/auction'].auctions=[{
  id:'000000000000000000000002',itemId:'000000000000000000000003',imageCount:0,
  itemName:'Expiry check',bossType:'Bt',requiredRoles:['ranger'],createdBy:user.nickname,

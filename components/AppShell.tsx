@@ -57,6 +57,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [currentView, setCurrentView] = useState('');
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState('');
+  const [offline, setOffline] = useState(false);
   const publicPage = pathname === '/login' || pathname === '/';
 
   useEffect(() => { setMenuOpen(false); setCurrentView(new URLSearchParams(window.location.search).get('view') ?? ''); }, [pathname]);
@@ -114,7 +115,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     finally { setSigningOut(false); }
   };
 
-  if (publicPage) return <>{children}</>;
   const canManage = ['chief', 'general', 'guardian'].includes(user?.role ?? '');
   const canAdmin = ['chief', 'general'].includes(user?.role ?? '');
   const isRoster = pathname === '/dashboard' && !['auction', 'items', 'boss-history'].includes(currentView);
@@ -123,7 +123,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isCatalog = pathname === '/dashboard' && currentView === 'items';
   const isAdministration = pathname.startsWith('/admin/requests');
   const isRoleChanges = pathname.startsWith('/admin/role-changes');
-  const currentLabel = isAdministration ? 'Clan administration' : isRoleChanges ? (user?.role === 'general' ? 'Role request review' : 'My role changes') : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : 'Roster';
+  const currentLabel = isAdministration ? 'Clan administration' : isRoleChanges ? (user?.role === 'general' ? 'Role request review' : 'My role changes') : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : isRoster ? 'Roster' : 'Page not found';
+  useEffect(() => {
+    document.title = `${publicPage ? 'Sign in' : pathname === '/dashboard' || pathname.startsWith('/admin/') ? currentLabel : 'Page not found'} · Centuri DKP`;
+  }, [publicPage, pathname, currentLabel]);
+  useEffect(() => {
+    const update = () => setOffline(!navigator.onLine);
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
+  if (publicPage) return <>{children}</>;
   const navClick = (event: React.MouseEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
     const link=(event.target as HTMLElement).closest('a');
@@ -157,7 +168,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </aside>
     <div className="workspace-body"><header className="workspace-header"><div className="flex min-w-0 items-center gap-3"><button className="icon-button lg:hidden" type="button" onClick={() => setMenuOpen(true)} aria-label="Open navigation" aria-expanded={menuOpen}><Menu size={20} /></button><span className="text-xs text-slate-500">Centuri</span><span className="text-slate-700">/</span><span className="truncate text-xs font-medium text-slate-200">{currentLabel}</span></div><div className="flex items-center gap-3"><span className="hidden text-xs text-slate-500 sm:block">Celtic Heroes</span>{user && <RoleBadge role={user.role} />}</div></header>
       {error && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-sm text-rose-200">{error}</p>}
-      <div id="main-content" tabIndex={-1} className="workspace-content">{children}</div>
+      {offline && <p role="status" className="connection-notice">You’re offline. Showing the last loaded data. Reconnect before saving changes or placing bids.</p>}
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{currentLabel}</p>
+      <main id="main-content" tabIndex={-1} className="workspace-content">{children}</main>
     </div>
     {menuOpen && <Dialog labelledBy="mobile-nav-title" onClose={() => setMenuOpen(false)} className="mobile-nav-dialog"><aside className="mobile-sidebar" aria-label="Mobile navigation"><h2 id="mobile-nav-title" className="sr-only">Clan navigation</h2><div className="flex items-center justify-between"><Link href="/dashboard" className="brand"><span className="brand-mark"><Command size={22} /></span>CENTURI</Link><button className="icon-button" onClick={() => setMenuOpen(false)} aria-label="Close navigation"><X size={19} /></button></div><nav className="mt-8" onClickCapture={navClick}>{nav}</nav><div className="mt-auto border-t border-white/10 pt-5">{error && <p role="alert" className="mb-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs leading-5 text-rose-200">{error}</p>}<RoleBadge role={user?.role} /><p className="my-4 text-sm text-white">{user?.nickname}</p><button className="secondary-button w-full" disabled={signingOut} onClick={() => void signOut()}><LogOut size={16} /> Sign out</button></div></aside></Dialog>}
   </div></SessionContext.Provider>;

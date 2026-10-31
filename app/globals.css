@@ -246,7 +246,7 @@ svg { flex-shrink: 0; }
   .auth-form-side .relative > .icon-button { top: 6px; right: 6px; }
   .auth-form-side .relative > svg { top: 18px; }
   .auth-form-side label { font-size: 12px; }
-  .auth-form-side h2 { font-size: 34px; font-weight: 500; }
+  .auth-form-side h1 { font-size: 34px; font-weight: 500; }
   .auth-form-side form + div { border-color: var(--line); }
   .auth-headline { font-size: clamp(42px, 4.7vw, 72px); font-weight: 500; line-height: 1.08; letter-spacing: -.065em; }
   .auth-headline span { color: #e2c18a; }
@@ -290,4 +290,57 @@ svg { flex-shrink: 0; }
   .section-tabs { gap: 4px; }
   .section-tab { padding-inline: 12px; }
   .app-dialog { border-radius: 16px; }
+}
+
+/* Shared interaction rules for every workspace and authentication screen. */
+@layer components {
+  .desktop-sidebar { overflow-y: auto; overscroll-behavior: contain; }
+  .desktop-sidebar > .brand, .sidebar-bottom { flex-shrink: 0; }
+  .workspace-header { padding-top: env(safe-area-inset-top); }
+  .workspace-content { padding-bottom: max(40px, env(safe-area-inset-bottom)); }
+  .page-title, h2, h3 { text-wrap: balance; }
+  .page-description { text-wrap: pretty; }
+  .stat-card > div { min-width: 0; }
+  .page-loading .stat-card { display: block; }
+  .stat-value { overflow-wrap: anywhere; }
+  .primary-button, .secondary-button { white-space: normal; text-align: center; }
+  .section-tab[aria-pressed='true'] { color: #efdbb7; border-color: #dfbd8055; background: #dfbd8018; box-shadow: inset 0 -2px #dfbd80; }
+  .section-tabs { scroll-padding-inline: 6px; }
+  .section-tabs:focus-within { border-color: #dfbd8055; }
+  .app-dialog { overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .app-dialog > form > :last-child, .app-dialog footer { flex-wrap: wrap; }
+  .mobile-sidebar { width: 100%; min-height: 100%; height: auto; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  .connection-notice { margin: 16px 24px 0; padding: 12px 16px; border: 1px solid #e2c18a40; border-radius: 12px; background: #e2c18a0a; color: #efdbb7; font-size: 13px; line-height: 1.6; }
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; border: 1px dashed var(--line); border-radius: 16px; background: #080f1940; text-align: center; }
+  .empty-state-icon { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 16px; color: #e2c18a; background: #e2c18a08; }
+  .roster-table caption { text-align: left; }
+  .roster-table td:last-child { font-variant-numeric: tabular-nums; }
+  :where(.workspace, .app-dialog, .auth-grid) :is(button, a, input, select, textarea) { scroll-margin-block: 90px 24px; }
+  :where(.workspace, .app-dialog, .auth-grid) :is(button, a):disabled { transform: none; }
+  :where(.workspace, .app-dialog, .auth-grid) :is(input, select, textarea):disabled { opacity: .6; cursor: not-allowed; }
+  :where(.workspace, .app-dialog, .auth-grid) input::placeholder { color: #95a3b7; opacity: 1; }
+}
+@media (max-width: 767px) {
+  :where(.workspace, .app-dialog, .auth-grid) :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']), select, textarea) { font-size: 16px; min-height: 44px; }
+  :where(.workspace, .app-dialog, .auth-grid) button { min-height: 44px; }
+  :where(.workspace, .app-dialog, .auth-grid) button:has(> svg:only-child) { min-width: 44px; }
+  .icon-button { width: 44px; height: 44px; }
+  .auth-form-side .relative > .icon-button { top: 4px; right: 4px; }
+  .section-tab { flex-shrink: 0; }
+  .stat-card { padding: 16px 12px; }
+  .stat-label { font-size: 11px; line-height: 1.5; }
+  .roster-table { white-space: normal; table-layout: fixed; }
+  .roster-table th, .roster-table td { padding-inline: 8px; }
+  .roster-table .role-badge { max-width: 100%; overflow-wrap: anywhere; font-size: 10px; padding: 5px 6px; }
+  .roster-table .role-badge > span { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.4; }
+  .roster-table th { font-size: 9px; letter-spacing: .03em; }
+  .connection-notice { margin-inline: 16px; }
+  .auth-form-side { padding-bottom: max(32px, env(safe-area-inset-bottom)); }
+}
+@media (max-width: 479px) {
+  .roster-table .role-badge > svg { display: none; }
+}
+@media (forced-colors: active) {
+  .shell-nav-link.is-active, .section-tab[aria-pressed='true'] { border: 2px solid Highlight; }
+  .primary-button, .secondary-button, .icon-button { border: 1px solid ButtonText; }
 }

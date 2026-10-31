@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import LoadingSurface from '@/components/LoadingSurface';
+import EmptyState from '@/components/EmptyState';
 import RoleBadge from '@/components/RoleBadge';
 import BossIcon from '@/components/BossIcon';
 import { useSessionUser } from '@/components/AppShell';
@@ -87,6 +88,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const [busyId, setBusyId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [historyQuery, setHistoryQuery] = useState('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [canManage, setCanManage] = useState(() => initialHistory?.canManage === true);
   const [nextCursor, setNextCursor] = useState<string | null>(() => initialHistory?.nextCursor ?? null);
@@ -302,7 +304,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     finally { setBusyId(''); }
   };
 
-  if (loading) return <LoadingSurface fullLayout label="Preparing boss history" title="Every kill. Every contribution." />;
+  if (loading) return <LoadingSurface fullLayout label="Preparing kill history" title="Kill history" />;
 
   if (accessDenied) {
     return (
@@ -319,26 +321,26 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   }
 
   const currentWeekKillCount = awards.filter((award) => award.status === 'applied' && award.canModify === true).length;
+  const visibleAwards = awards.filter((award) => award.id === editingId || `${award.bossName} ${award.createdBy} ${award.participants.map((participant) => `${participant.account} ${participant.owner}`).join(' ')}`.toLowerCase().includes(historyQuery.trim().toLowerCase()));
 
   return (
     <section className="space-y-5 text-slate-100">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div><p className="page-kicker">Raid archive</p><h1 className="page-title">Boss history</h1><p className="page-description">{canManage ? 'Kill records, attendance, and manager notes.' : 'Boss kills and attendance.'}</p></div>
+        <div><p className="page-kicker">Raid archive</p><h1 className="page-title">Kill history</h1><p className="page-description">{canManage ? 'Kill records, attendance, and manager notes.' : 'Boss kills and attendance.'}</p></div>
         <div className="flex flex-wrap gap-1.5 pb-0.5">
           <div title="Kill records currently loaded" className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><History size={13} className="text-violet-300" /><span className="text-xs font-bold tabular-nums text-white">{awards.length}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">loaded</span></div>
           <div className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /><span className="text-xs font-bold tabular-nums text-white">{currentWeekKillCount}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">this week</span></div>
         </div>
       </div>
+      <label className="search-field"><Search /><input type="search" aria-label="Search loaded kill history" placeholder="Search loaded kills by boss, attendee, or recorder…" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} /></label>
+      {historyQuery.trim() && <p role="status" className="text-xs text-slate-400">{visibleAwards.length} of {awards.length} loaded kills match. {nextCursor ? 'Load older records below to search more history.' : ''}</p>}
       <div className="space-y-3">
         {error && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
         {notice && <p role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${busyId ? 'border border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`}>{busyId && <LoaderCircle size={15} className="animate-spin" />}{notice}</p>}
 
-        {awards.length === 0 ? (
-          <section className="border-y border-slate-800 py-12 text-center">
-            <History className="mx-auto h-7 w-7 text-slate-600" />
-            <p className="mt-3 text-sm text-slate-400">No boss awards have been logged yet.</p>
-          </section>
-        ) : awards.map((award) => {
+        {visibleAwards.length === 0 ? (
+          <EmptyState title={historyQuery.trim() ? 'No matching kill records' : 'No boss awards recorded yet'} description={historyQuery.trim() ? 'Try a boss name, toon, or the member who recorded the kill.' : 'Recorded kills and their attendance will appear here. Clan leadership can record a kill from the roster.'} onReset={historyQuery.trim() ? () => setHistoryQuery('') : undefined} />
+        ) : visibleAwards.map((award) => {
           const isEditing = editingId === award.id;
           const selectedCount = selectedRows[award.id]?.length ?? 0;
           const editRows = selectedRows[award.id] ?? [];

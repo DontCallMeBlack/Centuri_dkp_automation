@@ -8,6 +8,7 @@ import RoleBadge from '@/components/RoleBadge';
 import BossIcon from '@/components/BossIcon';
 import Dialog from '@/components/Dialog';
 import LoadingSurface from '@/components/LoadingSurface';
+import EmptyState from '@/components/EmptyState';
 import { useSessionUser } from '@/components/AppShell';
 import ToonDkpCards from '@/components/ToonDkpCards';
 import RosterDataIssues from '@/components/RosterDataIssues';
@@ -17,9 +18,9 @@ import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
 import { Search, Plus, CheckCircle2, Users, Zap, X, Swords } from 'lucide-react';
-const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Boss history" /> });
-const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Find your next upgrade." /> });
-const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Great loot starts here." /> });
+const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Kill history" /> });
+const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Auction house" /> });
+const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Item catalog" /> });
 
 type RosterMember = ReadableRosterRecord;
 
@@ -284,7 +285,7 @@ function Dashboard() {
         })}
       </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
-      <main>
+      <div>
         <section id="panel-dkp" className="tab-panel-content" aria-label="Roster" hidden={activeView !== 'dkp'}>
           <div className="space-y-8">
             {canSubmitDkp && statusMessage && <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${submitting ? 'border-indigo-400/20 bg-indigo-500/10 text-indigo-200' : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300'}`}>{submitting ? <Zap className="h-4 w-4 shrink-0 animate-pulse" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />}{statusMessage}</div>}
@@ -317,17 +318,16 @@ function Dashboard() {
               {loading ? (
                 <LoadingSurface rows={6} label="Preparing clan roster" />
               ) : rankedActiveToons.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-800 py-12 text-center text-sm text-slate-500">
-                  No active toons match that search.
-                </div>
+                <EmptyState title={memberQuery.trim() ? 'No toons match your search' : 'The clan roster is empty'} description={memberQuery.trim() ? 'Try a toon name, owner, clan member, or class.' : 'Toons appear here when clan leadership links them to approved accounts.'} onReset={memberQuery.trim() ? () => setMemberQuery('') : undefined} />
               ) : (
                 <div className="min-w-0 overflow-x-auto rounded-xl border border-white/5">
                   <table className="roster-table">
+                    <caption className="sr-only">Clan toons ranked within each class by available DKP. Earned and spent totals are lifetime values.</caption>
                     <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] uppercase tracking-[0.16em] text-slate-500">
                       <tr>
                         <th scope="col" className="hidden w-14 px-3 py-3 text-center md:table-cell">Rank</th>
-                        <th scope="col" className="w-[48%] px-2 py-3 sm:w-[40%] sm:px-3 lg:w-40">Toon</th>
-                        <th scope="col" className="w-[25%] px-2 py-3 sm:w-[22%] sm:px-3 lg:w-36">Role</th>
+                        <th scope="col" className="w-[43%] px-2 py-3 sm:w-[40%] sm:px-3 lg:w-40">Toon</th>
+                        <th scope="col" className="w-[30%] px-2 py-3 sm:w-[22%] sm:px-3 lg:w-36">Role</th>
                         <th scope="col" className="hidden w-32 px-3 py-3 lg:table-cell">Owner</th>
                         <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Earned</th>
                         <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Spent</th>
@@ -380,8 +380,9 @@ function Dashboard() {
         {(activeView === 'auction' || visitedViews.has('auction')) && <section id="panel-auction" className="tab-panel-content" aria-label="Auction house" hidden={activeView !== 'auction'}><AuctionHousePanel active={activeView === 'auction'} /></section>}
         {canSubmitDkp && (activeView === 'items' || visitedViews.has('items')) && <section id="panel-items" className="tab-panel-content" aria-label="Item catalog" hidden={activeView !== 'items'}><AuctionItemsPanel active={activeView === 'items'} /></section>}
         {(activeView === 'boss-history' || visitedViews.has('boss-history')) && <section id="panel-boss-history" className="tab-panel-content" aria-label="Kill history" hidden={activeView !== 'boss-history'}><BossHistoryPanel embedded active={activeView === 'boss-history'} /></section>}
-        {activeView === 'items' && (sessionUser || !loading) && !canSubmitDkp && <p role="alert" className="surface p-6 text-sm text-slate-400">Item management requires a Chief, General, or Guardian account.</p>}
-      </main>
+        {activeView === 'items' && !(sessionUser || userSession) && <LoadingSurface fullLayout label="Checking catalog access" title="Item catalog" />}
+        {activeView === 'items' && (sessionUser || userSession) && !canSubmitDkp && <section className="surface p-6"><h1 className="page-title">Item catalog</h1><p role="alert" className="page-description">Item management requires a Chief, General, or Guardian account.</p></section>}
+      </div>
 
       {pickerOpen && (
         <Dialog labelledBy="award-picker-title" busy={submitting} onClose={() => setPickerOpen(false)}>
