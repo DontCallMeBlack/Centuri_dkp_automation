@@ -27,9 +27,7 @@ type RosterMember = ReadableRosterRecord;
 interface ClanMember {
   nickname: string;
   role: string;
-  sheetRecordRows?: number[];
-  // Kept for fixture/legacy compatibility while deployments roll forward.
-  toons?: RosterMember[];
+  toons: RosterMember[];
 }
 
 interface ActiveToon extends RosterMember {
@@ -92,7 +90,7 @@ function Dashboard() {
   const sessionUser = useSessionUser();
   const requestedView = searchParams.get('view');
   const activeView = requestedView === 'auction' || requestedView === 'items' || requestedView === 'boss-history' ? requestedView : 'dkp';
-  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[] }>('/api/dkp?summary=1');
+  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[] }>('/api/dkp');
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
@@ -109,8 +107,6 @@ function Dashboard() {
   const [pickerRefreshing, setPickerRefreshing] = useState(false);
   const [memberQuery, setMemberQuery] = useState('');
   const deferredMemberQuery = useDeferredValue(memberQuery);
-  const [rosterLimit, setRosterLimit] = useState(50);
-  useEffect(() => { setRosterLimit(50); }, [deferredMemberQuery]);
   const [submitting, setSubmitting] = useState(false);
   const [pendingAward, setPendingAward] = useState<{ rows: number[]; points: number; bossName: string } | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
@@ -128,8 +124,7 @@ function Dashboard() {
 
   const fetchData = useCallback(async (fresh = false, maxAgeMs = 0) => {
     try {
-      const dataUrl = fresh ? '/api/dkp?fresh=1&picker=1' : '/api/dkp?summary=1';
-      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(dataUrl, { maxAgeMs: fresh ? 0 : maxAgeMs });
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp', { maxAgeMs: fresh ? 0 : maxAgeMs });
       if (!data.success) throw new Error('The roster could not be refreshed.');
       if (!activeRef.current) return;
       setRoster(data.roster); setBossActivity(data.bossActivity ?? []); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSyncError('');
@@ -214,13 +209,8 @@ function Dashboard() {
   };
 
   const rankedToons = useMemo(() => {
-    const recordsByRow = new Map(roster.map((record) => [record.rowIndex, record]));
     const activeToons: ActiveToon[] = clanMembers.flatMap((member) =>
-      (member.sheetRecordRows ?? member.toons?.map((toon) => toon.rowIndex) ?? [])
-        .flatMap((rowIndex) => {
-          const toon = recordsByRow.get(rowIndex);
-          return toon ? [{ ...toon, memberNickname: member.nickname }] : [];
-        })
+      member.toons.map((toon) => ({ ...toon, memberNickname: member.nickname }))
     );
     const sortedActiveToons = [...activeToons].sort((first, second) => {
       const firstRole = normalizeRole(first.subClass);
@@ -250,7 +240,7 @@ function Dashboard() {
         return { ...toon, rank: index + 1, roleRank };
       });
 
-  }, [clanMembers, roster]);
+  }, [clanMembers]);
   const rankedActiveToons = useMemo(() => {
     const query = deferredMemberQuery.trim().toLowerCase();
     return rankedToons.filter((toon) => `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`.toLowerCase().includes(query));
@@ -343,7 +333,7 @@ function Dashboard() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80">
-                      {rankedActiveToons.slice(0, rosterLimit).map((toon) => {
+                      {rankedActiveToons.map((toon) => {
                         const roleStyle = ROLE_STYLES[toon.subClass.trim().toLowerCase()]
                           ?? 'border-slate-700 bg-slate-800 text-slate-300';
                         return (
@@ -377,8 +367,7 @@ function Dashboard() {
                     </tbody>
                   </table>
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/5 px-4 py-3 text-xs text-slate-400">
-                    <span role="status">Showing {Math.min(rosterLimit, rankedActiveToons.length)} of {rankedActiveToons.length} toons</span>
-                    {rosterLimit < rankedActiveToons.length && <button type="button" className="secondary-button" onClick={() => setRosterLimit((limit) => limit + 50)}>Show more toons</button>}
+                    <span role="status">Showing all {rankedActiveToons.length} toons</span>
                   </div>
                 </div>
               )}

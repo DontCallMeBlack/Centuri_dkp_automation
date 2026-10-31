@@ -22,7 +22,7 @@ const member={_id:user.id,nickname:user.nickname,role:'chief',sheetRecordRows:[3
 const fixtures={
 '/api/auth/session':{success:true,user},
 '/api/auth':{success:true,user},
-  '/api/dkp':{success:true,user,roster:roster.slice(0,200),bossActivity:[],clanMembers:roster.slice(0,200).map((toon,index)=>({nickname:'Member '+index,role:'clansman',sheetRecordRows:[toon.rowIndex]}))},
+  '/api/dkp':{success:true,user,roster,bossActivity:[],clanMembers:roster.map((toon,index)=>({nickname:'Member '+index,role:'clansman',toons:[toon]}))},
 '/api/auction':{manager:true,weeklyEarnedTotal:20,weeklyMinimum:10,canBidWeekly:true,roles:['ranger'],toons:[],items:[],auctions:[],rosterSync:{fetchedAt:new Date().toISOString(),stale:false,refreshDelayed:false}},
 '/api/auction/items':{items:[],roles:['ranger']},
 '/api/admin/boss-history':{canManage:true,awards:[],roster,nextCursor:null},
@@ -39,8 +39,7 @@ await page.route('**/api/**',async route=>{
   return;
  }
  await new Promise(resolve=>setTimeout(resolve,250));
- let data=url.searchParams.get('section')==='archives'?{archivedAccounts:[],archivedToons:[]}:fixtures[url.pathname];
- if(url.pathname==='/api/dkp' && url.searchParams.get('picker')==='1') data={...fixtures[url.pathname],roster};
+ const data=url.searchParams.get('section')==='archives'?{archivedAccounts:[],archivedToons:[]}:fixtures[url.pathname];
  await route.fulfill({status:data?200:404,contentType:'application/json',body:JSON.stringify(data??{error:'Missing fixture'})});
 });
 
@@ -53,11 +52,7 @@ const initialReadyMs=Date.now()-start;
 await page.waitForTimeout(800);
 const initialRequests=[...requests];
 const initialResourceBytes=await page.evaluate(()=>performance.getEntriesByType('resource').reduce((sum,r)=>sum+r.transferSize,0));
-assert.deepEqual([...new Set(initialRequests)].sort(),['/api/auth/session','/api/dkp?summary=1']);
-await page.getByRole('button',{name:'Record a kill'}).click();
-await page.getByRole('dialog').waitFor();
-await page.getByText('1000 toons',{exact:true}).waitFor();
-await page.getByRole('button',{name:'Cancel',exact:true}).click();
+assert.deepEqual([...new Set(initialRequests)].sort(),['/api/auth/session','/api/dkp']);
 const timings=[];
 const destinations=[
  ['Auction house','/dashboard?view=auction','Auction house'],
@@ -77,9 +72,7 @@ for(const [name,path,text] of destinations){
  assert.equal(await page.locator('[role="alert"]').filter({hasText:/error|unable|could not|requires/i}).count(),0);
  timings.push({destination:name,clickToHeadingMs:Date.now()-at});
 }
-assert.equal(await page.locator('tbody tr').count(),50);
-await page.getByRole('button',{name:'Show more toons'}).click();
-assert.equal(await page.locator('tbody tr').count(),100);
+assert.equal(await page.locator('tbody tr').count(),1000);
 const search=page.getByRole('searchbox',{name:'Search clan member, owner, toon, or class'});
 const searchStart=Date.now();await search.fill('Toon 199');
 await page.locator('tbody tr').first().waitFor();
