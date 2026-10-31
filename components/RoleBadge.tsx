@@ -14,9 +14,9 @@ const classes = {
   'ice mage': { icon: Snowflake, tone: 'role-cyan' },
   'support druid': { icon: Leaf, tone: 'role-green' },
   'dps druid': { icon: WandSparkles, tone: 'role-violet' },
-  'support rogue': { icon: HeartHandshake, tone: 'role-rose' },
-  'dps warrior': { icon: Swords, tone: 'role-orange' },
-  tank: { icon: Shield, tone: 'role-rose' },
+  'support rogue': { icon: HeartHandshake, tone: 'role-teal' },
+  'dps warrior': { icon: Swords, tone: 'role-red' },
+  tank: { icon: Shield, tone: 'role-steel' },
 };
 
 export function RoleIcon({ role = '', className = 'h-4 w-4' }: { role?: string; className?: string }) {
