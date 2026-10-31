@@ -3,6 +3,7 @@ node_modules/
 .next/
 .env
 .env.local
+.env.loadtest.local
 .DS_Store
 artifacts/ui-review/
 .vercel
