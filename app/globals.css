@@ -337,9 +337,6 @@ svg { flex-shrink: 0; }
   .connection-notice { margin-inline: 16px; }
   .auth-form-side { padding-bottom: max(32px, env(safe-area-inset-bottom)); }
 }
-@media (max-width: 479px) {
-  .roster-table .role-badge > svg { display: none; }
-}
 @media (forced-colors: active) {
   .shell-nav-link.is-active, .section-tab[aria-pressed='true'] { border: 2px solid Highlight; }
   .primary-button, .secondary-button, .icon-button { border: 1px solid ButtonText; }
