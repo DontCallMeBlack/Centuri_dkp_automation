@@ -1,5 +1,6 @@
 // app/layout.tsx
 import './globals.css';
+import './visual-refresh.css';
 import type { Metadata } from 'next';
 import AppShell from '@/components/AppShell';
 import { connection } from 'next/server';

@@ -324,7 +324,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   const visibleAwards = awards.filter((award) => award.id === editingId || `${award.bossName} ${award.createdBy} ${award.participants.map((participant) => `${participant.account} ${participant.owner}`).join(' ')}`.toLowerCase().includes(historyQuery.trim().toLowerCase()));
 
   return (
-    <section className="space-y-5 text-slate-100">
+    <section className="raid-history space-y-5 text-slate-100">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div><p className="page-kicker">Raid archive</p><h1 className="page-title">Kill history</h1><p className="page-description">{canManage ? 'Kill records, attendance, and manager notes.' : 'Boss kills and attendance.'}</p></div>
         <div className="flex flex-wrap gap-1.5 pb-0.5">
@@ -365,7 +365,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
             ? roster.filter((record) => [record.account, record.owner, record.subClass].some((value) => value?.toLocaleLowerCase().includes(rosterQuery)))
             : roster;
           return (
-            <article key={award.id} className="surface group relative overflow-hidden p-0 transition duration-200 hover:border-slate-600/70">
+            <article key={award.id} data-record-status={award.status} className="raid-record surface group relative overflow-hidden p-0 transition duration-200 hover:border-slate-600/70">
               <div className={`h-1 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
               <div className={`relative flex flex-col justify-between gap-3 overflow-hidden border-b border-slate-800/80 px-3.5 py-3.5 sm:flex-row sm:items-center sm:px-4 ${award.status === 'deleted' ? 'bg-gradient-to-r from-rose-950/35 via-slate-900/65 to-slate-950/50' : 'bg-gradient-to-r from-slate-900/80 via-slate-900/55 to-slate-950/60'}`}>
                 <div className="pointer-events-none absolute -right-12 -top-24 h-48 w-48 rounded-full bg-indigo-400/[.06] blur-3xl" />
