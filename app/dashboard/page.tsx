@@ -324,8 +324,8 @@ function Dashboard() {
                     <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] uppercase tracking-[0.16em] text-slate-500">
                       <tr>
                         <th scope="col" className="hidden w-14 px-3 py-3 text-center md:table-cell">Rank</th>
-                        <th scope="col" className="w-[43%] px-2 py-3 sm:w-[40%] sm:px-3 lg:w-40">Toon</th>
-                        <th scope="col" className="w-[30%] px-2 py-3 sm:w-[22%] sm:px-3 lg:w-36">Role</th>
+                        <th scope="col" className="w-[40%] px-2 py-3 sm:w-[40%] sm:px-3 lg:w-40">Toon</th>
+                        <th scope="col" className="w-[34%] px-2 py-3 sm:w-[22%] sm:px-3 lg:w-36">Role</th>
                         <th scope="col" className="hidden w-32 px-3 py-3 lg:table-cell">Owner</th>
                         <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Earned</th>
                         <th scope="col" className="hidden w-20 px-3 py-3 text-right lg:table-cell">Spent</th>
