@@ -32,22 +32,22 @@ export default function ClanToonsPanel({ active, accountId, onChanged }: { activ
   const [notice, setNotice] = useState('');
   const pending = useRef(false);
   const mounted = useRef(true);
-  const initialLoadStarted = useRef(Boolean(initialToonData));
+  const initialLoadStarted = useRef(false);
   useEffect(() => {
     mounted.current = true;
     const clear = () => { initialLoadStarted.current = false; setData(null); setCreating(false); setRemoving(null); setWiping(null); setOwner(''); setAccount(''); setSubClass(''); setError(''); setNotice(''); setConfirmed(false); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { mounted.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
-  const load = useCallback(async () => {
+  const load = useCallback(async (maxAgeMs = 0) => {
     const version = clientDataVersion();
-    const result = await getData<ToonData>('/api/admin/toons');
+    const result = await getData<ToonData>('/api/admin/toons', { maxAgeMs });
     if (mounted.current && version === clientDataVersion()) { setData(result); setReadError(''); }
   }, []);
   useEffect(() => {
     if (!active || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void load().catch((cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be loaded.'));
+    void load(15_000).catch((cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be loaded.'));
   }, [active, load]);
   useEffect(() => {
     if (!active) return;

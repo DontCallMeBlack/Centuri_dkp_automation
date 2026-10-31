@@ -1,12 +1,48 @@
 'use client';
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
+import Link, { useLinkStatus } from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ArrowUpRight, CalendarClock, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, UsersRound, X } from 'lucide-react';
 import Dialog from './Dialog';
 import RoleBadge, { RoleIcon } from './RoleBadge';
 import { clearClientData, getData, notifyDkpChanged } from '@/lib/client/api';
+
+function NavigationHint() {
+  const { pending } = useLinkStatus();
+  return <span aria-hidden="true" className={`navigation-hint ${pending ? 'is-pending' : ''}`} />;
+}
+
+// Warm only the destination the user points to, instead of fetching the entire app.
+function warmDestination(href: string) {
+  if (navigator.onLine === false) return;
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+  if (connection?.saveData || ['slow-2g', '2g'].includes(connection?.effectiveType ?? '')) return;
+  const url = new URL(href, window.location.origin);
+  const view = url.searchParams.get('view');
+  let resource: string;
+  if (url.pathname === '/dashboard') {
+    if (view === 'auction') { resource = '/api/auction'; void import('./AuctionHousePanel').catch(() => undefined); }
+    else if (view === 'boss-history') { resource = '/api/admin/boss-history'; void import('./BossHistoryPanel').catch(() => undefined); }
+    else if (view === 'items') { resource = '/api/auction/items'; void import('./AuctionItemsPanel').catch(() => undefined); }
+    else resource = '/api/dkp';
+  } else if (url.pathname === '/admin/requests') resource = '/api/admin/requests';
+  else if (url.pathname === '/admin/role-changes') resource = '/api/role-changes';
+  else return;
+  void getData(resource, { maxAgeMs: 15_000 }).catch(() => undefined);
+}
+
+function WorkspaceLink({ children, href, ...props }: React.ComponentProps<typeof Link> & { href: string }) {
+  const [intent, setIntent] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelWarmup = () => clearTimeout(timer.current);
+  useEffect(() => cancelWarmup, []);
+  const warm = () => {
+    cancelWarmup();
+    timer.current = setTimeout(() => { setIntent(true); warmDestination(href); }, 100);
+  };
+  return <Link {...props} href={href} prefetch={intent ? null : false} onPointerEnter={warm} onPointerLeave={cancelWarmup} onFocus={warm} onBlur={cancelWarmup}>{children}<NavigationHint /></Link>;
+}
 
 export interface SessionUser { id?: string; nickname: string; role: string; sheetRecordRows: number[] }
 const SessionContext = createContext<SessionUser | null>(null);
@@ -59,28 +95,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => { active=false; window.removeEventListener('focus',check); document.removeEventListener('visibilitychange',check); };
   }, [publicPage, router]);
   useEffect(() => {
-    if (publicPage || !user?.id) return;
-    const urls = [
-      '/api/dkp',
-      '/api/auction',
-      '/api/auction/items',
-      '/api/admin/boss-history',
-      '/api/role-changes',
-      ...(user.role === 'chief' || user.role === 'general'
-        ? ['/api/admin/requests', '/api/admin/requests?section=archives', '/api/admin/toons']
-        : []),
-    ];
-    const timer = window.setTimeout(() => {
-      const tasks: Promise<unknown>[] = urls.map((url) => getData<unknown>(url));
-      tasks.push(import('./AuctionHousePanel'), import('./BossHistoryPanel'));
-      if (user.role === 'chief' || user.role === 'general' || user.role === 'guardian') {
-        tasks.push(import('./AuctionItemsPanel'));
-      }
-      void Promise.allSettled(tasks);
-    }, 100);
-    return () => window.clearTimeout(timer);
-  }, [publicPage, user?.id, user?.role, user?.sheetRecordRows?.join(',')]);
-  useEffect(() => {
     const onSignOut = (event: StorageEvent) => {
       if (event.key === 'centuri:logout') { clearClientData(); setUser(null); userRef.current=null; router.replace('/login'); }
     };
@@ -127,12 +141,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   };
   const nav = <>
     <p className="nav-group-label">Workspace</p>
-    <Link className={`shell-nav-link ${isRoster ? 'is-active' : ''}`} aria-current={isRoster ? 'page' : undefined} href="/dashboard"><LayoutDashboard /><span>Roster</span></Link>
-    <Link className={`shell-nav-link ${isAuction ? 'is-active' : ''}`} aria-current={isAuction ? 'page' : undefined} href="/dashboard?view=auction"><Gavel /><span>Auction house</span><ArrowUpRight className="nav-end" /></Link>
-    <Link className={`shell-nav-link ${isHistory ? 'is-active' : ''}`} aria-current={isHistory ? 'page' : undefined} href="/dashboard?view=boss-history"><History /><span>Kill history</span></Link>
-    {canManage && <><p className="nav-group-label mt-7">Management</p><Link className={`shell-nav-link ${isCatalog ? 'is-active' : ''}`} aria-current={isCatalog ? 'page' : undefined} href="/dashboard?view=items"><Package /><span>Item catalog</span></Link></>}
-    {user && <Link className={`shell-nav-link ${isRoleChanges ? 'is-active' : ''}`} aria-current={isRoleChanges ? 'page' : undefined} href="/admin/role-changes"><CalendarClock /><span>{user.role === 'general' ? 'Role request review' : 'My role changes'}</span></Link>}
-    {canAdmin && <Link className={`shell-nav-link ${isAdministration ? 'is-active' : ''}`} aria-current={isAdministration ? 'page' : undefined} href="/admin/requests"><UsersRound /><span>Members & access</span></Link>}
+    <WorkspaceLink className={`shell-nav-link ${isRoster ? 'is-active' : ''}`} aria-current={isRoster ? 'page' : undefined} href="/dashboard"><LayoutDashboard /><span>Roster</span></WorkspaceLink>
+    <WorkspaceLink className={`shell-nav-link ${isAuction ? 'is-active' : ''}`} aria-current={isAuction ? 'page' : undefined} href="/dashboard?view=auction"><Gavel /><span>Auction house</span><ArrowUpRight className="nav-end" /></WorkspaceLink>
+    <WorkspaceLink className={`shell-nav-link ${isHistory ? 'is-active' : ''}`} aria-current={isHistory ? 'page' : undefined} href="/dashboard?view=boss-history"><History /><span>Kill history</span></WorkspaceLink>
+    {canManage && <><p className="nav-group-label mt-7">Management</p><WorkspaceLink className={`shell-nav-link ${isCatalog ? 'is-active' : ''}`} aria-current={isCatalog ? 'page' : undefined} href="/dashboard?view=items"><Package /><span>Item catalog</span></WorkspaceLink></>}
+    {user && <WorkspaceLink className={`shell-nav-link ${isRoleChanges ? 'is-active' : ''}`} aria-current={isRoleChanges ? 'page' : undefined} href="/admin/role-changes"><CalendarClock /><span>{user.role === 'general' ? 'Role request review' : 'My role changes'}</span></WorkspaceLink>}
+    {canAdmin && <WorkspaceLink className={`shell-nav-link ${isAdministration ? 'is-active' : ''}`} aria-current={isAdministration ? 'page' : undefined} href="/admin/requests"><UsersRound /><span>Members & access</span></WorkspaceLink>}
   </>;
   return <SessionContext.Provider value={user}><div className="workspace">
     <a className="skip-link" href="#main-content">Skip to content</a>

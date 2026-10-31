@@ -406,13 +406,13 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   const [pendingMessage, setPendingMessage] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const initialLoadStarted = useRef(Boolean(initialCatalogData));
+  const initialLoadStarted = useRef(false);
   const router = useRouter();
 
-  const loadItems = useCallback(async () => {
+  const loadItems = useCallback(async (maxAgeMs = 0) => {
     const version = clientDataVersion();
     try {
-      const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
+      const result = await getData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items', { maxAgeMs });
       if (!mounted.current || version !== clientDataVersion()) return;
       setItems(result.items); setError('');
     } catch (cause) {
@@ -435,7 +435,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   useEffect(() => {
     if (!active || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void loadItems().catch((cause) => setError(cause instanceof Error ? cause.message : 'The catalog could not be loaded.'));
+    void loadItems(15_000).catch((cause) => setError(cause instanceof Error ? cause.message : 'The catalog could not be loaded.'));
   }, [active, loadItems]);
   useEffect(() => {
     if (!active) return;

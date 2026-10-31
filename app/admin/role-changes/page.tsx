@@ -50,17 +50,17 @@ export default function RoleChangesPage() {
   const router = useRouter();
   const mounted = useRef(true);
   const initialData = peekData<RoleChangeData>('/api/role-changes');
-  const initialLoadStarted = useRef(Boolean(initialData));
+  const initialLoadStarted = useRef(false);
   const [data, setData] = useState<RoleChangeData | null>(() => initialData);
   const [loading, setLoading] = useState(() => !initialData);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (maxAgeMs = 0) => {
     if (!mounted.current) return false;
     try {
-      const result = await getData<RoleChangeData>('/api/role-changes');
+      const result = await getData<RoleChangeData>('/api/role-changes', { maxAgeMs });
       if (!mounted.current) return;
       setData(result);
       setError('');
@@ -85,7 +85,7 @@ export default function RoleChangesPage() {
   useEffect(() => {
     if (!user || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void load();
+    void load(15_000);
   }, [user?.id, user?.role, user?.sheetRecordRows?.join(','), load]);
 
   const mutate = async (action: MutationAction, toon: ManagedToon, requestId?: string) => {

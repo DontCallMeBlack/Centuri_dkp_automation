@@ -69,7 +69,11 @@ svg { flex-shrink: 0; }
 .page-loading-full::after { content: ""; position: absolute; z-index: -1; top: -3.5rem; right: 8%; width: 15rem; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle,rgba(120,111,240,.14),rgba(64,146,176,.045) 45%,transparent 72%); filter: blur(20px); pointer-events: none; }
 .page-loading-compact { overflow: hidden; }
 .page-loading-compact::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: linear-gradient(90deg,transparent,rgba(164,157,255,.8),rgba(104,208,229,.7),transparent); background-size: 220% 100%; animation: loading-trace 2s linear infinite; }
-@keyframes tab-panel-arrive { from { opacity: .72; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes tab-panel-arrive { from { opacity: .88; } to { opacity: 1; } }
+.shell-nav-link { position: relative; }
+.navigation-hint { display: none; }
+.navigation-hint.is-pending { display: block; position: absolute; inset: auto 12px 0; height: 2px; background: #aaa5ff; animation: navigation-pending .8s ease-in-out infinite alternate; animation-delay: .15s; opacity: 0; }
+@keyframes navigation-pending { to { opacity: 1; } }
 @keyframes loading-trace { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 .search-field { position: relative; display: flex; align-items: center; }
 .search-field > svg { position: absolute; left: 12px; width: 15px; height: 15px; color: #67748f; pointer-events: none; }

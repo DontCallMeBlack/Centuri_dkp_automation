@@ -1,6 +1,6 @@
 'use client';
 
-type Cached = { value: unknown };
+type Cached = { value: unknown; storedAt: number };
 const cache = new Map<string, Cached>();
 const pending = new Map<string, Promise<unknown>>();
 const versions = new Map<string, number>();
@@ -9,7 +9,11 @@ let generation = 0;
 export function clientDataVersion() { return generation; }
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number, public details: Record<string, unknown> | null = null) { super(message); }
+  status: number;
+  details: Record<string, unknown> | null;
+  constructor(message: string, status: number, details: Record<string, unknown> | null = null) {
+    super(message); this.status = status; this.details = details;
+  }
 }
 
 export async function readResponse<T>(response: Response): Promise<T> {
@@ -30,7 +34,7 @@ export function peekData<T>(url: string): T | null {
 
 export function rememberData<T>(url: string, value: T) {
   cache.delete(url);
-  cache.set(url, { value });
+  cache.set(url, { value, storedAt: Date.now() });
   while (cache.size > MAX_CACHED_RESOURCES) {
     const oldestUrl = cache.keys().next().value;
     if (oldestUrl === undefined) break;
@@ -44,7 +48,14 @@ export function invalidateData(url: string) {
   pending.delete(url);
 }
 
-export function getData<T>(url: string): Promise<T> {
+export function isDataFresh(url: string, maxAgeMs = 15_000) {
+  const entry = cache.get(url);
+  return Boolean(entry && Date.now() - entry.storedAt < maxAgeMs);
+}
+
+// Freshness is opt-in: mutation follow-ups and explicit refreshes always use the network.
+export function getData<T>(url: string, { maxAgeMs = 0 }: { maxAgeMs?: number } = {}): Promise<T> {
+  if (isDataFresh(url, maxAgeMs)) return Promise.resolve(peekData<T>(url)!);
   const existing = pending.get(url);
   if (existing) return existing as Promise<T>;
   const requestedGeneration = generation;
@@ -77,5 +88,8 @@ export function notifyDkpChanged() {
   invalidateData('/api/dkp');
   invalidateData('/api/admin/boss-history');
   invalidateData('/api/auction');
+  invalidateData('/api/admin/toons');
+  invalidateData('/api/admin/requests');
+  invalidateData('/api/role-changes');
   window.dispatchEvent(new Event('centuri:dkp-changed'));
 }
