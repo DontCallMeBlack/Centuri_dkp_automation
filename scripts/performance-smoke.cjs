@@ -52,7 +52,14 @@ const initialReadyMs=Date.now()-start;
 await page.waitForTimeout(800);
 const initialRequests=[...requests];
 const initialResourceBytes=await page.evaluate(()=>performance.getEntriesByType('resource').reduce((sum,r)=>sum+r.transferSize,0));
-assert.deepEqual([...new Set(initialRequests)].sort(),['/api/auth/session','/api/dkp']);
+const initialRequestSet = new Set(initialRequests);
+assert.equal(initialRequestSet.has('/api/auth/session'), true);
+assert.equal(initialRequestSet.has('/api/dkp'), true);
+await page.waitForTimeout(2_500);
+const backgroundRequestSet = new Set(requests);
+for (const expected of ['/api/auth/session','/api/dkp','/api/auction','/api/auction/items','/api/admin/boss-history','/api/role-changes','/api/admin/requests','/api/admin/requests?section=archives']) {
+  assert.equal(backgroundRequestSet.has(expected), true, `Background prefetch missed ${expected}`);
+}
 const timings=[];
 const destinations=[
  ['Auction house','/dashboard?view=auction','Auction house'],
