@@ -16,13 +16,13 @@ await cdp.send('Network.enable');
 await cdp.send('Network.emulateNetworkConditions', {offline:false,latency:100,downloadThroughput:2500000,uploadThroughput:2500000});
 await cdp.send('Emulation.setCPUThrottlingRate', {rate:4});
 
-const roster = Array.from({length:200},(_,index)=>({rowIndex:index+3,owner:'Member '+index,account:'Toon '+index,subClass:'ranger',available:200-index,earned:300,spent:100,weeklyEarned:20,weeklySpent:0,dkpIssues:[]}));
+const roster = Array.from({length:1000},(_,index)=>({rowIndex:index+3,owner:'Member '+index,account:'Toon '+index,subClass:'ranger',available:200-index,earned:300,spent:100,weeklyEarned:20,weeklySpent:0,dkpIssues:[]}));
 const user={id:'000000000000000000000001',nickname:'Perf Chief',role:'chief',sheetRecordRows:[3]};
 const member={_id:user.id,nickname:user.nickname,role:'chief',sheetRecordRows:[3]};
 const fixtures={
 '/api/auth/session':{success:true,user},
 '/api/auth':{success:true,user},
-'/api/dkp':{success:true,user,roster,bossActivity:[],clanMembers:roster.map((toon,index)=>({nickname:'Member '+index,role:'clansman',toons:[toon]}))},
+  '/api/dkp':{success:true,user,roster:roster.slice(0,200),bossActivity:[],clanMembers:roster.slice(0,200).map((toon,index)=>({nickname:'Member '+index,role:'clansman',sheetRecordRows:[toon.rowIndex]}))},
 '/api/auction':{manager:true,weeklyEarnedTotal:20,weeklyMinimum:10,canBidWeekly:true,roles:['ranger'],toons:[],items:[],auctions:[],rosterSync:{fetchedAt:new Date().toISOString(),stale:false,refreshDelayed:false}},
 '/api/auction/items':{items:[],roles:['ranger']},
 '/api/admin/boss-history':{canManage:true,awards:[],roster,nextCursor:null},
@@ -39,7 +39,8 @@ await page.route('**/api/**',async route=>{
   return;
  }
  await new Promise(resolve=>setTimeout(resolve,250));
- const data=url.searchParams.get('section')==='archives'?{archivedAccounts:[],archivedToons:[]}:fixtures[url.pathname];
+ let data=url.searchParams.get('section')==='archives'?{archivedAccounts:[],archivedToons:[]}:fixtures[url.pathname];
+ if(url.pathname==='/api/dkp' && url.searchParams.get('picker')==='1') data={...fixtures[url.pathname],roster};
  await route.fulfill({status:data?200:404,contentType:'application/json',body:JSON.stringify(data??{error:'Missing fixture'})});
 });
 
@@ -52,7 +53,11 @@ const initialReadyMs=Date.now()-start;
 await page.waitForTimeout(800);
 const initialRequests=[...requests];
 const initialResourceBytes=await page.evaluate(()=>performance.getEntriesByType('resource').reduce((sum,r)=>sum+r.transferSize,0));
-assert.deepEqual([...new Set(initialRequests)].sort(),['/api/auth/session','/api/dkp']);
+assert.deepEqual([...new Set(initialRequests)].sort(),['/api/auth/session','/api/dkp?summary=1']);
+await page.getByRole('button',{name:'Record a kill'}).click();
+await page.getByRole('dialog').waitFor();
+await page.getByText('1000 toons',{exact:true}).waitFor();
+await page.getByRole('button',{name:'Cancel',exact:true}).click();
 const timings=[];
 const destinations=[
  ['Auction house','/dashboard?view=auction','Auction house'],
@@ -108,6 +113,6 @@ await page.getByRole('textbox',{name:'In-game nickname'}).waitFor();
 await page.getByRole('button',{name:'Request access',exact:true}).click();
 await page.getByRole('heading',{name:'Make yourself at home.',exact:true}).waitFor();
 assert.equal(errors.length,0,errors.join('\n'));
-console.log(JSON.stringify({network:{downloadMbps:20,uploadMbps:20,latencyMs:100,cpuSlowdown:4,fixtureApiDelayMs:250,rosterSize:200},initialReadyMs,initialResourceBytes,initialRequests,timings,searchMs,mobileNavigation:true,browserHistory:true,legacyHistoryRoute:true,signupView:true,auctionExpiry:true,requests,errors},null,2));
+console.log(JSON.stringify({network:{downloadMbps:20,uploadMbps:20,latencyMs:100,cpuSlowdown:4,fixtureApiDelayMs:250,rosterSize:1000},initialReadyMs,initialResourceBytes,initialRequests,timings,searchMs,mobileNavigation:true,browserHistory:true,legacyHistoryRoute:true,signupView:true,auctionExpiry:true,requests,errors},null,2));
 } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

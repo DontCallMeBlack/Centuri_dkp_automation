@@ -27,7 +27,9 @@ type RosterMember = ReadableRosterRecord;
 interface ClanMember {
   nickname: string;
   role: string;
-  toons: RosterMember[];
+  sheetRecordRows?: number[];
+  // Kept for fixture/legacy compatibility while deployments roll forward.
+  toons?: RosterMember[];
 }
 
 interface ActiveToon extends RosterMember {
@@ -90,7 +92,7 @@ function Dashboard() {
   const sessionUser = useSessionUser();
   const requestedView = searchParams.get('view');
   const activeView = requestedView === 'auction' || requestedView === 'items' || requestedView === 'boss-history' ? requestedView : 'dkp';
-  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[] }>('/api/dkp');
+  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[] }>('/api/dkp?summary=1');
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
@@ -126,7 +128,8 @@ function Dashboard() {
 
   const fetchData = useCallback(async (fresh = false, maxAgeMs = 0) => {
     try {
-      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp', { maxAgeMs: fresh ? 0 : maxAgeMs });
+      const dataUrl = fresh ? '/api/dkp?fresh=1&picker=1' : '/api/dkp?summary=1';
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(dataUrl, { maxAgeMs: fresh ? 0 : maxAgeMs });
       if (!data.success) throw new Error('The roster could not be refreshed.');
       if (!activeRef.current) return;
       setRoster(data.roster); setBossActivity(data.bossActivity ?? []); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSyncError('');
@@ -211,8 +214,13 @@ function Dashboard() {
   };
 
   const rankedToons = useMemo(() => {
+    const recordsByRow = new Map(roster.map((record) => [record.rowIndex, record]));
     const activeToons: ActiveToon[] = clanMembers.flatMap((member) =>
-      member.toons.map((toon) => ({ ...toon, memberNickname: member.nickname }))
+      (member.sheetRecordRows ?? member.toons?.map((toon) => toon.rowIndex) ?? [])
+        .flatMap((rowIndex) => {
+          const toon = recordsByRow.get(rowIndex);
+          return toon ? [{ ...toon, memberNickname: member.nickname }] : [];
+        })
     );
     const sortedActiveToons = [...activeToons].sort((first, second) => {
       const firstRole = normalizeRole(first.subClass);
@@ -242,7 +250,7 @@ function Dashboard() {
         return { ...toon, rank: index + 1, roleRank };
       });
 
-  }, [clanMembers]);
+  }, [clanMembers, roster]);
   const rankedActiveToons = useMemo(() => {
     const query = deferredMemberQuery.trim().toLowerCase();
     return rankedToons.filter((toon) => `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`.toLowerCase().includes(query));
