@@ -84,7 +84,7 @@ svg { flex-shrink: 0; }
 .roster-table td { padding: 15px 18px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.045); }
 .roster-table tbody tr:last-child td { border-bottom: none; }
 .roster-table tbody tr:hover { background: rgba(151,145,255,.045); }
-.roster-role-cell { text-align: center; vertical-align: middle; }
+.roster-role-cell { text-align: center; vertical-align: middle; overflow: visible; }
 .roster-role-cell .role-badge { min-width: 106px; min-height: 26px; margin-inline: auto; justify-content: center; white-space: nowrap; max-width: none; border-radius: 999px; }
 .roster-role-cell .role-badge > svg { width: 13px; height: 13px; stroke-width: 2.2; }
 .role-badge { display: inline-flex; align-items: center; justify-content: center; gap: 7px; max-width: 100%; border: 1px solid currentColor; border-color: color-mix(in srgb,currentColor 26%,transparent); padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb,currentColor 9%,transparent); font-size: 10px; font-weight: 650; text-transform: capitalize; line-height: 1.2; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
