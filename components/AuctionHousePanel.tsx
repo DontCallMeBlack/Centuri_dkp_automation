@@ -761,13 +761,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 pb-8">
-      <section className="surface relative overflow-hidden">
+      <section className="auction-heading surface relative overflow-hidden">
         <div className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-indigo-500/10 blur-3xl" />
         <div className="relative flex flex-col gap-5 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/25"><Gavel className="h-5 w-5" /></div>
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-indigo-300">Centuri loot</p>
+              <p className="page-kicker">Centuri loot</p>
               <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white">Find your next upgrade.</h1>
               <p className="mt-1 text-sm text-slate-400">Browse live items, check the lead, and place a bid.</p>
             </div>
@@ -782,7 +782,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                 aria-expanded={postFormOpen}
                 aria-controls="auction-post-form"
                 aria-label={postFormOpen ? 'Close auction post form' : 'Post an auction'}
-                className="col-span-2 inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-500 px-4 text-sm font-bold text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-400 sm:col-span-1"
+                className="primary-button col-span-2 shrink-0 sm:col-span-1"
               >
                 {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                 <span>{postFormOpen ? 'Close form' : 'Post auction'}</span>
@@ -1148,7 +1148,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               const roleStyle = roleStyles[normalizeAuctionRole(auctionRoles[0] ?? '')] ?? 'border-slate-700 bg-slate-800 text-slate-300';
 
               return (
-                <article key={auction.id} className={`group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
+                <article key={auction.id} className={`auction-card group overflow-hidden rounded-2xl border bg-slate-900/80 shadow-lg transition duration-300 hover:-translate-y-0.5 hover:shadow-2xl ${isActive ? 'border-emerald-400/25 shadow-emerald-950/20 hover:border-emerald-300/40 hover:shadow-emerald-950/30' : 'border-slate-800 shadow-black/15'}`}>
                   <header className="flex items-start justify-between gap-3 p-4">
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0">
@@ -1229,12 +1229,12 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                                 </select>
                               </label>
                             )}
-                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                            <div className="grid grid-cols-1 gap-2">
                               <label className="min-w-0">
                                 <span className="sr-only">Bid amount</span>
                                 <input aria-label={`Bid on ${auction.itemName}`} type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="Enter bid amount" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-indigo-400/60" />
                               </label>
-                              <button disabled={saving || syncing || !lastSyncedAt || !Number.isSafeInteger(Number(bidAmounts[auction.id])) || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-950/40 transition hover:from-indigo-400 hover:to-violet-400 hover:shadow-indigo-900/50 disabled:cursor-not-allowed disabled:opacity-45">
+                              <button disabled={saving || syncing || !lastSyncedAt || !Number.isSafeInteger(Number(bidAmounts[auction.id])) || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="primary-button disabled:opacity-45">
                                 <Gavel className="h-4 w-4" /> {Number(bidAmounts[auction.id]) >= minimumBid ? `Bid ${Number(bidAmounts[auction.id]).toLocaleString()}` : 'Place bid'}
                               </button>
                             </div>
