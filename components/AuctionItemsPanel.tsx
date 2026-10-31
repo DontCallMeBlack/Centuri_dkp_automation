@@ -28,6 +28,7 @@ const BOSS_TYPES = [
   { value: 'Legacy', label: 'Legacy' },
 ] as const;
 const BOSS_TYPE_VALUES = BOSS_TYPES.map((boss) => boss.value);
+const CATALOG_PAGE_SIZE = 50;
 
 function SquareImageCropStep({
   file,
@@ -397,6 +398,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   const initialCatalogData = peekData<{ items: CatalogItem[]; roles: string[] }>('/api/auction/items');
   const [items, setItems] = useState<CatalogItem[]>(() => initialCatalogData?.items ?? []);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [requiredRoles, setRequiredRoles] = useState<string[]>([]);
@@ -457,6 +459,9 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
     () => items.filter((item) => item.name.toLowerCase().includes(search.trim().toLowerCase())),
     [items, search],
   );
+  const pageCount = Math.max(1, Math.ceil(filteredItems.length / CATALOG_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageItems = filteredItems.slice((currentPage - 1) * CATALOG_PAGE_SIZE, currentPage * CATALOG_PAGE_SIZE);
 
   const createItem = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -592,7 +597,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
             <input
               type="search"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => { setSearch(event.target.value); setPage(1); }}
               aria-label="Search catalog items"
               placeholder="Search items..."
               className="w-full rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-indigo-400/60"
@@ -609,10 +614,17 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
         ) : (
           <div className="grid gap-3">
             {saving && <article role="status" aria-label="Adding item to catalog" className="surface flex items-center gap-4 border-indigo-400/20 p-4"><div className="skeleton h-16 w-16 shrink-0 rounded-xl" /><div className="min-w-0 flex-1"><p className="flex items-center gap-2 text-sm font-semibold text-indigo-200"><LoaderCircle size={14} className="animate-spin" />Adding item…</p><p className="mt-2 text-xs text-slate-500">The catalog will update when the upload is confirmed.</p></div></article>}
-            {filteredItems.map((item) => (
+            {pageItems.map((item) => (
               <ItemEditor key={item.id} item={item} onSaved={updateItem} onRemoved={removeItem} />
             ))}
           </div>
+        )}
+        {!loading && pageCount > 1 && (
+          <nav aria-label="Catalog pages" className="flex items-center justify-between gap-3">
+            <button type="button" className="secondary-button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Previous items</button>
+            <p role="status" className="text-xs text-slate-400">Page {currentPage} of {pageCount}</p>
+            <button type="button" className="secondary-button" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>Next items</button>
+          </nav>
         )}
       </section>
     </div>
