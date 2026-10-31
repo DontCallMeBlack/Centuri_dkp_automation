@@ -19,11 +19,14 @@ function canWarmInBackground() {
   return !connection?.saveData && !['slow-2g', '2g'].includes(connection?.effectiveType ?? '');
 }
 
-function warmResources(resources: string[], imports: Promise<unknown>[] = []) {
+function warmResources(resources: string[], imports: Array<() => Promise<unknown>> = []) {
   if (!canWarmInBackground()) return () => undefined;
   let cancelled = false;
   const warm = async () => {
-    await Promise.all(imports);
+    if (cancelled) return;
+    // Start optional code downloads only after the connection and idle checks.
+    // A failed preload must not prevent the remaining data from warming.
+    await Promise.allSettled(imports.map((load) => load()));
     for (const resource of resources) {
       if (cancelled) return;
       await getData(resource, { maxAgeMs: 15_000 }).catch(() => undefined);
@@ -49,10 +52,10 @@ function warmResources(resources: string[], imports: Promise<unknown>[] = []) {
 // immediately without delaying the initial roster request.
 function warmWorkspace(user: SessionUser) {
   const resources = ['/api/auction', '/api/admin/boss-history', '/api/role-changes'];
-  const imports: Promise<unknown>[] = [import('./AuctionHousePanel'), import('./BossHistoryPanel')];
+  const imports: Array<() => Promise<unknown>> = [() => import('./AuctionHousePanel'), () => import('./BossHistoryPanel')];
   if (['chief', 'general', 'guardian'].includes(user.role)) {
     resources.push('/api/auction/items');
-    imports.push(import('./AuctionItemsPanel'));
+    imports.push(() => import('./AuctionItemsPanel'));
   }
   if (['chief', 'general'].includes(user.role)) resources.push('/api/admin/requests', '/api/admin/requests?section=archives');
   return warmResources(resources, imports);
