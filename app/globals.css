@@ -88,7 +88,7 @@ svg { flex-shrink: 0; }
 .roster-role-cell .role-badge { min-width: 106px; min-height: 26px; margin-inline: auto; justify-content: center; white-space: nowrap; max-width: none; border-radius: 999px; }
 .roster-role-cell .role-badge > svg { width: 13px; height: 13px; stroke-width: 2.2; }
 .role-badge { display: inline-flex; align-items: center; justify-content: center; gap: 7px; max-width: 100%; border: 1px solid currentColor; border-color: color-mix(in srgb,currentColor 26%,transparent); padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb,currentColor 9%,transparent); font-size: 10px; font-weight: 650; text-transform: capitalize; line-height: 1.2; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
-.role-gold { color: #e2c06b; }.role-violet { color: #c0a4f3; }.role-cyan { color: #8dccE8; }.role-slate { color: #a0aec5; }.role-orange { color: #f0a06f; }.role-green { color: #86d0a2; }.role-rose { color: #e39ab5; }.role-teal { color: #78cbbb; }.role-red { color: #ee858c; }.role-steel { color: #9aaddb; }
+.role-gold { color: #e2c06b; }.role-violet { color: #c0a4f3; }.role-cyan { color: #8dcce8; }.role-slate { color: #b4becf; }.role-orange { color: #f0a06f; }.role-green { color: #86d0a2; }.role-rose { color: #e39ab5; }.role-red { color: #ee858c; }
 .skeleton-surface { padding: 24px; min-height: 240px; }
 .skeleton { border-radius: 7px; background: linear-gradient(105deg,rgba(148,163,184,.07) 25%,rgba(174,168,255,.16) 45%,rgba(120,202,220,.1) 52%,rgba(148,163,184,.07) 72%); background-size: 240% 100%; animation: shimmer 1.8s ease-in-out infinite; }
 @keyframes shimmer { to { background-position: -150% 0; } }
