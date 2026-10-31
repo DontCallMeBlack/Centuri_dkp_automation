@@ -72,15 +72,15 @@ function normalizeRole(role: string) {
 }
 
 const ROLE_STYLES: Record<string, string> = {
-  ranger: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-300',
-  'dps rogue': 'border-violet-400/30 bg-violet-400/10 text-violet-300',
-  'fire mage': 'border-orange-700/40 bg-orange-800/20 text-orange-400',
-  'ice mage': 'border-sky-300/30 bg-sky-300/10 text-sky-200',
-  'support druid': 'border-green-400/30 bg-green-400/10 text-green-300',
-  'dps druid': 'border-purple-800/50 bg-purple-900/30 text-purple-300',
-  'support rogue': 'border-rose-600/40 bg-rose-700/20 text-rose-300',
-  'dps warrior': 'border-red-400/30 bg-red-400/10 text-red-300',
-  tank: 'border-pink-400/30 bg-pink-400/10 text-pink-300',
+  ranger: 'border-amber-300/35 bg-amber-300/10 text-amber-200',
+  'dps rogue': 'border-violet-300/35 bg-violet-300/10 text-violet-200',
+  'fire mage': 'border-orange-300/35 bg-orange-300/10 text-orange-200',
+  'ice mage': 'border-sky-300/35 bg-sky-300/10 text-sky-200',
+  'support druid': 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200',
+  'dps druid': 'border-purple-300/35 bg-purple-300/10 text-purple-200',
+  'support rogue': 'border-teal-300/35 bg-teal-300/10 text-teal-200',
+  'dps warrior': 'border-red-300/35 bg-red-300/10 text-red-200',
+  tank: 'border-blue-300/35 bg-blue-300/10 text-blue-200',
 };
 
 export default function DashboardPage() { return <Suspense fallback={<LoadingSurface fullLayout label="Preparing your dashboard" title="Welcome back." />}><Dashboard /></Suspense>; }
