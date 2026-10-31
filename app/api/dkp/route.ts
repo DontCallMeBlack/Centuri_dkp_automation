@@ -21,20 +21,16 @@ export async function GET(req: Request) {
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const searchParams = new URL(req.url).searchParams;
-    const fresh = searchParams.get('fresh') === '1' &&
+    const fresh = new URL(req.url).searchParams.get('fresh') === '1' &&
       (canManageClan(user.role) || user.role === 'guardian');
-    const summary = searchParams.get('summary') === '1';
-    const picker = searchParams.get('picker') === '1' && fresh;
     const [rosterSnapshot, activeUsers, historicalBossAttendance] = await Promise.all([
       getSheetRosterSnapshot({ fresh }),
       User.find({ status: 'approved' })
         .select('nickname role sheetRecordName sheetRecords')
         .sort({ nickname: 1 })
         .lean(),
-      // Attendance suggestions are only needed when a manager opens the award
-      // picker (fresh=1), not on every member's leaderboard visit or refresh.
-      picker ? BossAward.aggregate<{ bossName: string; owner: string; account: string; count: number }>([
+      // Attendance suggestions are only refreshed for manager requests.
+      fresh ? BossAward.aggregate<{ bossName: string; owner: string; account: string; count: number }>([
         { $match: { status: 'applied' } },
         { $unwind: '$participants' },
         { $group: {
@@ -65,6 +61,7 @@ export async function GET(req: Request) {
       const approval = roleApprovalsByIdentity.get(identityKey)?.find((candidate) => isApprovedToonRoleSchedule(change, candidate));
       return { ...record, subClass: getEffectiveToonRole(record.subClass, change, roleReadAt, approval) };
     });
+    const recordsByRow = new Map(effectiveRoster.map((record) => [record.rowIndex, record]));
     const rowByIdentity = new Map(effectiveRoster.map((record) => [getSheetRecordKey(record), record.rowIndex]));
     const activityByBossAndRow = new Map<string, { bossName: string; rowIndex: number; count: number }>();
     for (const historyEntry of historicalBossAttendance) {
@@ -80,21 +77,18 @@ export async function GET(req: Request) {
       });
     }
     const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
-    // The full roster is already in this response. Send only row references for
-    // each member instead of serializing the same toon objects a second time.
-    // The client reconstructs member-toon relationships from the roster map.
     const clanMembers = activeUsers.map((member) => ({
       nickname: member.nickname,
       role: member.role,
-      sheetRecordRows: getLinkedSheetRecordRows(member, roster),
+      toons: getLinkedSheetRecordRows(member, roster)
+        .flatMap((rowIndex) => {
+          const record = recordsByRow.get(rowIndex);
+          return record ? [record] : [];
+        }),
     }));
-    const linkedRows = new Set(clanMembers.flatMap((member) => member.sheetRecordRows));
-    const responseRoster = summary && !picker
-      ? effectiveRoster.filter((record) => linkedRows.has(record.rowIndex))
-      : effectiveRoster;
     return NextResponse.json({
       success: true,
-      roster: responseRoster,
+      roster: effectiveRoster,
       bossActivity: [...activityByBossAndRow.values()],
       rosterSync: {
         fetchedAt: rosterSnapshot.fetchedAt.toISOString(),
