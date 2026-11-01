@@ -5,7 +5,7 @@ interface ToonBalance { rowIndex: number; owner: string; account: string; subCla
 
 export default function ToonDkpCards({ toons, loading }: { toons: ToonBalance[]; loading: boolean }) {
   return <section className="surface p-5 sm:p-6" aria-labelledby="my-toons-title">
-    <div className="mb-5 flex items-start justify-between gap-3"><div><p className="page-kicker">Your characters</p><h2 id="my-toons-title" className="mt-1 text-lg font-semibold text-white">My toon DKP</h2><p className="mt-2 text-xs leading-5 text-slate-500">Each toon’s available balance, before auction reservations.</p></div><span className="stat-icon"><Coins size={19} /></span></div>
+    <div className="mb-5 flex items-start justify-between gap-3"><div><p className="page-kicker">Your characters</p><h2 id="my-toons-title" className="mt-1 text-lg font-semibold text-white">My toon DKP</h2></div><span className="stat-icon"><Coins size={19} /></span></div>
     {loading ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{[0, 1].map((key) => <div key={key} className="skeleton h-24" />)}</div>
       : toons.length === 0 ? <p className="rounded-xl border border-dashed border-slate-700/60 p-5 text-sm leading-6 text-slate-400">Your linked toons will appear here once clan leadership connects your account.</p>
       : <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3">{toons.map((toon) => <article key={toon.rowIndex} aria-label={`${toon.account || toon.owner} DKP`} className="toon-balance relative overflow-hidden rounded-2xl border border-indigo-300/10 bg-gradient-to-br from-indigo-400/[.07] via-slate-900/40 to-slate-950/40 px-4 py-3">
