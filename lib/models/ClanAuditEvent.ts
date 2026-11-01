@@ -35,6 +35,7 @@ export interface IClanAuditEvent extends Document {
   priorDkpResetAt?: Date;
   priorDkpResetByUserId?: mongoose.Types.ObjectId;
   priorDkpResetByNickname?: string;
+  destinationResetBefore?: { owner: string; account: string; resetAt: Date; resetByUserId: mongoose.Types.ObjectId; resetByNickname: string };
   sourceLinksBefore?: AuditUserLinks;
   sourceLinksAfter?: AuditUserLinks;
   destinationLinksBefore?: AuditUserLinks;
@@ -76,6 +77,7 @@ const ClanAuditEventSchema: Schema<IClanAuditEvent> = new Schema({
   priorDkpResetAt: { type: Date },
   priorDkpResetByUserId: { type: Schema.Types.ObjectId },
   priorDkpResetByNickname: { type: String },
+  destinationResetBefore: { type: Schema.Types.Mixed },
   sourceLinksBefore: { type: Schema.Types.Mixed },
   sourceLinksAfter: { type: Schema.Types.Mixed },
   destinationLinksBefore: { type: Schema.Types.Mixed },

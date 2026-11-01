@@ -24,6 +24,8 @@ import { getChangedLinkIdentities, getReservationConflict, type ReservationSubje
 import { planStaleRowReferenceRelease } from '@/lib/auth/staleRowReferences';
 import { isDkpRequestId } from '@/lib/bossDkp';
 import { normalizeNickname } from '@/lib/auth/validation';
+import { planToonOwnerChange } from '@/lib/toonOwnerChange';
+import { transferRoleIdentity } from '@/lib/transferRoleIdentity';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
@@ -296,6 +298,7 @@ async function undoTransfer(actorId: string, eventId: string, requestId: string)
     throw new RequestValidationError('This transfer is not complete.', 409);
   }
   const toon = preview.removedToons[0];
+  const transferredToon = preview.addedToons?.[0] ?? toon;
   if (preview.dkpBefore?.length !== 6 || !Array.isArray(preview.activityWeeksBefore) || typeof preview.hadPriorDkpReset !== 'boolean') {
     throw new RequestValidationError('This transfer has no complete DKP recovery snapshot.', 409);
   }
@@ -311,7 +314,8 @@ async function undoTransfer(actorId: string, eventId: string, requestId: string)
   }
   const snapshot = preview.dkpBefore.map((value, index) => readDkpCell(value, ['D', 'E', 'F', 'G', 'H', 'I'][index], toon.rowIndex ?? 3));
   await restoreToonDkpSnapshot({
-    actorUserId: actorId, requestId, identity: { owner: toon.owner, account: toon.account },
+    actorUserId: actorId, requestId, identity: { owner: transferredToon.owner, account: transferredToon.account },
+    ...(transferredToon.owner !== toon.owner ? { ownerAfter: toon.owner } : {}),
     values: snapshot, weeklyActivity: preview.activityWeeksBefore,
     mutate: async (session, record, roster) => {
       const manager = await User.findOne({ _id: actorId, status: 'approved', role: { $in: ['chief', 'general'] } }).session(session);
@@ -344,14 +348,16 @@ async function undoTransfer(actorId: string, eventId: string, requestId: string)
         throw new RequestValidationError('One of these accounts’ toon links changed after the transfer.', 409);
       }
       const toonKey = getSheetRecordKey(record);
-      if (!sourceBefore.some((identity) => getSheetRecordKey(identity) === toonKey) ||
-        sourceAfter.some((identity) => getSheetRecordKey(identity) === toonKey) ||
-        destinationBefore.some((identity) => getSheetRecordKey(identity) === toonKey) ||
+      const originalToonKey = getSheetRecordKey(toon);
+      if (!sourceBefore.some((identity) => getSheetRecordKey(identity) === originalToonKey) ||
+        sourceAfter.some((identity) => getSheetRecordKey(identity) === originalToonKey) ||
+        destinationBefore.some((identity) => getSheetRecordKey(identity) === originalToonKey || getSheetRecordKey(identity) === toonKey) ||
         !destinationAfter.some((identity) => getSheetRecordKey(identity) === toonKey)) {
         throw new RequestValidationError('The source account ownership snapshot is inconsistent.', 409);
       }
       const allRestored = [...sourceBefore, ...destinationBefore];
-      const restoredMatches = allRestored.map((identity) => roster.filter((entry) => getSheetRecordKey(entry) === getSheetRecordKey(identity)));
+      const currentIdentityKey = (identity: { owner: string; account: string }) => getSheetRecordKey(identity) === originalToonKey ? toonKey : getSheetRecordKey(identity);
+      const restoredMatches = allRestored.map((identity) => roster.filter((entry) => getSheetRecordKey(entry) === currentIdentityKey(identity)));
       if (restoredMatches.some((entries) => entries.length !== 1)) throw new RequestValidationError('A toon from the saved account links is no longer on the roster.', 409);
       const restoredRows = new Set(restoredMatches.map((entries) => entries[0].rowIndex));
       const thirdParty = await User.find({ _id: { $nin: [source._id, destination._id] } }).select('sheetRecords sheetRecordName').session(session).lean();
@@ -359,18 +365,24 @@ async function undoTransfer(actorId: string, eventId: string, requestId: string)
         throw new RequestValidationError('A saved toon is now linked to another account.', 409);
       }
       const restoreLinks = (identities: typeof sourceBefore) => identities.length ? identities.map((identity) => {
-        const current = roster.find((entry) => getSheetRecordKey(entry) === getSheetRecordKey(identity))!;
-        return { rowIndex: current.rowIndex, owner: current.owner, account: current.account };
+        const current = roster.find((entry) => getSheetRecordKey(entry) === currentIdentityKey(identity))!;
+        return { rowIndex: current.rowIndex, owner: identity.owner, account: identity.account };
       }) : undefined;
       source.sheetRecords = restoreLinks(sourceBefore); source.sheetRecordName = undefined;
       destination.sheetRecords = restoreLinks(destinationBefore); destination.sheetRecordName = undefined;
       await source.save({ session }); await destination.save({ session });
+      await transferRoleIdentity(record, toon, session);
+      if (toonKey !== originalToonKey) {
+        if (event.destinationResetBefore) {
+          await ToonDkpReset.updateOne({ identityKey: toonKey }, { $set: event.destinationResetBefore }, { upsert: true, session });
+        } else await ToonDkpReset.deleteOne({ identityKey: toonKey }).session(session);
+      }
       if (event.hadPriorDkpReset) {
-        await ToonDkpReset.updateOne({ identityKey: toonKey }, { $set: {
-          owner: record.owner, account: record.account, resetAt: event.priorDkpResetAt,
+        await ToonDkpReset.updateOne({ identityKey: originalToonKey }, { $set: {
+          owner: toon.owner, account: toon.account, resetAt: event.priorDkpResetAt,
           resetByUserId: event.priorDkpResetByUserId, resetByNickname: event.priorDkpResetByNickname,
         } }, { upsert: true, session });
-      } else await ToonDkpReset.deleteOne({ identityKey: toonKey }).session(session);
+      } else await ToonDkpReset.deleteOne({ identityKey: originalToonKey }).session(session);
       event.undoneAt = new Date(); event.undoneByUserId = manager._id;
       event.undoneByNickname = manager.nickname; event.undoRequestId = requestId;
       await event.save({ session });
@@ -560,6 +572,7 @@ export async function POST(request: Request) {
           const source = await User.findOne({ _id: userId, status: 'approved' }).session(session);
           const destination = await User.findOne({ _id: toUserId, status: 'approved' }).session(session);
           if (!source || !destination) throw new RequestValidationError('Both accounts must be approved clan members.', 409);
+          planToonOwnerChange(record, destination.nickname, roster);
           const sourceRows = getLinkedSheetRecordRows(source, roster);
           const destinationRows = getLinkedSheetRecordRows(destination, roster);
           if (existingTransfer) {
@@ -585,6 +598,9 @@ export async function POST(request: Request) {
           const activityWeeksBefore = cache?.weeklyActivityHistory?.find((entry) => getSheetRecordKey(entry) === getSheetRecordKey(record))?.weeks
             ?? (record.fiveWeekActivity === 0 ? [] : [record.fiveWeekActivity ?? 0]);
           const priorReset = await ToonDkpReset.findOne({ identityKey: getSheetRecordKey(record) }).session(session).lean();
+          const destinationIdentityKey = getSheetRecordKey({ owner: destination.nickname, account: record.account });
+          const destinationReset = destinationIdentityKey !== getSheetRecordKey(record)
+            ? await ToonDkpReset.findOne({ identityKey: destinationIdentityKey }).session(session).lean() : null;
           source.sheetRecords = remainingRows.flatMap((row) => {
             const linked = roster.find((entry) => entry.rowIndex === row);
             return linked ? [{ rowIndex: linked.rowIndex, owner: linked.owner, account: linked.account }] : [];
@@ -601,6 +617,10 @@ export async function POST(request: Request) {
             dkpOperationKey, activityWeeksBefore,
             hadPriorDkpReset: Boolean(priorReset), priorDkpResetAt: priorReset?.resetAt,
             priorDkpResetByUserId: priorReset?.resetByUserId, priorDkpResetByNickname: priorReset?.resetByNickname,
+            ...(destinationReset ? { destinationResetBefore: {
+              owner: destinationReset.owner, account: destinationReset.account, resetAt: destinationReset.resetAt,
+              resetByUserId: destinationReset.resetByUserId, resetByNickname: destinationReset.resetByNickname,
+            } } : {}),
             sourceLinksBefore, sourceLinksAfter: snapshotUserLinks(source, roster, remainingRows), destinationLinksBefore,
             removedToons: [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }],
           }], { session });
@@ -621,26 +641,32 @@ export async function POST(request: Request) {
           const conflictingUser = otherUsers.find((user) => getLinkedSheetRecordRows(user, roster).includes(record.rowIndex));
           if (conflictingUser) throw new RequestValidationError(`This toon is linked to ${conflictingUser.nickname}. Refresh the member list and try again.`, 409);
 
-          await ToonDkpReset.updateOne({ identityKey: getSheetRecordKey(record) }, {
-            $set: { owner: record.owner, account: record.account, resetAt: new Date(), resetByUserId: manager._id, resetByNickname: manager.nickname },
+          const transferredRecord = { ...record, owner: destination.nickname };
+          planToonOwnerChange(record, transferredRecord.owner, roster);
+          const transferredKey = getSheetRecordKey(transferredRecord);
+          await ToonDkpReset.updateOne({ identityKey: transferredKey }, {
+            $set: { owner: transferredRecord.owner, account: record.account, resetAt: new Date(), resetByUserId: manager._id, resetByNickname: manager.nickname },
           }, { upsert: true, session });
           const weeklyRoster = await getRosterWithWeeklyEarned(roster, session);
           bidChanges = await withdrawToonOpenAuctionBids(record, roster, weeklyRoster, session);
+          await transferRoleIdentity(record, transferredRecord, session);
           destination.sheetRecords = [
-            ...(destination.sheetRecords ?? []).filter((saved) => getSheetRecordKey(saved) !== getSheetRecordKey(record)),
-            { rowIndex: record.rowIndex, owner: record.owner, account: record.account },
+            ...roster.filter((entry) => destinationRows.includes(entry.rowIndex)).map(({ rowIndex: linkedRow, owner: linkedOwner, account: linkedAccount }) => ({ rowIndex: linkedRow, owner: linkedOwner, account: linkedAccount })),
+            { rowIndex: record.rowIndex, owner: transferredRecord.owner, account: record.account },
           ];
           destination.sheetRecordName = undefined;
           await destination.save({ session });
           transferEvent.transferStatus = 'completed';
           transferEvent.transferToNickname = destination.nickname;
-          transferEvent.addedToons = [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }];
-          transferEvent.destinationLinksAfter = snapshotUserLinks(destination, roster, [...destinationRows, record.rowIndex]);
+          transferEvent.addedToons = [{ rowIndex: record.rowIndex, owner: transferredRecord.owner, account: record.account }];
+          const transferredRoster = roster.map((entry) => entry.rowIndex === record.rowIndex ? transferredRecord : entry);
+          transferEvent.destinationLinksAfter = snapshotUserLinks(destination, transferredRoster, [...destinationRows, record.rowIndex]);
           transferEvent.removedToons = [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }];
           transferEvent.dkpBefore = [record.weeklyEarned, record.weeklySpent, record.earned, record.spent, record.available, record.fiveWeekActivity].map(String);
           transferEvent.withdrawnBids = bidChanges.withdrawnBids;
           transferEvent.promotedBids = bidChanges.promotedBids;
           await transferEvent.save({ session });
+          return { owner: transferredRecord.owner };
         },
       });
       if (result.replayed) {
