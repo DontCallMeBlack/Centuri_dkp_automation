@@ -32,6 +32,7 @@ import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
 import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
 import { isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
+import { planToonOwnerChange, planOwnerMutationReplay } from '@/lib/toonOwnerChange';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -223,14 +224,19 @@ async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnT
   const pending = await DkpSheetMutation.findOne({ spreadsheetId, status: 'pending' }).sort({ createdAt: 1 });
   if (!pending) return false;
   const rows = await readSheetRows(sheets);
-  assertRecoveryIdentities(pending.identities, rows);
   if (!pending.previousValues) throw new DkpIntegrityError('An older interrupted DKP operation needs manager review before it can be retried.');
-  const state = getDkpReplayState(pending.previousValues, pending.updates, rows);
+  let updates: Array<{ range: string; values: Array<Array<number | string>> }>;
+  if (pending.ownerChange) {
+    updates = planOwnerMutationReplay(pending.ownerChange, pending.identities, pending.previousValues, pending.updates, rows);
+  } else {
+    assertRecoveryIdentities(pending.identities, rows);
+    updates = getDkpReplayState(pending.previousValues, pending.updates, rows) === 'pending' ? pending.updates : [];
+  }
   await assertLedgerLock(spreadsheetId, lockId);
-  if (state === 'pending' && pending.updates.length > 0) {
+  if (updates.length > 0) {
     await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
-      requestBody: { valueInputOption: 'RAW', data: pending.updates },
+      requestBody: { valueInputOption: 'RAW', data: updates },
     }), false);
   }
   await assertLedgerLock(spreadsheetId, lockId);
@@ -745,7 +751,7 @@ export async function resetToonDkp(options: {
   mode: ToonDkpResetMode;
   fingerprintData?: unknown;
   beforeMutation?: (session: ClientSession, record: ISheetRosterRecord, actor: ToonDkpResetActor, roster: ISheetRosterRecord[]) => Promise<void>;
-  mutate?: (session: ClientSession, record: ISheetRosterRecord, actor: ToonDkpResetActor, roster: ISheetRosterRecord[]) => Promise<void>;
+  mutate?: (session: ClientSession, record: ISheetRosterRecord, actor: ToonDkpResetActor, roster: ISheetRosterRecord[]) => Promise<void | { owner: string }>;
 }) {
   assertDkpWritesEnabled();
   await dbConnect();
@@ -810,12 +816,19 @@ export async function resetToonDkp(options: {
     await assertLedgerLock(spreadsheetId, lockId);
     await withClanAdministrationTransaction(async (session) => {
       const actor = await loadActor(session);
-      if (options.mutate) await options.mutate(session, record, actor, roster);
+      const result = options.mutate ? await options.mutate(session, record, actor, roster) : undefined;
+      const ownerChange = result ? planToonOwnerChange(record, result.owner, roster) : undefined;
+      const savedHistory = ownerChange && weeklyActivityHistory
+        ? weeklyActivityHistory.filter((entry) => getSheetRecordKey(record) === getSheetRecordKey({ owner: ownerChange.afterOwner, account: record.account }) ||
+            getSheetRecordKey(entry) !== getSheetRecordKey({ owner: ownerChange.afterOwner, account: record.account }))
+          .map((entry) => getSheetRecordKey(entry) === getSheetRecordKey(record) ? { ...entry, owner: ownerChange.afterOwner } : entry)
+        : weeklyActivityHistory;
       await DkpSheetMutation.create([{
         spreadsheetId, operationKey, requestFingerprint, status: 'pending', updates, previousValues,
         identities: [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }],
         actorUserId: options.actorUserId,
-        ...(weeklyActivityHistory ? { weeklyActivityHistory } : {}),
+        ...(savedHistory ? { weeklyActivityHistory: savedHistory } : {}),
+        ...(ownerChange ? { ownerChange } : {}),
       }], { session });
     });
     await replayPendingSheetMutation(spreadsheetId, sheets, lockId);
@@ -974,6 +987,7 @@ export async function restoreToonDkpSnapshot(options: {
   actorUserId: string;
   requestId: string;
   identity: { owner: string; account: string };
+  ownerAfter?: string;
   values: number[];
   weeklyActivity: number[];
   mutate: (session: ClientSession, record: ISheetRosterRecord, roster: ISheetRosterRecord[]) => Promise<void>;
@@ -989,6 +1003,7 @@ export async function restoreToonDkpSnapshot(options: {
   const operationKey = createHash('sha256').update(`transfer-undo:${spreadsheetId}:${options.actorUserId}:${options.requestId}`).digest('hex');
   const requestFingerprint = createHash('sha256').update(JSON.stringify({
     identity: options.identity, values: options.values, weeklyActivity: options.weeklyActivity,
+    ...(options.ownerAfter !== undefined ? { ownerAfter: options.ownerAfter } : {}),
   })).digest('hex');
 
   return withWeeklyResetLock(spreadsheetId, async (lockId) => {
@@ -1019,6 +1034,7 @@ export async function restoreToonDkpSnapshot(options: {
     const matching = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(options.identity));
     if (matching.length !== 1) throw new RequestValidationError('The transferred toon is missing or duplicated in the Sheet.', 409);
     const record = matching[0];
+    const ownerChange = options.ownerAfter !== undefined ? planToonOwnerChange(record, options.ownerAfter, roster) : undefined;
     requireRosterValues(record, ['weeklyEarned', 'weeklySpent', 'earned', 'spent', 'available', 'fiveWeekActivity']);
     if ([record.weeklyEarned, record.weeklySpent, record.earned, record.spent, record.available, record.fiveWeekActivity].some((value) => value !== 0)) {
       throw new RequestValidationError('This toon has changed DKP since the transfer. Resolve its DKP before undoing the transfer.', 409);
@@ -1036,17 +1052,20 @@ export async function restoreToonDkpSnapshot(options: {
       await options.mutate(session, record, roster);
       const cache = await SheetRosterCache.findOne({ cacheKey: spreadsheetId }).session(session).lean();
       if (!cache) throw new DkpIntegrityError('The roster cache is unavailable while restoring the transfer snapshot.');
+      const restoredOwner = ownerChange?.afterOwner ?? record.owner;
       const identityKey = getSheetRecordKey(record);
-      const weeklyActivityHistory = (cache.weeklyActivityHistory ?? []).map((entry) => getSheetRecordKey(entry) === identityKey
-        ? { ...entry, rowIndex: record.rowIndex, owner: record.owner, account: record.account, weeks: [...options.weeklyActivity] }
+      const restoredKey = getSheetRecordKey({ owner: restoredOwner, account: record.account });
+      const weeklyActivityHistory = (cache.weeklyActivityHistory ?? []).filter((entry) => restoredKey === identityKey || getSheetRecordKey(entry) !== restoredKey).map((entry) => getSheetRecordKey(entry) === identityKey
+        ? { ...entry, rowIndex: record.rowIndex, owner: restoredOwner, account: record.account, weeks: [...options.weeklyActivity] }
         : entry);
-      if (!weeklyActivityHistory.some((entry) => getSheetRecordKey(entry) === identityKey)) {
-        weeklyActivityHistory.push({ rowIndex: record.rowIndex, owner: record.owner, account: record.account, weeks: [...options.weeklyActivity] });
+      if (!weeklyActivityHistory.some((entry) => getSheetRecordKey(entry) === restoredKey)) {
+        weeklyActivityHistory.push({ rowIndex: record.rowIndex, owner: restoredOwner, account: record.account, weeks: [...options.weeklyActivity] });
       }
       await DkpSheetMutation.create([{
         spreadsheetId, operationKey, requestFingerprint, status: 'pending', updates, previousValues,
         identities: [{ rowIndex: record.rowIndex, owner: record.owner, account: record.account }],
         actorUserId: options.actorUserId, weeklyActivityHistory,
+        ...(ownerChange ? { ownerChange } : {}),
       }], { session });
     });
     await replayPendingSheetMutation(spreadsheetId, sheets, lockId);

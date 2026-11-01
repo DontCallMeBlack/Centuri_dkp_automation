@@ -9,6 +9,7 @@ export interface IDkpSheetMutation extends Document {
   previousValues?: Array<{ range: string; values: number[][] }>;
   identities?: Array<{ rowIndex: number; owner: string; account: string }>;
   requestFingerprint?: string;
+  ownerChange?: { rowIndex: number; account: string; beforeOwner: string; afterOwner: string };
   weeklyActivityHistory?: Array<{ rowIndex: number; owner: string; account: string; weeks: number[] }>;
   createdAt: Date;
   updatedAt: Date;
@@ -23,6 +24,7 @@ const DkpSheetMutationSchema: Schema<IDkpSheetMutation> = new Schema({
   previousValues: { type: Schema.Types.Mixed },
   identities: { type: Schema.Types.Mixed },
   requestFingerprint: { type: String },
+  ownerChange: { type: Schema.Types.Mixed },
   weeklyActivityHistory: { type: Schema.Types.Mixed },
 }, { timestamps: true });
 
