@@ -298,7 +298,6 @@ function Dashboard() {
                 <div>
                   <p className="page-kicker">The roster</p>
                   <h2 className="mt-1 text-lg font-semibold text-white">Clan leaderboard</h2>
-                  <p className="mt-2 text-xs text-slate-500">Ranked within each class by available DKP.</p>
                 </div>
                 <label className="relative w-full sm:max-w-sm">
                   <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
@@ -366,9 +365,6 @@ function Dashboard() {
                       })}
                     </tbody>
                   </table>
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/5 px-4 py-3 text-xs text-slate-400">
-                    <span role="status">Showing all {rankedActiveToons.length} toons</span>
-                  </div>
                 </div>
               )}
             </section>

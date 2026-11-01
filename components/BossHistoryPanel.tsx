@@ -320,17 +320,12 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
     );
   }
 
-  const currentWeekKillCount = awards.filter((award) => award.status === 'applied' && award.canModify === true).length;
   const visibleAwards = awards.filter((award) => award.id === editingId || `${award.bossName} ${award.createdBy} ${award.participants.map((participant) => `${participant.account} ${participant.owner}`).join(' ')}`.toLowerCase().includes(historyQuery.trim().toLowerCase()));
 
   return (
     <section className="raid-history space-y-5 text-slate-100">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div><p className="page-kicker">Raid archive</p><h1 className="page-title">Kill history</h1><p className="page-description">{canManage ? 'Kill records, attendance, and manager notes.' : 'Boss kills and attendance.'}</p></div>
-        <div className="flex flex-wrap gap-1.5 pb-0.5">
-          <div title="Kill records currently loaded" className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><History size={13} className="text-violet-300" /><span className="text-xs font-bold tabular-nums text-white">{awards.length}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">loaded</span></div>
-          <div className="flex h-9 items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/65 px-2.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /><span className="text-xs font-bold tabular-nums text-white">{currentWeekKillCount}</span><span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">this week</span></div>
-        </div>
       </div>
       <label className="search-field"><Search /><input type="search" aria-label="Search loaded kill history" placeholder="Search loaded kills by boss, attendee, or recorder…" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} /></label>
       {historyQuery.trim() && <p role="status" className="text-xs text-slate-400">{visibleAwards.length} of {awards.length} loaded kills match. {nextCursor ? 'Load older records below to search more history.' : ''}</p>}
