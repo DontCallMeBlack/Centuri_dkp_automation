@@ -279,7 +279,7 @@ function Dashboard() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
         {[[Users,'Clan members',clanMembers.length,'Approved accounts'],[Swords,'Active toons',rankedToons.length,'Linked to your clan']].map(([Icon,label,value,caption]) => {
           const I = Icon as typeof Users;
-          return <div key={String(label)} className="surface stat-card"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div><p className="stat-label">{String(label)}</p>{loading ? <div className="skeleton mt-3 h-6 w-14" /> : <p className="stat-value">{value === null ? '—' : Number(value).toLocaleString()}</p>}<p className="stat-caption">{String(caption)}</p></div></div>;
+          return <div key={String(label)} className="surface stat-card roster-summary-card"><div className="stat-icon hidden sm:block"><I size={17} strokeWidth={1.7} /></div><div className="min-w-0 flex-1"><p className="stat-label">{String(label)}</p><p className="stat-caption">{String(caption)}</p></div>{loading ? <div className="skeleton h-6 w-8 shrink-0" /> : <p className="stat-value shrink-0">{value === null ? '—' : Number(value).toLocaleString()}</p>}</div>;
         })}
       </div><ToonDkpCards toons={ownToons} loading={loading} /></>}
       {/* Main Content Area */}
