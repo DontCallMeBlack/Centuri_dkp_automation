@@ -258,8 +258,8 @@ svg { flex-shrink: 0; }
   .auth-feature > span { color: #dfc38e; border-color: #dfc38e20; background: #dfc38e06; }
   .toon-balance { background: radial-gradient(ellipse at 100% 0, #a2cbd710, transparent 70%), #0c1521; border-color: #a6bcd31c; }
   .toon-balance::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 2px; background: linear-gradient(#ddbd82aa, #ddbd8200); }
-  .toon-balance .role-badge { width: 40px; height: 40px; padding: 0; border-radius: 12px; }
-  .toon-balance .role-badge > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+  .toon-balance .role-badge { width: 32px; height: 32px; padding: 0; border-radius: 10px; }
+  .toon-balance .role-badge > svg { width: 17px; height: 17px; stroke-width: 1.8; }
   .auction-heading { padding-bottom: 8px; }
   .auction-heading h1 { font-size: clamp(28px, 3vw, 40px); font-weight: 500; letter-spacing: -.045em; }
   .auction-card { border-radius: 16px; background: linear-gradient(145deg, #172536, #0f1926); }
