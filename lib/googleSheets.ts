@@ -33,6 +33,7 @@ import { RequestValidationError } from '@/lib/security/request';
 import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
 import { isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 import { planToonOwnerChange, planOwnerMutationReplay } from '@/lib/toonOwnerChange';
+import { readToonAwardCutoffs, isAwardInToonLifecycle } from '@/lib/toonAwardLifecycle';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
 const ROSTER_CACHE_TTL_MS = 30_000;
@@ -895,13 +896,22 @@ export async function adjustPlayersDKP(
     const sheets = createSheetsClient();
     const rows = await readSheetRows(sheets);
     const roster = rosterFromRows(rows);
-    const operationalTargets = targets.map((target) => {
+    let operationalTargets = targets.map((target) => {
       if (typeof target.owner !== 'string' || typeof target.account !== 'string') return target;
       const identity = { owner: target.owner, account: target.account };
       const identityMatches = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(identity));
       if (identityMatches.length !== 1) throw new RequestValidationError('This toon identity is missing or duplicated in the Sheet. Correct the roster before changing DKP.', 409);
       return { ...target, rowIndex: identityMatches[0].rowIndex };
     });
+    if (requestedMode === 'weekly-earned' && options.earnedAt) {
+      const identities = operationalTargets.map((target) => roster.find((record) => record.rowIndex === target.rowIndex)!)
+        .filter((record) => record !== undefined);
+      const cutoffs = await readToonAwardCutoffs(identities);
+      operationalTargets = operationalTargets.filter((target) => {
+        const record = roster.find((entry) => entry.rowIndex === target.rowIndex);
+        return !record || isAwardInToonLifecycle(record, options.earnedAt!, cutoffs);
+      });
+    }
     const now = new Date();
     const historical = requestedMode === 'weekly-earned' && options.earnedAt &&
       options.earnedAt < getCurrentDkpWeekStart(now);
@@ -1258,8 +1268,6 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
     let subClass: string;
     if (input.action === 'create') {
       if (roster.some((record) => record.account.trim().toLowerCase() === account.toLowerCase())) throw new RequestValidationError('A toon with this name is already in the clan.', 409);
-      if (await RosterMutation.exists({ spreadsheetId, identityKey })) throw new RequestValidationError('This toon identity already has a roster lifecycle and cannot be recreated with its old history.', 409);
-      if (await BossAward.exists({ participants: { $elemMatch: { owner, account } } }).collation({ locale: 'en', strength: 2 })) throw new RequestValidationError('This owner/toon identity already has clan award history. Reconcile the existing identity instead of creating it as a brand-new toon.', 409);
       // The durable roster mutation compacts all live toons, so the new toon is
       // appended immediately after the current live roster.
       rowIndex = roster.length + 3;

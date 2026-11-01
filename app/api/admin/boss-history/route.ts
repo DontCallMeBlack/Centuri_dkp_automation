@@ -4,7 +4,6 @@ import BossAward, { type IBossAwardAuditEntry, type IBossAwardParticipant } from
 import { getSessionUser } from '@/lib/auth/session';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import User from '@/lib/models/User';
-import RosterMutation from '@/lib/models/RosterMutation';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { adjustPlayersDKP, getSheetRoster, isDkpMutationApplied } from '@/lib/googleSheets';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
@@ -14,6 +13,7 @@ import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, RequestValidationError, requestErrorResponse } from '@/lib/security/request';
 import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
 import { buildKillDeletedAuditEntries } from '@/lib/bossHistoryAudit';
+import { readToonAwardCutoffs, isAwardInToonLifecycle } from '@/lib/toonAwardLifecycle';
 
 function canManageBossHistory(role: string) {
   return role === 'chief' || role === 'general' || role === 'guardian';
@@ -194,8 +194,6 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
       const claimed = await withClanAdministrationTransaction(async (session) => {
         const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
         if (!actor) throw new RequestValidationError('Your role no longer permits attendance changes.', 403);
-        const keys = nextParticipants.filter((record) => record !== undefined).map((record) => getSheetRecordKey(record!));
-        if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: keys } }).session(session)) throw new RequestValidationError('This kill includes a permanently removed toon. Its forfeited DKP cannot be changed through old attendance records.', 409);
         return BossAward.findOneAndUpdate({ _id: awardId, status: 'applied', createdAt: { $gte: weeklyResetStart } }, {
         $set: {
           status: 'updating',
@@ -225,10 +223,11 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
       const record = resolveParticipant(participant, roster);
       return [getSheetRecordKey(record), record];
     }));
+    const lifecycleCutoffs = await readToonAwardCutoffs([...previous.values(), ...next.values()]);
     const adjustments = [
       ...[...next].filter(([identity]) => !previous.has(identity)).map(([, record]) => ({ ...record, points: award!.points })),
       ...[...previous].filter(([identity]) => !next.has(identity)).map(([, record]) => ({ ...record, points: -award!.points })),
-    ];
+    ].filter((record) => isAwardInToonLifecycle(record, award!.createdAt, lifecycleCutoffs));
     const auditAt = new Date();
     const auditEntries: IBossAwardAuditEntry[] = kind === 'delete'
       ? buildKillDeletedAuditEntries(award!.participants, requestId, pending.updatedBy, auditAt)
