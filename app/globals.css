@@ -341,6 +341,10 @@ svg { flex-shrink: 0; }
   .connection-notice { margin-inline: 16px; }
   .auth-form-side { padding-bottom: max(32px, env(safe-area-inset-bottom)); }
 }
+.stat-card.roster-summary-card { min-height: 0; align-items: center; padding: 12px; gap: 10px; }
+.roster-summary-card .stat-icon { padding: 8px; }
+.roster-summary-card .stat-value { margin-top: 0; font-size: 24px; }
+.roster-summary-card .stat-caption { margin-top: 3px; }
 @media (forced-colors: active) {
   .shell-nav-link.is-active, .section-tab[aria-pressed='true'] { border: 2px solid Highlight; }
   .primary-button, .secondary-button, .icon-button { border: 1px solid ButtonText; }
