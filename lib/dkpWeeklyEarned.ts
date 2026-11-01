@@ -9,6 +9,7 @@ export type { WeeklyRosterRecord } from './weeklyDkpEarned';
 
 /** Calculates completed-week DKP for auction activity and eligibility. */
 export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(roster: T[], session?: ClientSession) {
+  if (roster.length === 0) return addWeeklyEarnedFromAwards(roster, []);
   const { start, end } = getPreviousDkpWeekRange();
   const awardQuery = BossAward.find({
     // An interrupted attendance edit still owns its original credited award
@@ -18,6 +19,8 @@ export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(ro
   }).select('points participants createdAt');
   if (session) awardQuery.session(session);
   const weeklyAwards = await awardQuery.lean();
+  // Reset cutoffs cannot change a zero-award result.
+  if (weeklyAwards.length === 0) return addWeeklyEarnedFromAwards(roster, []);
   const resetQuery = ToonDkpReset.find({ identityKey: { $in: roster.map(getSheetRecordKey) } })
     .select('identityKey resetAt');
   if (session) resetQuery.session(session);

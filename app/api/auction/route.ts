@@ -20,6 +20,8 @@ import { settleExpiredAuctions } from '@/lib/auctionSettlementWorker';
 import { getBoundAuctionHold } from '@/lib/auctionHold';
 import { canAffordBid, DkpIntegrityError } from '@/lib/dkpAccounting';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
+import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
+import { readAuctionCreatorRoles, readAuctionFollowUpTasks } from '@/lib/auctionFollowUpReads';
 import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
@@ -80,19 +82,14 @@ export async function GET(request: Request) {
     const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
     scheduleExpirySweep();
     const page = includeArchive ? readHistoryPage(new URL(request.url)) : {};
-    const [rosterSnapshot, recentResults, items, holds, pendingDeliveryTasks, pendingNoBidTasks, personalWinningAuctions, allWinnerAuctions, unresolvedAuctions] = await Promise.all([
+    const [rosterSnapshot, recentResults, items, holds, followUpTasks, personalWinningAuctions, allWinnerAuctions, unresolvedAuctions] = await Promise.all([
       getSheetRosterSnapshot(),
       includeArchive
         ? Auction.find(page).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean()
         : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
       AuctionItem.find().select('name requiredRoles requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints owner account').lean(),
-      Auction.find({ status: 'completed', deliveryStatus: 'pending' }).sort({ createdAt: 1 }).lean(),
-      Auction.find({
-        status: 'completed',
-        highBid: { $exists: false },
-        deliveryStatus: 'not-required',
-      }).sort({ createdAt: 1 }).lean(),
+      readAuctionFollowUpTasks(),
       Auction.find({
         status: 'completed',
         'winner.userId': user._id,
@@ -103,14 +100,11 @@ export async function GET(request: Request) {
       }).sort({ createdAt: -1 }).limit(100).lean(),
       Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed'] } }).lean(),
     ]);
+    const { pendingDeliveryTasks, pendingNoBidTasks } = followUpTasks;
     const recentAuctions = includeArchive ? recentResults.slice(0, HISTORY_PAGE_SIZE) : recentResults;
     const nextCursor = includeArchive && recentResults.length > HISTORY_PAGE_SIZE ? historyCursor(recentAuctions[recentAuctions.length - 1]) : null;
     const roster = rosterSnapshot.roster;
-    const roleChanges = await ToonRoleChange.find({ identityKey: { $in: roster.map(getSheetRecordKey) } }).lean();
-    const roleApprovals = await ToonRoleChangeRequest.find({
-      identityKey: { $in: roster.map(getSheetRecordKey) }, status: { $in: ['approved', 'applied'] },
-      decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
-    }).sort({ createdAt: -1 }).lean();
+    const { roleChanges, roleApprovals } = await readToonRoleSchedules(roster.map(getSheetRecordKey));
     const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
     const roleApprovalsByIdentity = new Map<string, typeof roleApprovals>();
     for (const approval of roleApprovals) {
@@ -126,10 +120,7 @@ export async function GET(request: Request) {
     const auctions = [...auctionsById.values()].sort((first, second) =>
       second.createdAt.getTime() - first.createdAt.getTime(),
     );
-    const creatorUserIds = [...new Set(
-      auctions.flatMap((auction) => auction.createdByUserId ? [auction.createdByUserId] : []),
-    )];
-    const creators = await User.find({ _id: { $in: creatorUserIds } }).select('_id role').lean();
+    const creators = await readAuctionCreatorRoles(user.role, auctions);
     const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
     const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
     const roles = ITEM_SUBROLES;
@@ -284,8 +275,7 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
     const itemIds = [...new Set(auctions.map((auction) => auction.itemId))];
     const items = await AuctionItem.find({ _id: { $in: itemIds } }).select('_id imageCount bossType').lean();
     const itemById = new Map(items.map((item) => [item._id.toString(), item]));
-    const creatorUserIds = [...new Set(auctions.flatMap((auction) => auction.createdByUserId ? [auction.createdByUserId] : []))];
-    const creators = await User.find({ _id: { $in: creatorUserIds } }).select('_id role').lean();
+    const creators = await readAuctionCreatorRoles(user.role, auctions);
     const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
     const responseAuctions = auctions.map((auction) => {
       const id = auction._id.toString();

@@ -12,8 +12,7 @@ import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import RosterMutation from '@/lib/models/RosterMutation';
 import { RequestValidationError } from '@/lib/security/request';
-import ToonRoleChange from '@/lib/models/ToonRoleChange';
-import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
+import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
 import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 
 
@@ -42,13 +41,7 @@ export async function GET(req: Request) {
     ]);
     const roster = rosterSnapshot.roster;
     const identities = roster.map(getSheetRecordKey);
-    const [roleChanges, roleApprovals] = await Promise.all([
-      ToonRoleChange.find({ identityKey: { $in: identities } }).lean(),
-      ToonRoleChangeRequest.find({
-        identityKey: { $in: identities }, status: { $in: ['approved', 'applied'] },
-        decidedByUserId: { $exists: true }, decidedAt: { $exists: true },
-      }).sort({ createdAt: -1 }).lean(),
-    ]);
+    const { roleChanges, roleApprovals } = await readToonRoleSchedules(identities);
     const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
     const roleApprovalsByIdentity = new Map<string, typeof roleApprovals>();
     for (const approval of roleApprovals) {
