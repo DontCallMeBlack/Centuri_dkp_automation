@@ -62,7 +62,7 @@ export async function POST(request: Request) {
       result = await changeClanToon(actor._id.toString(), body.requestId, { action: 'create', owner, account, subClass });
     } else if (body.action === 'remove') {
       if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) throw new RequestValidationError('Select a valid roster entry.');
-      if (body.forfeitConfirmed !== true) throw new RequestValidationError('Confirm permanent removal and DKP forfeiture.');
+      if (body.forfeitConfirmed !== true) throw new RequestValidationError('Confirm toon removal and DKP forfeiture.');
       result = await changeClanToon(actor._id.toString(), body.requestId, { action: 'remove', rowIndex: body.rowIndex, owner, account });
     } else if (body.action === 'wipe') {
       if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) throw new RequestValidationError('Select a valid roster entry.');
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
       return Response.json({ success: true, ...result, ...bidChanges,
         message: `Available DKP reset to 0. ${bidChanges.withdrawnBids} open auction bid(s) withdrawn; ${bidChanges.promotedBids} next bid(s) promoted.` });
     } else throw new RequestValidationError('Unknown clan toon action.');
-    return Response.json({ success: true, ...result, message: body.action === 'create' ? 'Toon added with zero DKP and no account link.' : 'Toon permanently removed. Its remaining DKP was forfeited and its account links were cleared.' });
+    return Response.json({ success: true, ...result, message: body.action === 'create' ? 'Toon added with zero DKP and no account link.' : 'Toon removed. Its remaining DKP was forfeited and its account links were cleared. Adding it again starts fresh; use the Activity log to restore its saved DKP.' });
   } catch (error) {
     if (error instanceof DkpIntegrityError) return Response.json({ error: error.message }, { status: 409 });
     return requestErrorResponse(error, 'The toon change could not be confirmed. Retry the same request or finish the interrupted change from Clan toons.');

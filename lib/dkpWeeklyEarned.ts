@@ -4,6 +4,7 @@ import { getPreviousDkpWeekRange } from '@/lib/dkpCycle';
 import { addWeeklyEarnedFromAwards, type WeeklyRosterRecord } from './weeklyDkpEarned';
 import { getSheetRecordKey } from './sheetRecordLinks';
 import type { ClientSession } from 'mongoose';
+import { readToonAwardCutoffs, isAwardInToonLifecycle } from './toonAwardLifecycle.ts';
 export { addWeeklyEarnedFromAwards } from './weeklyDkpEarned';
 export type { WeeklyRosterRecord } from './weeklyDkpEarned';
 
@@ -25,12 +26,14 @@ export async function getRosterWithWeeklyEarned<T extends WeeklyRosterRecord>(ro
     .select('identityKey resetAt');
   if (session) resetQuery.session(session);
   const resets = await resetQuery.lean();
+  const lifecycleCutoffs = await readToonAwardCutoffs(roster, session);
   const resetAtByIdentity = new Map(resets.map((reset) => [reset.identityKey, reset.resetAt.getTime()]));
   const adjustedAwards = weeklyAwards.map((award) => ({
     ...award,
     participants: award.participants.filter((participant) => {
       const resetAt = resetAtByIdentity.get(getSheetRecordKey(participant));
-      return resetAt === undefined || award.createdAt.getTime() > resetAt;
+      return (resetAt === undefined || award.createdAt.getTime() > resetAt) &&
+        isAwardInToonLifecycle(participant, award.createdAt, lifecycleCutoffs);
     }),
   }));
 

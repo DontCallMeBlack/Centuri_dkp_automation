@@ -20,6 +20,7 @@ const models = {
   '@/lib/models/Auction': 'followUps',
   '@/lib/models/BossAward': 'awards',
   '@/lib/models/ToonDkpReset': 'resets',
+  '@/lib/models/RosterMutation': 'lifecycles',
   '@/lib/models/User': 'creators',
 };
 state.query = query;
@@ -41,7 +42,7 @@ hooks.deregister();
 
 beforeEach(() => {
   state.calls = [];
-  state.changes = []; state.approvals = []; state.followUps = []; state.awards = []; state.resets = []; state.creators = [];
+  state.changes = []; state.approvals = []; state.followUps = []; state.awards = []; state.resets = []; state.creators = []; state.lifecycles = [];
   state.read = async (kind) => state[kind];
 });
 
@@ -159,6 +160,16 @@ test('nonempty weekly activity retains transactional sessions and reset cutoffs'
   state.resets = [{ identityKey: getSheetRecordKey(toon), resetAt: new Date('2026-10-21') }];
   const session = { transaction: 'unchanged-session' };
   assert.deepEqual(await getRosterWithWeeklyEarned([toon], session), [{ ...toon, weeklyEarned: 7 }]);
-  assert.deepEqual(state.calls.map(call => call.kind), ['awards', 'resets']);
+  assert.deepEqual(state.calls.map(call => call.kind), ['awards', 'resets', 'lifecycles']);
   assert.ok(state.calls.every(call => call.session === session));
+});
+
+test('readded toons do not inherit weekly eligibility from before their removal', async () => {
+  const { getSheetRecordKey } = await import('../lib/sheetRecordLinks.ts');
+  state.awards = [
+    { points: 5, createdAt: new Date('2026-10-20'), participants: [toon] },
+    { points: 7, createdAt: new Date('2026-10-22'), participants: [toon] },
+  ];
+  state.lifecycles = [{ identityKey: getSheetRecordKey(toon), createdAt: new Date('2026-10-21') }];
+  assert.deepEqual(await getRosterWithWeeklyEarned([toon]), [{ ...toon, weeklyEarned: 7 }]);
 });

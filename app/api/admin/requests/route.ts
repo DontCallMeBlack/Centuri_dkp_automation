@@ -565,9 +565,6 @@ export async function POST(request: Request) {
         actorUserId: initialManager._id.toString(), requestId: body.requestId,
         identity: { owner, account }, mode: 'all', fingerprintData: { rowIndex, fromUserId: userId, toUserId },
         beforeMutation: async (session, record, manager, roster) => {
-          if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: getSheetRecordKey(record) }).session(session)) {
-            throw new RequestValidationError('This toon was permanently removed. Refresh the roster before transferring it.', 409);
-          }
           const existingTransfer = await ClanAuditEvent.findOne({ operationKey: transferAuditKey }).session(session);
           const source = await User.findOne({ _id: userId, status: 'approved' }).session(session);
           const destination = await User.findOne({ _id: toUserId, status: 'approved' }).session(session);
@@ -790,7 +787,6 @@ export async function POST(request: Request) {
           throw new RequestValidationError('Resume the pending transfer for this toon before changing its account link.', 409);
         }
       }
-      if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: selected.map(getSheetRecordKey) } }).session(session)) throw new RequestValidationError('A selected toon was permanently removed. Refresh the roster before changing links.', 409);
       if (selected.some((record) => roster.filter((other) => getSheetRecordKey(other) === getSheetRecordKey(record)).length > 1)) {
         throw new RequestValidationError('Duplicate owner/toon identities exist in the sheet. Resolve them before linking.', 409);
       }

@@ -10,7 +10,6 @@ import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
-import RosterMutation from '@/lib/models/RosterMutation';
 import { RequestValidationError } from '@/lib/security/request';
 import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
 import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
@@ -135,7 +134,6 @@ export async function POST(req: Request) {
         award = await withClanAdministrationTransaction(async (session) => {
           const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
           if (!actor) throw new RequestValidationError('Your role no longer permits boss awards.', 403);
-          if (await RosterMutation.exists({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'remove', identityKey: { $in: participants.map((record) => getSheetRecordKey(record!)) } }).session(session)) throw new RequestValidationError('A selected toon was permanently removed. Refresh the roster before recording this kill.', 409);
           const [created] = await BossAward.create([{
           _id: awardId, requestId, requestFingerprint: fingerprint,
           bossName, points: BOSS_DKP_POINTS[bossName],
