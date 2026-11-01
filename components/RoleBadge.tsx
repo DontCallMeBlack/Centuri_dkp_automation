@@ -14,7 +14,7 @@ const classes = {
   'ice mage': { icon: Snowflake, tone: 'role-cyan' },
   'support druid': { icon: Leaf, tone: 'role-green' },
   'dps druid': { icon: WandSparkles, tone: 'role-violet' },
-  'support rogue': { icon: HeartHandshake, tone: 'role-rose' },
+  'support rogue': { icon: HeartHandshake, tone: 'role-fuchsia' },
   'dps warrior': { icon: Swords, tone: 'role-red' },
   tank: { icon: Shield, tone: 'role-slate' },
 };

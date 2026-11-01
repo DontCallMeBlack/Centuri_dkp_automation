@@ -148,7 +148,7 @@ const roleStyles: Record<string, string> = {
   'ice mage': 'border-sky-300/30 bg-sky-300/10 text-sky-200',
   'support druid': 'border-green-400/30 bg-green-400/10 text-green-300',
   'dps druid': 'border-purple-800/50 bg-purple-900/30 text-purple-300',
-  'support rogue': 'border-rose-600/40 bg-rose-700/20 text-rose-300',
+  'support rogue': 'border-fuchsia-400/35 bg-fuchsia-400/10 text-fuchsia-400',
   'dps warrior': 'border-red-400/30 bg-red-400/10 text-red-300',
   tank: 'border-pink-400/30 bg-pink-400/10 text-pink-300',
 };
