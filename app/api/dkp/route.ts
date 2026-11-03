@@ -5,6 +5,7 @@ import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
 import BossCooldown from '@/lib/models/BossCooldown';
+import BossCooldownAttempt from '@/lib/models/BossCooldownAttempt';
 import User from '@/lib/models/User';
 import { BOSS_DKP_POINTS, BOSS_KILL_COOLDOWN_MS, getBossKillCooldownRemainingMs, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
@@ -120,6 +121,23 @@ export async function POST(req: Request) {
     }
 
     const fingerprint = getBossRequestFingerprint('grant', bossName, selectedRows);
+    const logCooldownAttempt = async (attemptedAt: Date, cooldownExpiresAt: Date) => {
+      await BossCooldownAttempt.updateOne(
+        { requestId },
+        {
+          $setOnInsert: {
+            requestId,
+            bossName,
+            actorUserId: user._id.toString(),
+            actorNickname: user.nickname,
+            actorRole: user.role,
+            attemptedAt,
+            cooldownExpiresAt,
+          },
+        },
+        { upsert: true },
+      );
+    };
     // The default MongoDB _id index enforces request uniqueness even before a
     // deployment has built the additional sparse requestId index.
     const awardId = createHash('sha256').update(`boss-award:${requestId}`).digest('hex').slice(0, 24);
@@ -132,15 +150,14 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'One or more selected roster records no longer exist' }, { status: 400 });
       }
       try {
-        award = await withClanAdministrationTransaction(async (session) => {
+        const creation = await withClanAdministrationTransaction(async (session) => {
           const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
           if (!actor) throw new RequestValidationError('Your role no longer permits boss awards.', 403);
           const now = new Date();
           const cooldown = await BossCooldown.findOne({ bossName }).session(session);
           const remainingMs = getBossKillCooldownRemainingMs(cooldown?.expiresAt, now);
           if (remainingMs > 0) {
-            const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
-            throw new RequestValidationError(`${bossName} was already recorded. It cannot be recorded again for another ${remainingMinutes} minute(s).`, 409);
+            return { blocked: true as const, attemptedAt: now, cooldownExpiresAt: cooldown!.expiresAt };
           }
           if (cooldown) await BossCooldown.deleteOne({ bossName }, { session });
           await BossCooldown.create([{
@@ -153,8 +170,14 @@ export async function POST(req: Request) {
           participants: participants.map((record) => ({ rowIndex: record!.rowIndex, owner: record!.owner, account: record!.account, subClass: record!.subClass })),
           createdBy: user.nickname, status: 'pending',
           }], { session });
-          return created;
+          return { blocked: false as const, award: created };
         });
+        if (creation.blocked) {
+          await logCooldownAttempt(creation.attemptedAt, creation.cooldownExpiresAt);
+          const remainingMinutes = Math.max(1, Math.ceil(getBossKillCooldownRemainingMs(creation.cooldownExpiresAt, creation.attemptedAt) / 60_000));
+          throw new RequestValidationError(`${bossName} was already recorded. It cannot be recorded again for another ${remainingMinutes} minute(s).`, 409);
+        }
+        award = creation.award;
       } catch (error: unknown) {
         if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 11000) throw error;
         award = await BossAward.findById(awardId);
@@ -162,6 +185,7 @@ export async function POST(req: Request) {
           const cooldown = await BossCooldown.findOne({ bossName });
           const remainingMs = getBossKillCooldownRemainingMs(cooldown?.expiresAt);
           if (remainingMs > 0) {
+            await logCooldownAttempt(new Date(), cooldown!.expiresAt);
             const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
             throw new RequestValidationError(`${bossName} was already recorded. It cannot be recorded again for another ${remainingMinutes} minute(s).`, 409);
           }
