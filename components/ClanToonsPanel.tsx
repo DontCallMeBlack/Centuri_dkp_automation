@@ -48,7 +48,7 @@ export default function ClanToonsPanel({ active, accountId, onChanged }: { activ
   useEffect(() => {
     if (!active || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void load(15_000).catch((cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be loaded.'));
+    void load(Infinity).catch((cause) => setReadError(cause instanceof Error ? cause.message : 'Clan toons could not be loaded.'));
   }, [active, load]);
   useEffect(() => {
     if (!active) return;

@@ -87,7 +87,7 @@ export default function RoleChangesPage() {
   useEffect(() => {
     if (!user || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void load(15_000);
+    void load(Infinity);
   }, [user?.id, user?.role, user?.sheetRecordRows?.join(','), load]);
 
   const mutate = async (action: MutationAction, toon: ManagedToon, requestId?: string) => {

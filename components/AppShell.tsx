@@ -19,62 +19,15 @@ function canWarmInBackground() {
   return !connection?.saveData && !['slow-2g', '2g'].includes(connection?.effectiveType ?? '');
 }
 
-function warmResources(resources: string[], imports: Array<() => Promise<unknown>> = []) {
-  if (!canWarmInBackground()) return () => undefined;
-  let cancelled = false;
-  const warm = async () => {
-    if (cancelled) return;
-    // Start optional code downloads only after the connection and idle checks.
-    // A failed preload must not prevent the remaining data from warming.
-    await Promise.allSettled(imports.map((load) => load()));
-    for (const resource of resources) {
-      if (cancelled) return;
-      await getData(resource, { maxAgeMs: 15_000 }).catch(() => undefined);
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-  };
-  let cancelIdle: () => void;
-  if ('requestIdleCallback' in window) {
-    const idleId = window.requestIdleCallback(() => void warm(), { timeout: 2_000 });
-    cancelIdle = () => window.cancelIdleCallback(idleId);
-  } else {
-    const timeoutId = setTimeout(() => void warm(), 1_000);
-    cancelIdle = () => clearTimeout(timeoutId);
-  }
-  return () => {
-    cancelled = true;
-    cancelIdle();
-  };
-}
-
-// Warm the rest of the workspace after the first screen is usable. Responses
-// land in the same client cache used by each page, so navigation can render
-// immediately without delaying the initial roster request.
-function warmWorkspace(user: SessionUser) {
-  const resources = ['/api/auction', '/api/admin/boss-history', '/api/role-changes'];
-  const imports: Array<() => Promise<unknown>> = [() => import('./AuctionHousePanel'), () => import('./BossHistoryPanel')];
-  if (['chief', 'general', 'guardian'].includes(user.role)) {
-    resources.push('/api/auction/items');
-    imports.push(() => import('./AuctionItemsPanel'));
-  }
-  if (['chief', 'general'].includes(user.role)) resources.push('/api/admin/requests', '/api/admin/requests?section=archives');
-  return warmResources(resources, imports);
-}
-
 function warmDestination(href: string) {
   if (!canWarmInBackground()) return;
   const url = new URL(href, window.location.origin);
   const view = url.searchParams.get('view');
-  let resource: string;
-  if (url.pathname === '/dashboard') {
-    if (view === 'auction') { resource = '/api/auction'; void import('./AuctionHousePanel').catch(() => undefined); }
-    else if (view === 'boss-history') { resource = '/api/admin/boss-history'; void import('./BossHistoryPanel').catch(() => undefined); }
-    else if (view === 'items') { resource = '/api/auction/items'; void import('./AuctionItemsPanel').catch(() => undefined); }
-    else resource = '/api/dkp';
-  } else if (url.pathname === '/admin/requests') resource = '/api/admin/requests';
-  else if (url.pathname === '/admin/role-changes') resource = '/api/role-changes';
-  else return;
-  void getData(resource, { maxAgeMs: 15_000 }).catch(() => undefined);
+  // Warm code only. Opening a destination decides whether its data is needed.
+  if (url.pathname !== '/dashboard') return;
+  if (view === 'auction') void import('./AuctionHousePanel').catch(() => undefined);
+  else if (view === 'boss-history') void import('./BossHistoryPanel').catch(() => undefined);
+  else if (view === 'items') void import('./AuctionItemsPanel').catch(() => undefined);
 }
 
 function WorkspaceLink({ children, href, ...props }: React.ComponentProps<typeof Link> & { href: string }) {
@@ -140,10 +93,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     document.addEventListener('visibilitychange',check);
     return () => { active=false; window.removeEventListener('focus',check); document.removeEventListener('visibilitychange',check); };
   }, [publicPage, router]);
-  useEffect(() => {
-    if (!user) return;
-    return warmWorkspace(user);
-  }, [user?.id, user?.role]);
   useEffect(() => {
     const onSignOut = (event: StorageEvent) => {
       if (event.key === 'centuri:logout') { clearClientData(); setUser(null); userRef.current=null; router.replace('/login'); }

@@ -13,6 +13,7 @@ import { normalizeAuctionRole, canRoleBid, resolveItemSubroles } from '@/lib/auc
 import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
+import { auctionPollPlan } from '@/lib/client/auctionPolling';
 
 interface AuctionToon {
   rowIndex: number;
@@ -74,6 +75,8 @@ interface Auction {
   canRetrySettlement?: boolean;
 }
 
+interface AuctionHistory { auctions: Auction[]; nextCursor?: string | null }
+
 interface AuctionData {
   nextCursor?: string | null;
   dkpIssues?: DkpCellIssue[];
@@ -93,27 +96,6 @@ interface AuctionData {
 }
 
 const AUCTION_PREVIEW_CACHE_KEY = '/ui/auction-preview';
-const AUCTION_IDLE_POLL_MS = 60 * 60_000;
-const AUCTION_MID_POLL_MS = 5 * 60_000;
-const AUCTION_FINAL_POLL_MS = 60_000;
-const AUCTION_MINUTE_MS = 60_000;
-
-function getAuctionPollDelay(auctions: Auction[], now = Date.now()) {
-  const activeEnds = auctions
-    .filter((auction) => auction.status === 'active')
-    .map((auction) => new Date(auction.endsAt).getTime())
-    .filter(Number.isFinite);
-  if (!activeEnds.length) return AUCTION_IDLE_POLL_MS;
-
-  const remaining = Math.min(...activeEnds) - now;
-  if (remaining <= 0) return AUCTION_FINAL_POLL_MS;
-  if (remaining <= 5 * AUCTION_MINUTE_MS) return AUCTION_FINAL_POLL_MS;
-  if (remaining <= 60 * AUCTION_MINUTE_MS) {
-    return Math.min(AUCTION_MID_POLL_MS, remaining - 5 * AUCTION_MINUTE_MS);
-  }
-  return Math.min(AUCTION_IDLE_POLL_MS, remaining - 60 * AUCTION_MINUTE_MS);
-}
-
 function rememberAuctionData(data: AuctionData) {
   const preview: AuctionData = {
     ...data,
@@ -275,6 +257,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const dataRef = useRef<AuctionData | null>(data);
   const fullRefreshCount = useRef(0);
   const liveEpoch = useRef(0);
+  const lastDiscoveryAt = useRef(Date.now());
+  const lastTargetAt = useRef(0);
+  const checkedAuctionWindows = useRef(new Set<string>());
   const initialRefreshStarted = useRef(false);
   const refreshRef = useRef<(maxAgeMs?: number) => Promise<unknown>>(async () => undefined);
   const [loading, setLoading] = useState(() => !initialAuctionData);
@@ -288,6 +273,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [postFormOpen, setPostFormOpen] = useState(false);
   const [todoListOpen, setTodoListOpen] = useState(false);
   const [wonItemsOpen, setWonItemsOpen] = useState(false);
+  const [wonHistory, setWonHistory] = useState<Auction[]>([]);
+  const [wonCursor, setWonCursor] = useState<string | null>(null);
+  const [wonLoading, setWonLoading] = useState(false);
+  const [wonLoaded, setWonLoaded] = useState(false);
+  const wonSequence = useRef(0);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [itemResultLimit, setItemResultLimit] = useState(40);
@@ -317,7 +307,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   }, []);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || auctionView !== 'live') return;
     let mounted = true;
     let pollInFlight = false;
     let refreshTimer: number | undefined;
@@ -328,11 +318,23 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const pollGeneration = clientDataVersion();
       const epoch = liveEpoch.current;
       try {
-        const versions = [...current.auctions]
+        const plan = auctionPollPlan(current, Date.now(), lastDiscoveryAt.current, lastTargetAt.current, checkedAuctionWindows.current);
+        if (plan.eligibilityWindows.length) {
+          for (const key of plan.eligibilityWindows) checkedAuctionWindows.current.add(key);
+          await refreshRef.current();
+          lastTargetAt.current = Date.now();
+          return;
+        }
+        if (!plan.discover && !plan.ids.length) return;
+        const scopedAuctions = plan.discover ? current.auctions : current.auctions.filter((auction) => plan.ids.includes(auction.id));
+        const scope = plan.discover ? '' : `&ids=${encodeURIComponent(JSON.stringify(plan.ids.slice(0, 200)))}`;
+        if (plan.discover) lastDiscoveryAt.current = Date.now();
+        lastTargetAt.current = Date.now();
+        const versions = [...scopedAuctions]
           .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
           .slice(0, 100)
           .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}:${auction.itemId}`]);
-        const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}`, { cache: 'no-store' });
+        const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}${scope}`, { cache: 'no-store' });
         if (!response.ok) throw new Error('Live bid updates are delayed. Retrying automatically.');
         const result = await response.json();
         if (!mounted || pollGeneration !== clientDataVersion() || epoch !== liveEpoch.current) return;
@@ -349,6 +351,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
               const live = byId.get(auction.id);
               return live ? { ...auction, ...live } : auction;
             }).concat((result.auctions as Auction[]).filter((live) => !previous.auctions.some((auction) => auction.id === live.id)))
+              .filter((auction) => auction.status !== 'completed' || auction.deliveryStatus === 'pending' || auction.canResolveNoBid)
               .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime()),
           };
           dataRef.current = updated;
@@ -356,6 +359,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           return updated;
         });
         setArchiveAuctions((previous) => previous
+          .filter((auction) => !(result.removedIds as string[] | undefined)?.includes(auction.id))
+          .map((auction) => byId.has(auction.id) ? { ...auction, ...byId.get(auction.id)! } : auction));
+        setWonHistory((previous) => previous
           .filter((auction) => !(result.removedIds as string[] | undefined)?.includes(auction.id))
           .map((auction) => byId.has(auction.id) ? { ...auction, ...byId.get(auction.id)! } : auction));
         setLastSyncedAt(Date.now());
@@ -369,18 +375,26 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     const schedulePoll = () => {
       if (!mounted || !activeRef.current) return;
       window.clearTimeout(refreshTimer);
-      const delay = getAuctionPollDelay(dataRef.current?.auctions ?? []);
+      const current = dataRef.current;
+      if (!current) return;
+      const plan = auctionPollPlan(current, Date.now(), lastDiscoveryAt.current, lastTargetAt.current, checkedAuctionWindows.current);
+      const delay = document.visibilityState !== 'visible' || navigator.onLine === false ? 60_000 : plan.delay;
       refreshTimer = window.setTimeout(() => {
         void pollLiveAuctions().finally(schedulePoll);
       }, delay);
     };
-    // Poll live auction state less often when the next auction is far from ending.
+    // The local timer wakes at the final-five-minute boundary without a server call.
+    const wake = () => schedulePoll();
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('online', wake);
     schedulePoll();
     return () => {
       mounted = false;
       window.clearTimeout(refreshTimer);
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('online', wake);
     };
-  }, [active, data?.auctions]);
+  }, [active, auctionView, data?.auctions, data?.toons, data?.canBidWeekly]);
 
   // Re-render the auction list at expiry; only countdown text updates each second.
   useEffect(() => {
@@ -405,11 +419,13 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (version !== clientDataVersion()) return;
       setError('');
       dataRef.current = result;
+      lastDiscoveryAt.current = Date.now();
       setData(result);
       rememberAuctionData(result);
       setLastSyncedAt(Date.now());
       setSyncing(false);
-      if (archiveLoadedRef.current) await loadFullAuctionHistory();
+      if (auctionView === 'all' && archiveLoadedRef.current) await loadFullAuctionHistory();
+      if (wonItemsOpen && wonLoaded) await loadWonHistory();
     } catch (refreshError) {
       setSyncing(false);
       if (refreshError instanceof ApiError && refreshError.status === 401) { clearClientData(); router.replace('/login'); return false; }
@@ -477,7 +493,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    const clear = () => { initialRefreshStarted.current = false; archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
+    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);
@@ -494,7 +510,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const pages = append ? 1 : archivePageCount.current;
       for (let page = 0; page < pages; page += 1) {
         const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-        const result = await getData<AuctionData>(`/api/auction?includeArchive=1${suffix}`);
+        const result = await getData<AuctionHistory>(`/api/auction?includeArchive=1${suffix}`);
         if (version !== clientDataVersion() || sequence !== archiveSequence.current) return;
         combined.push(...result.auctions); cursor = result.nextCursor ?? null;
         if (!cursor) break;
@@ -512,10 +528,29 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    if (auctionView === 'all' && !archiveLoaded && !archiveLoading) {
+    if (auctionView === 'all' && !archiveLoading) {
       void loadFullAuctionHistory();
     }
   }, [auctionView]);
+
+  const loadWonHistory = async (append = false) => {
+    if (append && (!wonCursor || wonLoading)) return;
+    const version = clientDataVersion();
+    const sequence = ++wonSequence.current;
+    setWonLoading(true);
+    try {
+      const suffix = append && wonCursor ? `&cursor=${encodeURIComponent(wonCursor)}` : '';
+      const result = await getData<AuctionHistory>(`/api/auction?includeArchive=1&won=1${suffix}`);
+      if (version !== clientDataVersion() || sequence !== wonSequence.current) return;
+      setWonHistory((previous) => [...new Map([...(append ? previous : []), ...result.auctions].map((auction) => [auction.id, auction])).values()]);
+      setWonCursor(result.nextCursor ?? null);
+      setWonLoaded(true);
+    } catch (cause) {
+      if (version === clientDataVersion() && sequence === wonSequence.current) setError(cause instanceof Error ? cause.message : 'Unable to load your wins.');
+    } finally {
+      if (version === clientDataVersion() && sequence === wonSequence.current) setWonLoading(false);
+    }
+  };
 
   const submitAuction = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -762,9 +797,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const allAuctions = [...new Map(
     [...archiveAuctions, ...data.auctions].map((auction) => [auction.id, auction]),
   ).values()];
-  const wonAuctions = allAuctions.filter((auction) =>
-    auction.status === 'completed' && auction.isWinner && auction.winner,
-  );
+  const wonAuctions = [...new Map([...wonHistory, ...allAuctions].map((auction) => [auction.id, auction])).values()]
+    .filter((auction) => auction.status === 'completed' && auction.isWinner && auction.winner);
   const auctionHolders = [...new Set(allAuctions.flatMap((auction) => {
     const bid = auction.winner ?? auction.highBid;
     return bid ? [bid.nickname] : [];
@@ -1019,11 +1053,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         </section>
       )}
 
-      {(wonAuctions.length > 0 || archiveLoaded) && (
+      {(
         <section className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-3 sm:p-4">
           <button
             type="button"
-            onClick={() => setWonItemsOpen((open) => !open)}
+            onClick={() => { setWonItemsOpen((open) => !open); if (!wonItemsOpen && !wonLoaded && !wonLoading) void loadWonHistory(); }}
             aria-expanded={wonItemsOpen}
             aria-controls="auction-won-items"
             className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-slate-800/60"
@@ -1031,7 +1065,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             <span className="flex min-w-0 items-center gap-2.5">
               <Trophy className="h-4 w-4 shrink-0 text-emerald-300" />
               <span><span className="block font-bold text-white">Items you won</span><span className="mt-0.5 block text-[11px] font-normal text-slate-400">Your completed wins and mail status</span></span>
-              <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-emerald-200">{wonAuctions.length}</span>
+              <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-emerald-200">{wonLoaded ? wonAuctions.length : 'View'}</span>
             </span>
             {wonItemsOpen
               ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" />
@@ -1039,7 +1073,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           </button>
           {wonItemsOpen && (
             <div id="auction-won-items" className="mt-3 space-y-3 border-t border-slate-800 pt-4">
-              {wonAuctions.length === 0 && <p className="text-sm text-slate-400">No completed wins found in the loaded history.</p>}
+              {wonLoading && <p role="status" className="text-sm text-slate-400">Loading your wins...</p>}
+              {!wonLoaded && !wonLoading && <button type="button" className="secondary-button" onClick={() => void loadWonHistory()}>Retry loading wins</button>}
+              {wonCursor && <button type="button" className="secondary-button" disabled={wonLoading} onClick={() => void loadWonHistory(true)}>Load older wins</button>}
+              {wonLoaded && !wonLoading && wonAuctions.length === 0 && <p className="text-sm text-slate-400">No completed wins found in the loaded history.</p>}
               {wonAuctions.map((auction) => (
                 <article key={auction.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
                   <div className="min-w-0">
@@ -1065,6 +1102,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <div className="flex min-w-0 items-center gap-4">
             <div><h2 className="text-lg font-bold text-white">Browse auctions</h2><p role="status" className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="group" aria-label="Auction views">
+              <button type="button" className="icon-button" aria-label="Refresh auction house" disabled={syncing} onClick={() => { void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Unable to refresh auctions.')); }}><RefreshCw size={15} className={syncing ? 'animate-spin' : ''} /></button>
               <button type="button" aria-pressed={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" aria-pressed={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
             </div>
@@ -1153,7 +1191,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <button type="button" onClick={() => void loadFullAuctionHistory()} className="rounded-xl border border-red-400/20 bg-red-400/5 px-4 py-3 text-left text-sm text-red-200">History did not load. Select here to retry.</button>
         )}
 
-        {allAuctions.length === 0 ? (
+        {auctionView === 'all' && archiveLoaded && allAuctions.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
             <Gavel className="mx-auto h-7 w-7 text-slate-600" />
             <p className="mt-3 text-sm text-slate-400">There are no auctions yet.</p>

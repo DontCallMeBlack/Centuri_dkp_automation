@@ -438,7 +438,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
   useEffect(() => {
     if (!active || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void loadItems(15_000).catch((cause) => setError(cause instanceof Error ? cause.message : 'The catalog could not be loaded.'));
+    void loadItems(Infinity).catch((cause) => setError(cause instanceof Error ? cause.message : 'The catalog could not be loaded.'));
   }, [active, loadItems]);
   useEffect(() => {
     if (!active) return;

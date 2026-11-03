@@ -140,7 +140,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
   useEffect(() => {
     if (!active || initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void loadHistory(true, 15_000);
+    void loadHistory(true, Infinity);
   }, [active, loadHistory]);
   useEffect(() => {
     if (!active) return;
