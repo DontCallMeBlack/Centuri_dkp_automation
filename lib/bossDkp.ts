@@ -15,6 +15,12 @@ export const BOSS_ATTENDANCE_REMOVAL_REASONS = [
   'other',
 ] as const;
 
+export const BOSS_KILL_COOLDOWN_MS = 60 * 60 * 1000;
+
+export function getBossKillCooldownRemainingMs(expiresAt: Date | null | undefined, now = new Date()) {
+  return Math.max(0, (expiresAt?.getTime() ?? 0) - now.getTime());
+}
+
 export type BossAttendanceRemovalReason = (typeof BOSS_ATTENDANCE_REMOVAL_REASONS)[number];
 
 export function isBossAttendanceRemovalReason(value: unknown): value is BossAttendanceRemovalReason {

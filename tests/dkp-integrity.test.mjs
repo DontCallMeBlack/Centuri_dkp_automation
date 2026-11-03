@@ -2,13 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDkpAdjustmentUpdates, canAffordBid, getDkpReplayState, snapshotDkpCells } from '../lib/dkpAccounting.ts';
 import { buildHistoricalDkpActivityCorrection, buildWeeklyDkpResetPlan, getDkpElapsedWeeks } from '../lib/dkpCycle.ts';
-import { getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '../lib/bossDkp.ts';
+import { BOSS_KILL_COOLDOWN_MS, getBossKillCooldownRemainingMs, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '../lib/bossDkp.ts';
 import { addWeeklyEarnedFromAwards } from '../lib/weeklyDkpEarned.ts';
 
 const sheetName = "'DKP_Sheet_automated'";
 const row = ['Ada', 'Main', 'Druid', '6', '0', '100', '20', '80', '20'];
 const record = { rowIndex: 3, owner: 'Ada', account: 'Main', weeklyEarned: 6, earned: 100, available: 80, fiveWeekActivity: 20 };
 const update = (column, value) => ({ range: `${sheetName}!${column}3`, values: [[value]] });
+
+test('boss kill cooldown lasts exactly one hour and expires at zero', () => {
+  const now = new Date('2026-11-03T12:00:00Z');
+  assert.equal(getBossKillCooldownRemainingMs(new Date(now.getTime() + BOSS_KILL_COOLDOWN_MS), now), BOSS_KILL_COOLDOWN_MS);
+  assert.equal(getBossKillCooldownRemainingMs(new Date(now.getTime() - 1), now), 0);
+});
 
 test('interrupted DKP writes replay once from the recorded before state', () => {
   const after = [update('F', 105), update('H', 85)];

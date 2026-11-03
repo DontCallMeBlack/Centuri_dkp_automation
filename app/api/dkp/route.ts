@@ -4,8 +4,9 @@ import { canManageClan, getSessionUser } from '@/lib/auth/session';
 import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import BossAward from '@/lib/models/BossAward';
+import BossCooldown from '@/lib/models/BossCooldown';
 import User from '@/lib/models/User';
-import { BOSS_DKP_POINTS, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
+import { BOSS_DKP_POINTS, BOSS_KILL_COOLDOWN_MS, getBossKillCooldownRemainingMs, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
@@ -134,6 +135,18 @@ export async function POST(req: Request) {
         award = await withClanAdministrationTransaction(async (session) => {
           const actor = await User.findOne({ _id: user._id, status: 'approved', role: { $in: ['chief', 'general', 'guardian'] } }).session(session).lean();
           if (!actor) throw new RequestValidationError('Your role no longer permits boss awards.', 403);
+          const now = new Date();
+          const cooldown = await BossCooldown.findOne({ bossName }).session(session);
+          const remainingMs = getBossKillCooldownRemainingMs(cooldown?.expiresAt, now);
+          if (remainingMs > 0) {
+            const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+            throw new RequestValidationError(`${bossName} was already recorded. It cannot be recorded again for another ${remainingMinutes} minute(s).`, 409);
+          }
+          if (cooldown) await BossCooldown.deleteOne({ bossName }, { session });
+          await BossCooldown.create([{
+            bossName,
+            expiresAt: new Date(now.getTime() + BOSS_KILL_COOLDOWN_MS),
+          }], { session });
           const [created] = await BossAward.create([{
           _id: awardId, requestId, requestFingerprint: fingerprint,
           bossName, points: BOSS_DKP_POINTS[bossName],
@@ -145,7 +158,15 @@ export async function POST(req: Request) {
       } catch (error: unknown) {
         if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 11000) throw error;
         award = await BossAward.findById(awardId);
-        if (!award) throw error;
+        if (!award) {
+          const cooldown = await BossCooldown.findOne({ bossName });
+          const remainingMs = getBossKillCooldownRemainingMs(cooldown?.expiresAt);
+          if (remainingMs > 0) {
+            const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+            throw new RequestValidationError(`${bossName} was already recorded. It cannot be recorded again for another ${remainingMinutes} minute(s).`, 409);
+          }
+          throw error;
+        }
       }
     }
     if (award.requestId !== requestId || award.requestFingerprint !== fingerprint ||
