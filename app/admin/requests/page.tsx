@@ -227,7 +227,7 @@ export default function AdminRequestsPage() {
   useEffect(() => {
     if (initialLoadStarted.current) return;
     initialLoadStarted.current = true;
-    void loadData(15_000);
+    void loadData(Infinity);
   }, [loadData]);
   useEffect(() => {
     const refreshForSessionChange = () => {

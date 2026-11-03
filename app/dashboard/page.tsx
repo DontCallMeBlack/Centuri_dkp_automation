@@ -14,10 +14,10 @@ import ToonDkpCards from '@/components/ToonDkpCards';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { ReadableRosterRecord } from '@/lib/sheetRoster';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
-import { useAutoRefresh } from '@/lib/client/useAutoRefresh';
+import { useManualRefresh } from '@/lib/client/useManualRefresh';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, CheckCircle2, Users, Zap, X, Swords } from 'lucide-react';
+import { Search, Plus, CheckCircle2, Users, Zap, X, Swords, RefreshCw } from 'lucide-react';
 const BossHistoryPanel = dynamic(() => import('@/components/BossHistoryPanel'), { loading: () => <LoadingSurface fullLayout label="Opening kill history" title="Kill history" /> });
 const AuctionHousePanel = dynamic(() => import('@/components/AuctionHousePanel'), { loading: () => <LoadingSurface fullLayout label="Opening auction house" title="Auction house" /> });
 const AuctionItemsPanel = dynamic(() => import('@/components/AuctionItemsPanel'), { loading: () => <LoadingSurface fullLayout label="Opening item catalog" title="Item catalog" /> });
@@ -138,7 +138,7 @@ function Dashboard() {
       if (activeRef.current) setLoading(false);
     }
   }, [router]);
-  useAutoRefresh(() => fetchData(false, 15_000), { active: activeView === 'dkp' });
+  useManualRefresh((force) => fetchData(false, force ? 0 : Infinity), activeView === 'dkp');
 
   const toggleMemberSelection = (rowIndex: number) => {
     setSelectedMembers((prev) =>
@@ -272,7 +272,8 @@ function Dashboard() {
     <div className="space-y-6">
       {activeView === 'dkp' && <><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div><p className="page-kicker">Your clan. In sync.</p><h1 className="page-title">Welcome back{userSession?.nickname ? `, ${userSession.nickname}` : ''}<span className="text-indigo-400">.</span></h1></div>
-        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => void openAwardPicker()}><Plus className="h-4 w-4" /> Record a kill</button>}
+        <div className="flex flex-wrap gap-2"><button type="button" className="secondary-button" disabled={loading || submitting} onClick={() => void fetchData()}><RefreshCw size={15} />Refresh</button>
+        {canSubmitDkp && <button className="primary-button self-start sm:self-auto" onClick={() => void openAwardPicker()}><Plus className="h-4 w-4" /> Record a kill</button>}</div>
       </div>
       {rosterSyncError && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-200">{rosterSyncError} {roster.length > 0 && 'Showing the last known roster. Balances may have changed.'}</p>}
       <RosterDataIssues issues={roster.flatMap((toon) => toon.dkpIssues ?? [])} />

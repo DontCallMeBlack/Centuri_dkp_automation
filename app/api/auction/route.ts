@@ -21,7 +21,8 @@ import { getBoundAuctionHold } from '@/lib/auctionHold';
 import { canAffordBid, DkpIntegrityError } from '@/lib/dkpAccounting';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
-import { readAuctionCreatorRoles, readAuctionFollowUpTasks } from '@/lib/auctionFollowUpReads';
+import { readAuctionCreatorRoles } from '@/lib/auctionFollowUpReads';
+import { auctionDisplayFilter } from '@/lib/auctionReadScope';
 import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
@@ -79,30 +80,15 @@ export async function GET(request: Request) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     await limitMemberRequests(user._id.toString(), 'auction-read');
     if (new URL(request.url).searchParams.get('live') === '1') return getLiveAuctionUpdates(request, user);
-    const includeArchive = new URL(request.url).searchParams.get('includeArchive') === '1';
+    const url = new URL(request.url);
+    if (url.searchParams.get('includeArchive') === '1') return await getAuctionHistory(url, user);
     scheduleExpirySweep();
-    const page = includeArchive ? readHistoryPage(new URL(request.url)) : {};
-    const [rosterSnapshot, recentResults, items, holds, followUpTasks, personalWinningAuctions, allWinnerAuctions, unresolvedAuctions] = await Promise.all([
+    const [rosterSnapshot, auctions, items, holds] = await Promise.all([
       getSheetRosterSnapshot(),
-      includeArchive
-        ? Auction.find(page).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean()
-        : Auction.find().sort({ createdAt: -1 }).limit(100).lean(),
+      Auction.find(auctionDisplayFilter()).sort({ createdAt: -1, _id: -1 }).lean(),
       AuctionItem.find().select('name requiredRoles requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints owner account').lean(),
-      readAuctionFollowUpTasks(),
-      Auction.find({
-        status: 'completed',
-        'winner.userId': user._id,
-      }).sort({ createdAt: -1 }).limit(100).lean(),
-      Auction.find({
-        status: 'completed',
-        winner: { $exists: true },
-      }).sort({ createdAt: -1 }).limit(100).lean(),
-      Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed'] } }).lean(),
     ]);
-    const { pendingDeliveryTasks, pendingNoBidTasks } = followUpTasks;
-    const recentAuctions = includeArchive ? recentResults.slice(0, HISTORY_PAGE_SIZE) : recentResults;
-    const nextCursor = includeArchive && recentResults.length > HISTORY_PAGE_SIZE ? historyCursor(recentAuctions[recentAuctions.length - 1]) : null;
     const roster = rosterSnapshot.roster;
     const { roleChanges, roleApprovals } = await readToonRoleSchedules(roster.map(getSheetRecordKey));
     const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
@@ -111,17 +97,6 @@ export async function GET(request: Request) {
       roleApprovalsByIdentity.set(approval.identityKey, [...(roleApprovalsByIdentity.get(approval.identityKey) ?? []), approval]);
     }
     const roleReadAt = new Date();
-    const auctionsById = new Map(recentAuctions.map((auction) => [auction._id.toString(), auction]));
-    for (const auction of pendingDeliveryTasks) auctionsById.set(auction._id.toString(), auction);
-    for (const auction of pendingNoBidTasks) auctionsById.set(auction._id.toString(), auction);
-    for (const auction of personalWinningAuctions) auctionsById.set(auction._id.toString(), auction);
-    for (const auction of allWinnerAuctions) auctionsById.set(auction._id.toString(), auction);
-    for (const auction of unresolvedAuctions) auctionsById.set(auction._id.toString(), auction);
-    const auctions = [...auctionsById.values()].sort((first, second) =>
-      second.createdAt.getTime() - first.createdAt.getTime(),
-    );
-    const creators = await readAuctionCreatorRoles(user.role, auctions);
-    const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
     const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
     const roles = ITEM_SUBROLES;
     const catalogImageCounts = new Map(
@@ -174,53 +149,98 @@ export async function GET(request: Request) {
         bossType: catalogBossTypes.get(_id.toString()) ?? 'Unassigned',
         imageCount: catalogImageCounts.get(_id.toString()) ?? 1,
       })),
-      nextCursor,
-      auctions: auctions.map((auction) => ({
-        id: auction._id.toString(),
-        itemId: auction.itemId.toString(),
-        imageCount: catalogImageCounts.get(auction.itemId.toString()) ?? 1,
-        itemName: auction.itemName,
-        bossType: auction.bossType ?? catalogBossTypes.get(auction.itemId.toString()) ?? 'Unassigned',
-        requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole],
-        createdBy: auction.createdBy,
-        isPoster: isAuctionPoster(auction, user._id),
-        isWinner: auction.winner?.userId.equals(user._id) === true,
-        canMarkDelivered: auction.status === 'completed' &&
-          auction.deliveryStatus === 'pending' &&
-          Boolean(auction.winner) &&
-          (isManager(user.role) || isAuctionPoster(auction, user._id)),
-        canRemove: user.role === 'chief' ||
-          user.role === 'general' ||
-          (user.role === 'guardian' && isAuctionPoster(auction, user._id)),
-        canClose: user.role === 'chief' ||
-          isAuctionPoster(auction, user._id) ||
-          (user.role === 'general' && creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian'),
-        canResolveNoBid: auction.status === 'completed' &&
-          !auction.highBid &&
-          auction.deliveryStatus === 'not-required' &&
-          (isAuctionPoster(auction, user._id) || (!auction.createdByUserId && (user.role === 'chief' || user.role === 'general'))),
-        createdAt: auction.createdAt.toISOString(),
-        endsAt: auction.endsAt.toISOString(),
-        biddingClosed: auction.biddingClosed === true,
-        status: auction.status,
-        bidVersion: auction.bidVersion ?? 0,
-        highBid: serializeBid(auction.highBid, user._id),
-        winner: serializeBid(auction.winner, user._id),
-        deliveryStatus: auction.deliveryStatus,
-        deliveredBy: auction.deliveredBy ?? null,
-        deliveredAt: auction.deliveredAt?.toISOString() ?? null,
-        settlementError: auction.settlementError ? 'Settlement needs attention. Reserved DKP remains protected.' : null,
-        canRetrySettlement: canRetryAuctionSettlement(user.role, auction),
-      })),
+      nextCursor: null,
+      auctions: await serializeReadAuctions(auctions, user, items),
     }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error: unknown) {
     return requestErrorResponse(error, 'Unable to load auction house. Please retry shortly.');
   }
 }
 
+type AuctionReadRecord = Omit<IAuction, keyof mongoose.Document> & { _id: mongoose.Types.ObjectId };
+type AuctionReader = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
+
+async function serializeReadAuctions(auctions: AuctionReadRecord[], user: AuctionReader,
+  metadata?: Array<{ _id: mongoose.Types.ObjectId; imageCount?: number; bossType?: string }>) {
+  if (!auctions.length) return [];
+  const [items, creators] = await Promise.all([
+    metadata ?? AuctionItem.find({ _id: { $in: [...new Set(auctions.map((auction) => auction.itemId.toString()))] } })
+      .select('imageCount bossType').lean(),
+    readAuctionCreatorRoles(user.role, auctions),
+  ]);
+  const catalogImageCounts = new Map(items.map((item) => [item._id.toString(), item.imageCount ?? 1]));
+  const catalogBossTypes = new Map(items.map((item) => [item._id.toString(), item.bossType ?? 'Unassigned']));
+  const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
+  return auctions.map((auction) => ({
+    id: auction._id.toString(),
+    itemId: auction.itemId.toString(),
+    imageCount: catalogImageCounts.get(auction.itemId.toString()) ?? 1,
+    itemName: auction.itemName,
+    bossType: auction.bossType ?? catalogBossTypes.get(auction.itemId.toString()) ?? 'Unassigned',
+    requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole],
+    createdBy: auction.createdBy,
+    isPoster: isAuctionPoster(auction, user._id),
+    isWinner: auction.winner?.userId.equals(user._id) === true,
+    canMarkDelivered: auction.status === 'completed' &&
+      auction.deliveryStatus === 'pending' &&
+      Boolean(auction.winner) &&
+      (isManager(user.role) || isAuctionPoster(auction, user._id)),
+    canRemove: user.role === 'chief' ||
+      user.role === 'general' ||
+      (user.role === 'guardian' && isAuctionPoster(auction, user._id)),
+    canClose: user.role === 'chief' ||
+      isAuctionPoster(auction, user._id) ||
+      (user.role === 'general' && creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian'),
+    canResolveNoBid: auction.status === 'completed' &&
+      !auction.highBid &&
+      auction.deliveryStatus === 'not-required' &&
+      (isAuctionPoster(auction, user._id) || (!auction.createdByUserId && (user.role === 'chief' || user.role === 'general'))),
+    createdAt: auction.createdAt.toISOString(),
+    endsAt: auction.endsAt.toISOString(),
+    biddingClosed: auction.biddingClosed === true,
+    status: auction.status,
+    bidVersion: auction.bidVersion ?? 0,
+    highBid: serializeBid(auction.highBid, user._id),
+    winner: serializeBid(auction.winner, user._id),
+    deliveryStatus: auction.deliveryStatus,
+    deliveredBy: auction.deliveredBy ?? null,
+    deliveredAt: auction.deliveredAt?.toISOString() ?? null,
+    settlementError: auction.settlementError ? 'Settlement needs attention. Reserved DKP remains protected.' : null,
+    canRetrySettlement: canRetryAuctionSettlement(user.role, auction),
+  }));
+}
+
+/** History never rebuilds balances, eligibility, roster, or the posting catalog. */
+async function getAuctionHistory(url: URL, user: AuctionReader) {
+  const onlyWins = url.searchParams.get('won') === '1';
+  const records = await Auction.find({
+    status: 'completed',
+    ...(onlyWins ? { 'winner.userId': user._id } : {}),
+    ...readHistoryPage(url),
+  }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean();
+  const page = records.slice(0, HISTORY_PAGE_SIZE);
+  return NextResponse.json({
+    success: true,
+    auctions: await serializeReadAuctions(page, user),
+    nextCursor: records.length > HISTORY_PAGE_SIZE ? historyCursor(page[page.length - 1]) : null,
+  }, { headers: { 'Cache-Control': 'private, no-store' } });
+}
+
 /** Lightweight polling path: reads auction state without rebuilding roster and catalog data. */
 async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>>) {
   const url = new URL(request.url);
+  let targetIds: mongoose.Types.ObjectId[] | null = null;
+  const rawIds = url.searchParams.get('ids');
+  if (rawIds !== null) {
+    try {
+      if (rawIds.length > 6_000) throw new Error();
+      const ids: unknown = JSON.parse(rawIds);
+      if (!Array.isArray(ids) || ids.length > 200 || ids.some((id) => typeof id !== 'string' || !/^[a-f\d]{24}$/i.test(id))) throw new Error();
+      targetIds = [...new Set(ids as string[])].map((id) => new mongoose.Types.ObjectId(id));
+    } catch {
+      return Response.json({ error: 'Invalid auction IDs' }, { status: 400 });
+    }
+  }
   const knownVersions = new Map<string, string>();
   const rawVersions = url.searchParams.get('versions');
   if (rawVersions) {
@@ -239,17 +259,15 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
     }
   }
 
+  if (targetIds !== null) {
+    const requestedIds = new Set(targetIds.map((id) => id.toString()));
+    for (const id of knownVersions.keys()) if (!requestedIds.has(id)) knownVersions.delete(id);
+  }
   try {
     scheduleExpirySweep();
     const fields = '_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError settlementAttemptId settlementDkpApplied settlementLeaseUntil settlementNeedsReview bidVersion';
-    const [recent, unresolved] = await Promise.all([
-      Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed', 'completed'] } })
-        .select(fields).sort({ createdAt: -1 }).limit(100).lean(),
-      Auction.find({ status: { $in: ['active', 'settling', 'settlement-failed'] } }).select(fields).lean(),
-    ]);
-    const byId = new Map(recent.map((auction) => [auction._id.toString(), auction]));
-    for (const auction of unresolved) byId.set(auction._id.toString(), auction);
-    const auctions = [...byId.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const auctions = await Auction.find(targetIds !== null ? { _id: { $in: targetIds } } : auctionDisplayFilter([...knownVersions.keys()].map((id) => new mongoose.Types.ObjectId(id))))
+      .select(fields).sort({ createdAt: -1, _id: -1 }).lean();
     const versionToken = (auction: typeof auctions[number]) => [
       auction.bidVersion ?? 0,
       auction.status,
@@ -258,58 +276,16 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
       auction.itemId.toString(),
     ].join(':');
     const returnedIds = new Set(auctions.map((auction) => auction._id.toString()));
-    const outsideWindow = [...knownVersions.keys()].filter((id) => !returnedIds.has(id));
-    // A record leaving the recent window is still part of the archive. Only
-    // report an actual deletion to avoid removing delivery tasks/history.
-    const persisted = outsideWindow.length
-      ? await Auction.find({ _id: { $in: outsideWindow } }).select('_id').lean() : [];
-    const persistedIds = new Set(persisted.map((auction) => auction._id.toString()));
-    const removedIds = outsideWindow.filter((id) => !persistedIds.has(id));
-    const changed = removedIds.length > 0 || auctions.some((auction) =>
-      knownVersions.get(auction._id.toString()) !== versionToken(auction),
-    );
+    const removedIds = [...knownVersions.keys()].filter((id) => !returnedIds.has(id));
+    const changedAuctions = auctions.filter((auction) =>
+      knownVersions.get(auction._id.toString()) !== versionToken(auction));
+    const changed = removedIds.length > 0 || changedAuctions.length > 0;
     if (!changed) {
       return NextResponse.json({ changed: false }, { status: 200, headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const itemIds = [...new Set(auctions.map((auction) => auction.itemId))];
-    const items = await AuctionItem.find({ _id: { $in: itemIds } }).select('_id imageCount bossType').lean();
-    const itemById = new Map(items.map((item) => [item._id.toString(), item]));
-    const creators = await readAuctionCreatorRoles(user.role, auctions);
-    const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
-    const responseAuctions = auctions.map((auction) => {
-      const id = auction._id.toString();
-      const isPoster = isAuctionPoster(auction, user._id);
-      return {
-        id,
-        itemId: auction.itemId.toString(),
-        imageCount: itemById.get(auction.itemId.toString())?.imageCount ?? 1,
-        itemName: auction.itemName,
-        bossType: auction.bossType ?? itemById.get(auction.itemId.toString())?.bossType ?? 'Unassigned',
-        requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''],
-        createdBy: auction.createdBy,
-        isPoster,
-        isWinner: auction.winner?.userId.equals(user._id) === true,
-        canMarkDelivered: auction.status === 'completed' && auction.deliveryStatus === 'pending' && Boolean(auction.winner) && (isManager(user.role) || isPoster),
-        canRemove: user.role === 'chief' || user.role === 'general' || (user.role === 'guardian' && isPoster),
-        canClose: user.role === 'chief' || isPoster || (user.role === 'general' && creatorById.get(auction.createdByUserId?.toString() ?? '')?.role === 'guardian'),
-        canResolveNoBid: auction.status === 'completed' && !auction.highBid && auction.deliveryStatus === 'not-required' &&
-          (isPoster || (!auction.createdByUserId && (user.role === 'chief' || user.role === 'general'))),
-        createdAt: auction.createdAt.toISOString(),
-        endsAt: auction.endsAt.toISOString(),
-        biddingClosed: auction.biddingClosed === true,
-        status: auction.status,
-        highBid: serializeBid(auction.highBid, user._id),
-        winner: serializeBid(auction.winner, user._id),
-        deliveryStatus: auction.deliveryStatus,
-        deliveredBy: auction.deliveredBy ?? null,
-        deliveredAt: auction.deliveredAt?.toISOString() ?? null,
-        settlementError: auction.settlementError ? 'Settlement needs attention. Reserved DKP remains protected.' : null,
-        canRetrySettlement: canRetryAuctionSettlement(user.role, auction),
-        bidVersion: auction.bidVersion ?? 0,
-        versionToken: versionToken(auction),
-      };
-    });
+    const serialized = await serializeReadAuctions(changedAuctions, user);
+    const responseAuctions = serialized.map((auction, index) => ({ ...auction, versionToken: versionToken(changedAuctions[index]) }));
 
     return NextResponse.json({ changed: true, auctions: responseAuctions, removedIds }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error: unknown) {
