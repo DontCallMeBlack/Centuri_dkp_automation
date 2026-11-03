@@ -1102,7 +1102,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <div className="flex min-w-0 items-center gap-4">
             <div><h2 className="text-lg font-bold text-white">Browse auctions</h2><p role="status" className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="group" aria-label="Auction views">
-              <button type="button" className="icon-button" aria-label="Refresh auction house" disabled={syncing} onClick={() => { void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : 'Unable to refresh auctions.')); }}><RefreshCw size={15} className={syncing ? 'animate-spin' : ''} /></button>
               <button type="button" aria-pressed={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" aria-pressed={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
             </div>
