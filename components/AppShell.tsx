@@ -70,9 +70,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     let active = true;
     let lastCheckedAt = 0;
     const check = () => {
-      if (document.visibilityState !== 'visible' || Date.now()-lastCheckedAt < 30_000) return;
+      if (document.visibilityState !== 'visible' || Date.now()-lastCheckedAt < 60_000) return;
       lastCheckedAt=Date.now();
-      void getData<{user:SessionUser}>('/api/auth/session').then((result) => {
+      void getData<{user:SessionUser}>('/api/auth/session', { maxAgeMs: 55_000 }).then((result) => {
         if (!active) return;
         const previous=userRef.current;
         const changed=previous && (previous.id !== result.user.id || previous.role !== result.user.role || JSON.stringify(previous.sheetRecordRows) !== JSON.stringify(result.user.sheetRecordRows));
