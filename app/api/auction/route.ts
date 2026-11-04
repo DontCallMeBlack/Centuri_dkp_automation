@@ -194,7 +194,7 @@ async function serializeReadAuctions(auctions: AuctionReadRecord[], user: Auctio
     canResolveNoBid: auction.status === 'completed' &&
       !auction.highBid &&
       auction.deliveryStatus === 'not-required' &&
-      (isAuctionPoster(auction, user._id) || (!auction.createdByUserId && (user.role === 'chief' || user.role === 'general'))),
+      (isManager(user.role) || isAuctionPoster(auction, user._id)),
     createdAt: auction.createdAt.toISOString(),
     endsAt: auction.endsAt.toISOString(),
     biddingClosed: auction.biddingClosed === true,
@@ -386,9 +386,8 @@ export async function POST(req: Request) {
       const auction = await Auction.findById(auctionId);
       if (!auction) return NextResponse.json({ error: 'Auction not found' }, { status: 404 });
       const isPoster = isAuctionPoster(auction, user._id);
-      const mayRecoverLegacyAuction = !auction.createdByUserId && (user.role === 'chief' || user.role === 'general');
-      if (!isPoster && !mayRecoverLegacyAuction) {
-        return NextResponse.json({ error: 'Only the auction poster can resolve an auction with no bids' }, { status: 403 });
+      if (!isManager(user.role) && !isPoster) {
+        return NextResponse.json({ error: 'Only auction managers can resolve an auction with no bids' }, { status: 403 });
       }
       if (
         auction.status !== 'completed' ||
@@ -402,9 +401,11 @@ export async function POST(req: Request) {
         let repostedAuctionId = '';
         await withClanAdministrationTransaction(async (session) => {
           const actor = await getAuctionActor(user._id, session);
-          if (!isPoster && actor.role !== 'chief' && actor.role !== 'general') throw new RequestValidationError('Permission denied.', 403);
+          if (!isManager(actor.role) && !isPoster) throw new RequestValidationError('Permission denied.', 403);
           const ownershipFilter = isPoster
             ? { createdByUserId: user._id }
+            : isManager(actor.role)
+              ? {}
             : { createdByUserId: null };
           const resolvedAuction = await Auction.findOneAndUpdate(
             {
