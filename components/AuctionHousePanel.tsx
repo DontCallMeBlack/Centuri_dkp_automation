@@ -77,6 +77,10 @@ interface Auction {
 
 interface AuctionHistory { auctions: Auction[]; nextCursor?: string | null }
 
+function mailedItemSummary(auction: Auction) {
+  return `${auction.deliveredBy || 'A leader'} mailed ${auction.itemName} to ${auction.winner?.account || auction.winner?.owner || 'the winning toon'}`;
+}
+
 interface AuctionData {
   nextCursor?: string | null;
   dkpIssues?: DkpCellIssue[];
@@ -646,7 +650,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     }
   };
 
-  const markDelivered = async (auctionId: string) => {
+  const markDelivered = async (auction: Auction) => {
     setSaving(true);
     setError('');
     setNotice('Saving delivery update…');
@@ -654,13 +658,15 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const response = await fetch('/api/auction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark-delivered', auctionId }),
+        body: JSON.stringify({ action: 'mark-delivered', auctionId: auction.id }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to update delivery task');
-      setNotice(result.message || 'Item marked mailed.');
-      updateAuctionInView(auctionId, { deliveryStatus: 'done', deliveredBy: sessionUser?.nickname ?? null, deliveredAt: new Date().toISOString(), canMarkDelivered: false });
-      refreshInBackground('Delivery update saved.');
+      const delivery = { deliveryStatus: 'done' as const, deliveredBy: sessionUser?.nickname ?? null, deliveredAt: new Date().toISOString(), canMarkDelivered: false };
+      const message = mailedItemSummary({ ...auction, ...delivery });
+      setNotice(message);
+      updateAuctionInView(auction.id, delivery);
+      refreshInBackground(message);
     } catch (deliveryError) {
       setNotice('');
       setError(deliveryError instanceof Error ? deliveryError.message : 'Unable to update delivery task');
@@ -1020,7 +1026,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {auction.canMarkDelivered && (
-                      <button disabled={saving} onClick={() => void markDelivered(auction.id)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/30 hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">
+                      <button disabled={saving} onClick={() => void markDelivered(auction)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-emerald-950/30 hover:from-emerald-500 hover:to-green-500 disabled:opacity-50">
                         <Check className="h-4 w-4" /> Confirm mailed
                       </button>
                     )}
@@ -1086,8 +1092,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                         ? `Mailed · ${auction.bossType}`
                         : `Awaiting mail · ${auction.bossType}`}
                     </p>
-                    {auction.deliveryStatus === 'done' && auction.deliveredBy && (
-                      <p className="mt-1 text-[11px] text-emerald-300">Mailed by {auction.deliveredBy}</p>
+                    {auction.deliveryStatus === 'done' && auction.winner && (
+                      <p className="mt-1 break-words text-[11px] text-emerald-300">{mailedItemSummary(auction)}</p>
                     )}
                   </div>
                   <span className="shrink-0 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-amber-200">
@@ -1330,7 +1336,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                     {auction.canRetrySettlement && <button type="button" className="secondary-button" disabled={saving} onClick={() => void retrySettlement(auction)}><RefreshCw size={13} />Retry settlement</button>}
                     {!isActive && auction.status === 'completed' && auction.winner && (
                       <p className="flex items-start gap-2 break-words text-xs leading-snug text-emerald-300">
-                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>Winner: <span className="break-all">{auction.winner.account || auction.winner.owner}</span>
+                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" /> <span>{auction.deliveryStatus === 'done'
+                          ? mailedItemSummary(auction)
+                          : <>Winner: <span className="break-all">{auction.winner.account || auction.winner.owner}</span></>}
                         </span>
                       </p>
                     )}
