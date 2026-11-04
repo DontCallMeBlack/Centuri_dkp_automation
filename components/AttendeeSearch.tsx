@@ -17,7 +17,7 @@ export default function AttendeeSearch({ roster, value, onChange, onAddRows, dis
   const addNames = (text: string) => {
     const matches = matchAttendeeNames(text, roster);
     onAddRows(matches.rows);
-    onChange('');
+    onChange(matches.remaining.join(' '));
     setResult(matches);
   };
   return <div className="mb-3">
@@ -38,7 +38,7 @@ export default function AttendeeSearch({ roster, value, onChange, onAddRows, dis
           addNames(text);
         }}
         onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.nativeEvent.isComposing || !/\S\s+\S/u.test(value)) return;
+          if (event.key !== 'Enter' || event.nativeEvent.isComposing || !value.trim()) return;
           event.preventDefault();
           addNames(value);
         }}

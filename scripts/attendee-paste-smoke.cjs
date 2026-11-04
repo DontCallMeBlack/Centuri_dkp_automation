@@ -63,6 +63,12 @@ const paste = (input, text) => input.evaluate((element, value) => {
       await dialog.getByRole('status').filter({ hasText: 'oogway75 → oogway74' }).waitFor();
       await dialog.getByText('Not found: missing', { exact: true }).waitFor();
       await dialog.getByText('Multiple matches; select manually: healsbeas', { exact: true }).waitFor();
+      assert.equal(await input.inputValue(), 'healsbeas missing', 'Only unresolved names remain in paste order');
+      await dialog.getByRole('button', { name: /healsbeastz/ }).waitFor();
+      await input.fill('healsbeast');
+      await input.press('Enter');
+      await dialog.getByRole('status').filter({ hasText: '1 name matched.' }).waitFor();
+      assert.equal(await input.inputValue(), '', 'Corrected names disappear when matched');
       await input.fill('ftw pogba');
       await input.press('Enter');
       await dialog.getByRole('status').filter({ hasText: '2 names matched.' }).waitFor();
@@ -71,8 +77,10 @@ const paste = (input, text) => input.evaluate((element, value) => {
       await page.goto(origin + '/admin/boss-history');
       await page.getByRole('button', { name: 'Edit', exact: true }).click();
       const historyInput = page.getByRole('searchbox', { name: 'Search attendees or paste toon names' });
-      await paste(historyInput, names);
+      await paste(historyInput, names + ' missing healsbeas');
       await page.getByRole('status').filter({ hasText: '18 names matched.' }).waitFor();
+      assert.equal(await historyInput.inputValue(), 'missing healsbeas');
+      await historyInput.fill('');
       assert.equal(await page.getByRole('checkbox', { checked: true }).count(), 19, 'Existing attendees remain selected');
       await paste(historyInput, names);
       assert.equal(await page.getByRole('checkbox', { checked: true }).count(), 19);

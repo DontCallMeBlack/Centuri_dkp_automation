@@ -115,3 +115,17 @@ test('two typos are accepted in a long name but rejected in a short name', () =>
   assert.deepEqual(matchAttendeeNames('nitrorngrr', [toon('nitroranger')]).rows, [3]);
   assert.deepEqual(matchAttendeeNames('crzxvia', [toon('crizivia')]).rows, []);
 });
+
+test('remaining names preserve paste order and omit exact, fuzzy, and duplicate matches', () => {
+  const roster = [toon('crizivia'), toon('healsbeast', 4), toon('healsbeastz', 5)];
+  const matches = matchAttendeeNames('healsbeas crizvia Missing healsbeast MISSING', roster);
+  assert.deepEqual(matches.rows, [3, 4]);
+  assert.deepEqual(matches.remaining, ['healsbeas', 'Missing']);
+  assert.deepEqual(matchAttendeeNames('crizvia healsbeast', roster).remaining, []);
+});
+
+test('unresolved multiword identities are retained intact and unresolved lists show individual candidates', () => {
+  const roster = [toon('icy magic'), toon('icymagic', 4), toon('healsbeast', 5), toon('healsbeastz', 6)];
+  assert.deepEqual(matchAttendeeNames('icy magic', roster).remaining, ['icy magic']);
+  assert.deepEqual(filterAttendeeRoster(roster, 'missing healsbeas'), roster.slice(2));
+});
