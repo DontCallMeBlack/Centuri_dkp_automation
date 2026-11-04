@@ -1,4 +1,4 @@
-export const ATTENDEE_SIMILARITY_THRESHOLD = 0.9;
+export const ATTENDEE_SIMILARITY_THRESHOLD = 0.8;
 
 export interface AttendeeRosterRecord {
   rowIndex: number;
@@ -8,7 +8,7 @@ export interface AttendeeRosterRecord {
 }
 
 function normalizeName(value: string) {
-  return value.normalize('NFKC').trim().toLowerCase();
+  return value.normalize('NFKC').replace(/\s+/gu, '').toLowerCase();
 }
 
 /** Cosine similarity of character-bigram counts; character order and digits matter. */
