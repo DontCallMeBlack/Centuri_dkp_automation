@@ -6,6 +6,8 @@ import LoadingSurface from '@/components/LoadingSurface';
 import EmptyState from '@/components/EmptyState';
 import RoleBadge from '@/components/RoleBadge';
 import BossIcon from '@/components/BossIcon';
+import AttendeeSearch from '@/components/AttendeeSearch';
+import { filterAttendeeRoster } from '@/lib/attendeeNames';
 import { useSessionUser } from '@/components/AppShell';
 import { ApiError, clientDataVersion, clearClientData, getData, peekData, notifyDkpChanged, readResponse } from '@/lib/client/api';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
@@ -355,10 +357,7 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
             : award.status === 'applied'
               ? award.canModify ? 'border-emerald-300/20 bg-emerald-300/[.07] text-emerald-200' : 'border-slate-500/20 bg-slate-400/[.05] text-slate-300'
               : 'border-amber-300/20 bg-amber-300/[.06] text-amber-200';
-          const rosterQuery = editRosterQuery.trim().toLocaleLowerCase();
-          const filteredRoster = rosterQuery
-            ? roster.filter((record) => [record.account, record.owner, record.subClass].some((value) => value?.toLocaleLowerCase().includes(rosterQuery)))
-            : roster;
+          const filteredRoster = filterAttendeeRoster(roster, editRosterQuery);
           return (
             <article key={award.id} data-record-status={award.status} className="raid-record surface group relative overflow-hidden p-0 transition duration-200 hover:border-slate-600/70">
               <div className={`h-1 bg-gradient-to-r ${BOSS_ACCENTS[award.bossName] ?? 'from-slate-400 via-indigo-400 to-slate-700'}`} />
@@ -419,18 +418,15 @@ export default function BossHistoryPanel({ embedded = false, active = true }: { 
                     <span>Select attendees</span>
                     <span>{selectedCount} selected</span>
                   </div>
-                  <label className="relative mb-2 block">
-                    <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="search"
-                      value={editRosterQuery}
-                      onChange={(event) => setEditRosterQuery(event.target.value)}
-                      placeholder="Search toon, owner, or subrole"
-                      aria-label="Search attendees"
-                      autoComplete="off"
-                      className="h-9 w-full rounded-lg border border-slate-800 bg-slate-950/60 pl-9 pr-3 text-xs text-slate-100 outline-none placeholder:text-slate-600 transition focus:border-indigo-300/40 focus:ring-2 focus:ring-indigo-300/[.08]"
-                    />
-                  </label>
+                  <AttendeeSearch
+                    roster={roster}
+                    value={editRosterQuery}
+                    onChange={setEditRosterQuery}
+                    onAddRows={(rows) => setSelectedRows((previous) => ({
+                      ...previous, [award.id]: [...new Set([...(previous[award.id] ?? []), ...rows])],
+                    }))}
+                    disabled={Boolean(busyId)}
+                  />
                   <div className="boss-history-roster-scroll grid max-h-60 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border border-slate-800 p-1.5 sm:grid-cols-2">
                     {filteredRoster.map((record) => {
                       const isSelected = (selectedRows[award.id] ?? []).includes(record.rowIndex);
