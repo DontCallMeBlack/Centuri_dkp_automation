@@ -12,6 +12,8 @@ import EmptyState from '@/components/EmptyState';
 import { useSessionUser } from '@/components/AppShell';
 import ToonDkpCards from '@/components/ToonDkpCards';
 import RosterDataIssues from '@/components/RosterDataIssues';
+import AttendeeSearch from '@/components/AttendeeSearch';
+import { filterAttendeeRoster } from '@/lib/attendeeNames';
 import type { ReadableRosterRecord } from '@/lib/sheetRoster';
 import { ApiError, clearClientData, getData, peekData, notifyDkpChanged } from '@/lib/client/api';
 import { useManualRefresh } from '@/lib/client/useManualRefresh';
@@ -246,11 +248,7 @@ function Dashboard() {
     return rankedToons.filter((toon) => `${toon.memberNickname} ${toon.owner} ${toon.account} ${toon.subClass}`.toLowerCase().includes(query));
   }, [rankedToons, deferredMemberQuery]);
 
-  const filteredRoster = roster.filter((member) =>
-    `${member.owner} ${member.account} ${member.subClass}`
-      .toLowerCase()
-      .includes(pickerQuery.toLowerCase())
-  );
+  const filteredRoster = filterAttendeeRoster(roster, pickerQuery);
   const bossSuggestions = bossActivity
     .filter((entry) => entry.bossName === selectedBoss)
     .flatMap((entry) => {
@@ -437,17 +435,13 @@ function Dashboard() {
                     {roster.length} toons
                   </span>
                 </div>
-                <div className="relative mb-3">
-                  <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
-                  <input
-                    type="search"
-                    aria-label="Search all sheet toons"
-                    placeholder="Search owner, toon, or class..."
-                    value={pickerQuery}
-                    onChange={(event) => setPickerQuery(event.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-white placeholder:text-slate-600 outline-none focus:border-indigo-400"
-                  />
-                </div>
+                <AttendeeSearch
+                  roster={roster}
+                  value={pickerQuery}
+                  onChange={setPickerQuery}
+                  onAddRows={(rows) => setSelectedMembers((previous) => [...new Set([...previous, ...rows])])}
+                  disabled={pickerRefreshing || submitting}
+                />
 
                 <section aria-label={`Top ten ${selectedBoss} attendees`} className="mb-2 rounded-xl border border-violet-300/15 bg-gradient-to-br from-violet-950/35 via-slate-900/75 to-slate-950/70 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
