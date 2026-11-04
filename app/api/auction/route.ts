@@ -181,7 +181,7 @@ async function serializeReadAuctions(auctions: AuctionReadRecord[], user: Auctio
     requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole],
     createdBy: auction.createdBy,
     isPoster: isAuctionPoster(auction, user._id),
-    isWinner: auction.winner?.userId.equals(user._id) === true,
+    isWinner: Boolean(auction.winner?.userId && auction.winner.userId.equals(user._id)),
     canMarkDelivered: auction.status === 'completed' &&
       auction.deliveryStatus === 'pending' &&
       Boolean(auction.winner) &&
@@ -404,7 +404,12 @@ export async function POST(req: Request) {
           const actor = await getAuctionActor(user._id, session);
           if (!isManager(actor.role) && !isPoster) throw new RequestValidationError('Permission denied.', 403);
           const ownershipFilter = isPoster
-            ? { createdByUserId: user._id }
+            ? {
+              $or: [
+                { createdByUserId: user._id },
+                { createdByUserId: { $exists: false }, createdBy: auction.createdBy },
+              ],
+            }
             : isManager(actor.role)
               ? {}
             : { createdByUserId: null };

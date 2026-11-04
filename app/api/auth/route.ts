@@ -44,14 +44,26 @@ export async function POST(request: Request) {
         if (existingNames.some((user) => (user.nicknameKey || normalizeNickname(user.nickname)) === nicknameKey)) {
           throw new RequestValidationError('That nickname is already registered.', 409);
         }
-        const archivedName = await ClanAccountArchive.exists({ nicknameKey, status: 'archived' }).session(session);
-        if (archivedName) throw new RequestValidationError('That nickname is archived. Ask a Chief or General to restore the account.', 409);
-        const archivedAccountCount = await ClanAccountArchive.countDocuments({ status: 'archived' }).session(session);
+        const archivedName = await ClanAccountArchive.findOne({ nicknameKey, status: 'archived' }).session(session);
+        const otherArchivedAccountCount = await ClanAccountArchive.countDocuments({
+          status: 'archived',
+          ...(archivedName ? { _id: { $ne: archivedName._id } } : {}),
+        }).session(session);
+        if (archivedName) {
+          archivedName.status = 'restored';
+          archivedName.restoredAt = new Date();
+          archivedName.restoreRequestId = undefined;
+          archivedName.passwordHash = undefined;
+          await archivedName.save({ session });
+        }
         const state = await ClanAdministrationState.findById(CLAN_ADMINISTRATION_KEY).session(session);
-        const bootstrap = existingNames.length === 0 && archivedAccountCount === 0 && state?.bootstrapClaimed === false;
+        const clanInitialized = state?.bootstrapClaimed === true;
+        const bootstrap = existingNames.length === 0 && otherArchivedAccountCount === 0 && !archivedName && !clanInitialized;
         if (existingNames.length === 0) {
-          if (!bootstrap) throw new RequestValidationError('The clan has already been initialized. The site owner must recover its Chief account.', 503);
-          if (!validBootstrapToken(bootstrapToken, process.env.CLAN_BOOTSTRAP_TOKEN)) throw new SetupRequiredError();
+          if (bootstrap && !validBootstrapToken(bootstrapToken, process.env.CLAN_BOOTSTRAP_TOKEN)) throw new SetupRequiredError();
+          if (!bootstrap && !clanInitialized && !archivedName) {
+            throw new RequestValidationError('The clan has already been initialized. The site owner must recover its Chief account.', 503);
+          }
         }
         await ClanAdministrationState.updateOne({ _id: CLAN_ADMINISTRATION_KEY }, { $set: { bootstrapClaimed: true } }, { session });
         await User.create([{ nickname: displayName, nicknameKey, passwordHash,
