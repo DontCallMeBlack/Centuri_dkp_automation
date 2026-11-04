@@ -729,7 +729,7 @@ export default function AdminRequestsPage() {
                       <button type="button" onClick={() => void undoActivity(event)} disabled={!isUndoableActivity(event) || busyId !== ''}
                         title={event.undoneAt ? 'Already undone' : isUndoableActivity(event) ? 'Undo this change' : 'Cannot be undone safely'}
                         aria-label={`Undo ${auditSummary(event)}`}
-                        className={`inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed ${event.undoneAt ? 'border-amber-300/15 bg-amber-300/[.04] text-amber-200/60' : isUndoableActivity(event) ? 'border-indigo-300/20 bg-indigo-400/[.08] text-indigo-100 hover:bg-indigo-400/[.16] disabled:opacity-40' : 'border-white/5 bg-white/[.02] text-slate-600'}`}>
+                        className={`inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed ${event.undoneAt || !isUndoableActivity(event) ? 'border-slate-700/60 bg-slate-800/30 text-slate-500 opacity-60' : 'border-indigo-300/20 bg-indigo-400/[.08] text-indigo-100 hover:bg-indigo-400/[.16]'}`}>
                         {busyId === `undo:${event.id}` ? <LoaderCircle size={14} className="animate-spin" /> : <Undo2 size={14} />}
                         {event.undoneAt ? 'Undone' : 'Undo'}
                       </button>
