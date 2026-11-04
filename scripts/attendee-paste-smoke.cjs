@@ -6,7 +6,7 @@ const origin = process.env.PERF_ORIGIN || 'http://localhost:3105';
 const names = 'Druidprov8 khuno bulajing rxm note3 crizvia healsbeast incin nitroranger rasberries icymagic montage pogba ftw salhorgordon draculaX oogway74 Vexana';
 const user = { id: '100000000000000000000001', nickname: 'Test Chief', role: 'chief', sheetRecordRows: [3] };
 const roster = [...names.split(' '), 'Unrelated', 'healsbeastz'].map((account, index) => ({
-  rowIndex: index + 3, owner: `Owner ${index}`, account, subClass: 'Ranger',
+  rowIndex: index + 3, owner: `Owner ${index}`, account: account === 'icymagic' ? 'icy magic' : account, subClass: 'Ranger',
   available: 100, earned: 100, spent: 0, weeklyEarned: 19, weeklySpent: 0, fiveWeekActivity: 14, dkpIssues: [],
 }));
 const paste = (input, text) => input.evaluate((element, value) => {
@@ -47,6 +47,8 @@ const paste = (input, text) => input.evaluate((element, value) => {
       const input = dialog.getByRole('searchbox', { name: 'Search attendees or paste toon names' });
       await input.waitFor({ state: 'visible' });
       await page.waitForFunction(() => !document.querySelector('dialog input[type=search]').disabled);
+      assert.equal(await dialog.getByRole('region', { name: /^Top ten/ }).count(), 0);
+      assert.equal(await dialog.getByText(/hall of fame|Top 10 by recorded appearances/).count(), 0);
       await input.fill('Unrelated');
       await dialog.getByRole('button', { name: /Unrelated/ }).click();
       await paste(input, names);
@@ -55,8 +57,9 @@ const paste = (input, text) => input.evaluate((element, value) => {
       assert.equal(await input.inputValue(), '');
       await paste(input, names.toUpperCase());
       await dialog.getByRole('button', { name: 'Record kill · 19 toons', exact: true }).waitFor();
-      await paste(input, 'nitrorange healsbeas missing');
+      await paste(input, 'nitrorange oogway75 healsbeas missing');
       await dialog.getByRole('status').filter({ hasText: 'nitrorange → nitroranger' }).waitFor();
+      await dialog.getByRole('status').filter({ hasText: 'oogway75 → oogway74' }).waitFor();
       await dialog.getByText('Not found: missing', { exact: true }).waitFor();
       await dialog.getByText('Multiple matches; select manually: healsbeas', { exact: true }).waitFor();
       await input.fill('ftw pogba');

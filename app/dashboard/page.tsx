@@ -36,12 +36,6 @@ interface ActiveToon extends RosterMember {
   memberNickname: string;
 }
 
-interface BossActivityScore {
-  bossName: string;
-  rowIndex: number;
-  count: number;
-}
-
 interface UserSession {
   nickname: string;
   role: string;
@@ -92,12 +86,11 @@ function Dashboard() {
   const sessionUser = useSessionUser();
   const requestedView = searchParams.get('view');
   const activeView = requestedView === 'auction' || requestedView === 'items' || requestedView === 'boss-history' ? requestedView : 'dkp';
-  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[] }>('/api/dkp');
+  const initialDkpData = peekData<{ roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession }>('/api/dkp');
   const [visitedViews, setVisitedViews] = useState<Set<string>>(new Set(['dkp']));
   const [awardError, setAwardError] = useState('');
   const activeRef = useRef(true);
   const [roster, setRoster] = useState<RosterMember[]>(() => initialDkpData?.roster ?? []);
-  const [bossActivity, setBossActivity] = useState<BossActivityScore[]>(() => initialDkpData?.bossActivity ?? []);
   const [clanMembers, setClanMembers] = useState<ClanMember[]>(() => initialDkpData?.clanMembers ?? []);
   const [userSession, setUserSession] = useState<UserSession | null>(() => initialDkpData?.user ?? null);
   const [rosterSyncError, setRosterSyncError] = useState('');
@@ -116,7 +109,7 @@ function Dashboard() {
 
   useEffect(() => {
     activeRef.current = true;
-    const clear = () => { setRoster([]); setBossActivity([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setPickerRefreshing(false); setMemberQuery(''); setLoading(true); };
+    const clear = () => { setRoster([]); setClanMembers([]); setUserSession(null); setSelectedMembers([]); setPendingAward(null); setPickerOpen(false); setPickerRefreshing(false); setMemberQuery(''); setLoading(true); };
     window.addEventListener('centuri:clear-data', clear);
     return () => { activeRef.current = false; window.removeEventListener('centuri:clear-data', clear); };
   }, []);
@@ -126,10 +119,10 @@ function Dashboard() {
 
   const fetchData = useCallback(async (fresh = false, maxAgeMs = 0) => {
     try {
-      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession; bossActivity?: BossActivityScore[]}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp', { maxAgeMs: fresh ? 0 : maxAgeMs });
+      const data = await getData<{success: boolean; roster: RosterMember[]; clanMembers: ClanMember[]; user: UserSession}>(fresh ? '/api/dkp?fresh=1' : '/api/dkp', { maxAgeMs: fresh ? 0 : maxAgeMs });
       if (!data.success) throw new Error('The roster could not be refreshed.');
       if (!activeRef.current) return;
-      setRoster(data.roster); setBossActivity(data.bossActivity ?? []); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSyncError('');
+      setRoster(data.roster); setClanMembers(data.clanMembers); setUserSession(data.user); setRosterSyncError('');
       return data.roster;
     } catch (err) {
       if (!activeRef.current) return;
@@ -249,20 +242,6 @@ function Dashboard() {
   }, [rankedToons, deferredMemberQuery]);
 
   const filteredRoster = filterAttendeeRoster(roster, pickerQuery);
-  const bossSuggestions = bossActivity
-    .filter((entry) => entry.bossName === selectedBoss)
-    .flatMap((entry) => {
-      const toon = roster.find((member) => member.rowIndex === entry.rowIndex);
-      return toon ? [{ toon, count: entry.count }] : [];
-    })
-    .sort((left, right) =>
-      right.count - left.count ||
-      (left.toon.account || left.toon.owner).localeCompare(right.toon.account || right.toon.owner, undefined, { sensitivity: 'base' }) ||
-      left.toon.owner.localeCompare(right.toon.owner, undefined, { sensitivity: 'base' }) ||
-      left.toon.rowIndex - right.toon.rowIndex
-    )
-    .slice(0, 10);
-  const highestBossActivity = bossSuggestions[0]?.count ?? 1;
   const canSubmitDkp = ['chief', 'general', 'guardian'].includes(sessionUser?.role ?? userSession?.role ?? '');
 
   const ownToons = roster.filter((toon) => userSession?.sheetRecordRows.includes(toon.rowIndex));
@@ -442,68 +421,6 @@ function Dashboard() {
                   onAddRows={(rows) => setSelectedMembers((previous) => [...new Set([...previous, ...rows])])}
                   disabled={pickerRefreshing || submitting}
                 />
-
-                <section aria-label={`Top ten ${selectedBoss} attendees`} className="mb-2 rounded-xl border border-violet-300/15 bg-gradient-to-br from-violet-950/35 via-slate-900/75 to-slate-950/70 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <BossIcon bossName={selectedBoss} className="h-10 w-10 shrink-0" />
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-white">{selectedBoss} hall of fame</h4>
-                        <p className="mt-0.5 text-[10px] text-slate-500">Top 10 by recorded appearances</p>
-                      </div>
-                    </div>
-                    {bossSuggestions.length > 0 && (
-                      <button
-                        type="button"
-                        disabled={pickerRefreshing}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => setSelectedMembers((previous) => [...new Set([...previous, ...bossSuggestions.map(({ toon }) => toon.rowIndex)])])}
-                        className="rounded-md border border-violet-200/20 bg-violet-200/[.08] px-2 py-1 text-[10px] font-bold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-300/15 disabled:opacity-50"
-                      >
-                        Add top {bossSuggestions.length}
-                      </button>
-                    )}
-                  </div>
-                  {pickerRefreshing ? (
-                    <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-400">Updating raid history…</p>
-                  ) : bossSuggestions.length > 0 ? (
-                    <div className="mt-2 grid grid-cols-2 gap-1.5 md:grid-cols-3 2xl:grid-cols-4">
-                      {bossSuggestions.map(({ toon, count }, index) => {
-                        const selected = selectedMembers.includes(toon.rowIndex);
-                        const rankStyle = index === 0
-                          ? 'border-amber-300/35 bg-amber-300/[.08] text-amber-200'
-                          : index === 1
-                            ? 'border-slate-300/25 bg-slate-300/[.06] text-slate-200'
-                            : index === 2
-                              ? 'border-orange-300/25 bg-orange-300/[.06] text-orange-200'
-                              : 'border-slate-700 bg-slate-950/60 text-slate-500';
-                        return (
-                          <button
-                            key={toon.rowIndex}
-                            type="button"
-                            aria-pressed={selected}
-                            disabled={pickerRefreshing}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => toggleMemberSelection(toon.rowIndex)}
-                            title={`${toon.account || toon.owner} · ${toon.owner}`}
-                            className={`group relative flex min-h-11 min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-left transition ${selected ? 'border-emerald-300/45 bg-emerald-300/[.08]' : 'border-slate-800/90 bg-slate-950/45 hover:border-violet-300/30 hover:bg-slate-900'}`}
-                          >
-                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[9px] font-black ${rankStyle}`}>{index + 1}</span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[11px] font-bold leading-tight text-white">{toon.account || toon.owner}</span>
-                              {toon.account && toon.owner.toLocaleLowerCase() !== toon.account.toLocaleLowerCase() && <span className="mt-0.5 block truncate text-[9px] leading-tight text-slate-500">{toon.owner}</span>}
-                            </span>
-                            <RoleBadge role={toon.subClass} gameClass compact />
-                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] font-black ${selected ? 'border-emerald-300 bg-emerald-300 text-slate-950' : 'border-slate-700 text-slate-600'}`}>{selected ? '✓' : '+'}</span>
-                            <span className="absolute inset-x-0 bottom-0 h-[2px] bg-slate-800/80"><span className={`block h-full ${index === 0 ? 'bg-gradient-to-r from-amber-300 to-yellow-100' : 'bg-gradient-to-r from-violet-500 to-cyan-300'}`} style={{ width: `${Math.max(8, Math.round(count / highestBossActivity * 100))}%` }} /></span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="mt-2 rounded-lg bg-slate-950/40 px-2.5 py-2 text-[11px] text-slate-500">No recorded {selectedBoss} attendance yet.</p>
-                  )}
-                </section>
 
                 <div aria-live="polite" className="boss-picker-scroll mb-2 flex h-10 shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden rounded-lg border border-slate-800/80 bg-slate-950/35 px-2">
                   {selectedMembers.length > 0 ? roster.filter((toon) => selectedMembers.includes(toon.rowIndex)).map((toon) => (

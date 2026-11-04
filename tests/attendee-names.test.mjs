@@ -22,15 +22,16 @@ test('pasted names tolerate case, repeated whitespace and duplicate names withou
   assert.deepEqual(matchAttendeeNames(' \t\n', [toon('Khuno')]).rows, []);
 });
 
-test('cosine matching uses ordered bigrams and the requested 90 percent threshold', () => {
-  assert.equal(toonNameSimilarity('ABCDEFGHIJK', 'abcdefghijx'), 0.9);
-  assert.deepEqual(matchAttendeeNames('abcdefghijx', [toon('abcdefghijk')]).rows, [3]);
+test('cosine matching uses ordered bigrams and the requested 80 percent threshold', () => {
+  assert.equal(toonNameSimilarity('ABCDEF', 'abcdex'), 0.8);
+  assert.deepEqual(matchAttendeeNames('abcdex', [toon('abcdef')]).rows, [3]);
   const close = matchAttendeeNames('healsbeas', [toon('healsbeast')]);
   assert.deepEqual(close.rows, [3]);
-  assert.ok(close.fuzzy[0].similarity >= 0.9);
+  assert.ok(close.fuzzy[0].similarity >= 0.8);
   assert.equal(close.fuzzy[0].name, 'healsbeast');
-  assert.deepEqual(matchAttendeeNames('oogway75', [toon('oogway74')]).unmatched, ['oogway75']);
-  assert.ok(toonNameSimilarity('abc', 'cba') < 0.9);
+  assert.deepEqual(matchAttendeeNames('oogway75', [toon('oogway74')]).rows, [3]);
+  assert.deepEqual(matchAttendeeNames('oogwayXX', [toon('oogway74')]).unmatched, ['oogwayXX']);
+  assert.ok(toonNameSimilarity('abc', 'cba') < 0.8);
   assert.equal(toonNameSimilarity('', ''), 0);
   assert.equal(toonNameSimilarity('a', 'b'), 0);
 });
@@ -60,6 +61,21 @@ test('owner names never select all of their alts; only blank toon names fall bac
 
 test('an exact multiword toon pasted alone remains one identity', () => {
   assert.deepEqual(matchAttendeeNames(' Moon Blade ', [toon('Moon Blade'), toon('Moon', 4)]).rows, [3]);
+});
+
+test('compact pasted names match sheet names containing spaces as exact matches', () => {
+  const roster = [toon('icy magic'), toon('heals beast', 4), toon('Vexana', 5)];
+  const matches = matchAttendeeNames('icymagic healsbeast vexana', roster);
+  assert.deepEqual(matches.rows, [3, 4, 5]);
+  assert.deepEqual(matches.fuzzy, []);
+  assert.equal(toonNameSimilarity(' ICY MAGIC ', 'icymagic'), 1);
+  assert.deepEqual(filterAttendeeRoster(roster, 'icymagic'), [roster[0]]);
+});
+
+test('names identical after removing spaces require manual selection', () => {
+  const matches = matchAttendeeNames('icymagic', [toon('icy magic'), toon('IcyMagic', 4)]);
+  assert.deepEqual(matches.rows, []);
+  assert.deepEqual(matches.ambiguous, ['icymagic']);
 });
 
 test('manual search keeps owner, toon, and role filters and includes fuzzy toon matches', () => {
