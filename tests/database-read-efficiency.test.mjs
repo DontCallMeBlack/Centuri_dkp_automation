@@ -170,6 +170,13 @@ test('readded toons do not inherit weekly eligibility from before their removal'
     { points: 5, createdAt: new Date('2026-10-20'), participants: [toon] },
     { points: 7, createdAt: new Date('2026-10-22'), participants: [toon] },
   ];
-  state.lifecycles = [{ identityKey: getSheetRecordKey(toon), createdAt: new Date('2026-10-21') }];
+  state.lifecycles = [{ action: 'remove', identityKey: getSheetRecordKey(toon), createdAt: new Date('2026-10-21') }];
   assert.deepEqual(await getRosterWithWeeklyEarned([toon]), [{ ...toon, weeklyEarned: 7 }]);
+});
+
+test('first-time toons retain weekly eligibility for kills before they were added to the sheet', async () => {
+  const { getSheetRecordKey } = await import('../lib/sheetRecordLinks.ts');
+  state.awards = [{ points: 5, createdAt: new Date('2026-10-20'), participants: [toon] }];
+  state.lifecycles = [{ action: 'create', identityKey: getSheetRecordKey(toon), createdAt: new Date('2026-10-21') }];
+  assert.deepEqual(await getRosterWithWeeklyEarned([toon]), [{ ...toon, weeklyEarned: 5 }]);
 });

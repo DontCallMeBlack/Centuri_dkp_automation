@@ -109,6 +109,41 @@ test('a toon added again through the app can earn DKP on newer kills', async () 
   assert.deepEqual(state.adjustments.map(({ account, points }) => [account, points]), [['Moonblade', 1]]);
 });
 
+test('a newly created toon earns DKP when added to an existing kill', async () => {
+  state.award.participants = [state.roster[1]];
+  state.removals = [{ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'create',
+    identityKey: getSheetRecordKey(state.roster[0]), createdAt: new Date(state.award.createdAt.getTime() + 1_000) }];
+  const response = await PATCH(request([3, 4]));
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.deepEqual(state.adjustments.map(({ account, points }) => [account, points]), [['Moonblade', 1]]);
+  assert.match(body.message, /1 toon\(s\) had DKP adjusted/);
+});
+
+test('removing a newly created toon from an earlier kill reverses its DKP', async () => {
+  state.award.participants = [...state.roster];
+  state.removals = [{ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), action: 'create',
+    identityKey: getSheetRecordKey(state.roster[0]), createdAt: new Date(state.award.createdAt.getTime() + 1_000) }];
+  const req = new Request(request([4]), { body: JSON.stringify({
+    awardId: '100000000000000000000001', requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', selectedRows: [4],
+    removalReasons: [{ owner: 'Ada', account: 'Moonblade', reason: "didn't attend" }],
+  }) });
+  const response = await PATCH(req);
+  assert.equal(response.status, 200, JSON.stringify(await response.json()));
+  assert.deepEqual(state.adjustments.map(({ account, points }) => [account, points]), [['Moonblade', -1]]);
+});
+
+test('recreating a removed toon still excludes kills before it rejoined', async () => {
+  state.award.participants = [state.roster[1]];
+  delete state.removals[0].restoredAt;
+  // Return creations before removals to ensure database order does not affect the cutoff.
+  state.removals.unshift({ ...state.removals[0], action: 'create',
+    createdAt: new Date(state.award.createdAt.getTime() + 1_000) });
+  const response = await PATCH(request([3, 4]));
+  assert.equal(response.status, 200, JSON.stringify(await response.json()));
+  assert.deepEqual(state.adjustments, []);
+});
+
 test('deleting an old kill does not subtract forfeited points from a readded toon', async () => {
   state.award.participants = [...state.roster];
   delete state.removals[0].restoredAt;
