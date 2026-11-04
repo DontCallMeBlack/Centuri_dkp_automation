@@ -85,6 +85,15 @@ test('initial load excludes resolved history but preserves every outstanding wor
   assert.equal(result.auctions.find(a=>a.id===at(id(5))).canResolveNoBid,true);
 });
 
+test('Generals and Guardians see the shared no-bid follow-up', async()=>{
+  state.auctions=[auction(5,{status:'completed'})];
+  for (const role of ['general','guardian']) {
+    state.user={...state.user, role};
+    const result=await read('');
+    assert.equal(result.auctions.find(a=>a.id===at(id(5))).canResolveNoBid,true);
+  }
+});
+
 test('live view never caps active records at the newest 100',async()=>{
   state.auctions=Array.from({length:140},(_,n)=>auction(n+1));
   assert.equal((await read('')).auctions.length,140);

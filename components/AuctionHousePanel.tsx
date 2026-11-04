@@ -1086,6 +1086,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                         ? `Mailed · ${auction.bossType}`
                         : `Awaiting mail · ${auction.bossType}`}
                     </p>
+                    {auction.deliveryStatus === 'done' && auction.deliveredBy && (
+                      <p className="mt-1 text-[11px] text-emerald-300">Mailed by {auction.deliveredBy}</p>
+                    )}
                   </div>
                   <span className="shrink-0 rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-bold tabular-nums text-amber-200">
                     −{auction.winner?.amount.toLocaleString()} DKP
