@@ -11,7 +11,7 @@ import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
 import AuctionCreationRequest from '@/lib/models/AuctionCreationRequest';
 import { isDkpRequestId } from '@/lib/bossDkp';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
-import { readHistoryPage, historyCursor, HISTORY_PAGE_SIZE } from '@/lib/historyPagination';
+import { readHistoryPage, historyCursor } from '@/lib/historyPagination';
 import { getSessionUser } from '@/lib/auth/session';
 import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot, withDkpLedgerLock } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
@@ -30,6 +30,7 @@ import { requireRosterValues } from '@/lib/sheetRoster';
 import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 import {
   AUCTION_DURATION_MS,
+  AUCTION_HISTORY_PAGE_SIZE,
   AUCTION_WEEKLY_MINIMUM,
   getAuctionBidEndTime,
   normalizeAuctionBossType,
@@ -217,12 +218,12 @@ async function getAuctionHistory(url: URL, user: AuctionReader) {
     status: 'completed',
     ...(onlyWins ? { 'winner.userId': user._id } : {}),
     ...readHistoryPage(url),
-  }).sort({ createdAt: -1, _id: -1 }).limit(HISTORY_PAGE_SIZE + 1).lean();
-  const page = records.slice(0, HISTORY_PAGE_SIZE);
+  }).sort({ createdAt: -1, _id: -1 }).limit(AUCTION_HISTORY_PAGE_SIZE + 1).lean();
+  const page = records.slice(0, AUCTION_HISTORY_PAGE_SIZE);
   return NextResponse.json({
     success: true,
     auctions: await serializeReadAuctions(page, user),
-    nextCursor: records.length > HISTORY_PAGE_SIZE ? historyCursor(page[page.length - 1]) : null,
+    nextCursor: records.length > AUCTION_HISTORY_PAGE_SIZE ? historyCursor(page[page.length - 1]) : null,
   }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 

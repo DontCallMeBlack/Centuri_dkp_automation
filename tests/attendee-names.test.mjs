@@ -85,3 +85,33 @@ test('manual search keeps owner, toon, and role filters and includes fuzzy toon 
   assert.deepEqual(filterAttendeeRoster(roster, 'other'), [roster[1]]);
   assert.deepEqual(filterAttendeeRoster(roster, '  '), roster);
 });
+
+test('longer names tolerate a missing, extra, replaced, or swapped letter', () => {
+  const roster = [toon('crizivia')];
+  for (const input of ['crizvia', 'criziivia', 'crizivie', 'crizivai']) {
+    const matches = matchAttendeeNames(input, roster);
+    assert.deepEqual(matches.rows, [3], input);
+    assert.deepEqual(matches.unmatched, [], input);
+    assert.ok(matches.fuzzy[0].similarity >= 0.8, input);
+    assert.deepEqual(filterAttendeeRoster(roster, input), roster, input);
+  }
+});
+
+test('a clear best spelling wins over a weaker candidate, while equally close names require review', () => {
+  assert.deepEqual(matchAttendeeNames('abcdefghij', [toon('abcdefghiX'), toon('abcdefghXY', 4)]).rows, [3]);
+  const tied = matchAttendeeNames('crizvia', [toon('crizivia'), toon('crizvian', 4)]);
+  assert.deepEqual(tied.rows, []);
+  assert.deepEqual(tied.ambiguous, ['crizvia']);
+});
+
+test('very short names stay exact and similar letter patterns cannot bypass typo limits', () => {
+  assert.deepEqual(matchAttendeeNames('rxmm', [toon('rxm')]).rows, []);
+  assert.deepEqual(matchAttendeeNames('ftw', [toon('ftx')]).rows, []);
+  assert.deepEqual(matchAttendeeNames('aaaaaaaa', [toon('aaaa')]).rows, []);
+  assert.deepEqual(matchAttendeeNames('abcabc', [toon('bcabca')]).rows, []);
+});
+
+test('two typos are accepted in a long name but rejected in a short name', () => {
+  assert.deepEqual(matchAttendeeNames('nitrorngrr', [toon('nitroranger')]).rows, [3]);
+  assert.deepEqual(matchAttendeeNames('crzxvia', [toon('crizivia')]).rows, []);
+});

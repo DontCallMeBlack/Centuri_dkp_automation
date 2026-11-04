@@ -45,7 +45,7 @@ export default function AttendeeSearch({ roster, value, onChange, onAddRows, dis
         className="h-9 w-full rounded-lg border border-slate-700 bg-slate-950/60 pl-9 pr-3 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-indigo-400 disabled:opacity-60"
       />
     </label>
-    <p className="mt-1.5 text-[11px] text-slate-500">Paste space-separated names to select attendees. Spaces within toon names are ignored; close spellings match at {ATTENDEE_SIMILARITY_THRESHOLD * 100}% similarity.</p>
+    <p className="mt-1.5 text-[11px] text-slate-500">Paste space-separated names to select attendees. Spaces are ignored; longer names allow small typos at {ATTENDEE_SIMILARITY_THRESHOLD * 100}% similarity.</p>
     {result && <div role="status" className="mt-2 space-y-1 break-words rounded-lg border border-slate-700 bg-slate-950/40 px-3 py-2 text-[11px] text-slate-300">
       <p>{result.matchedCount} name{result.matchedCount === 1 ? '' : 's'} matched. Review selected attendees before saving.</p>
       {result.fuzzy.length > 0 && <p className="text-indigo-200">Close matches: {result.fuzzy.map((match) => `${match.input} → ${match.name} (${Math.round(match.similarity * 100)}%)`).join(', ')}</p>}
