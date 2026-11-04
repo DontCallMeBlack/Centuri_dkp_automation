@@ -6,7 +6,7 @@ const origin = process.env.PERF_ORIGIN || 'http://localhost:3105';
 const names = 'Druidprov8 khuno bulajing rxm note3 crizvia healsbeast incin nitroranger rasberries icymagic montage pogba ftw salhorgordon draculaX oogway74 Vexana';
 const user = { id: '100000000000000000000001', nickname: 'Test Chief', role: 'chief', sheetRecordRows: [3] };
 const roster = [...names.split(' '), 'Unrelated', 'healsbeastz'].map((account, index) => ({
-  rowIndex: index + 3, owner: `Owner ${index}`, account: account === 'icymagic' ? 'icy magic' : account, subClass: 'Ranger',
+  rowIndex: index + 3, owner: `Owner ${index}`, account: account === 'icymagic' ? 'icy magic' : account === 'crizvia' ? 'crizivia' : account, subClass: 'Ranger',
   available: 100, earned: 100, spent: 0, weeklyEarned: 19, weeklySpent: 0, fiveWeekActivity: 14, dkpIssues: [],
 }));
 const paste = (input, text) => input.evaluate((element, value) => {
@@ -53,6 +53,7 @@ const paste = (input, text) => input.evaluate((element, value) => {
       await dialog.getByRole('button', { name: /Unrelated/ }).click();
       await paste(input, names);
       await dialog.getByRole('status').filter({ hasText: '18 names matched.' }).waitFor();
+      await dialog.getByRole('status').filter({ hasText: 'crizvia → crizivia' }).waitFor();
       await dialog.getByRole('button', { name: 'Record kill · 19 toons', exact: true }).waitFor();
       assert.equal(await input.inputValue(), '');
       await paste(input, names.toUpperCase());

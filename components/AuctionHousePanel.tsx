@@ -294,7 +294,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [archiveLoaded, setArchiveLoaded] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveCursor, setArchiveCursor] = useState<string | null>(null);
-  const archivePageCount = useRef(1);
   const archiveLoadedRef = useRef(false);
   const archiveSequence = useRef(0);
   const [selectedToons, setSelectedToons] = useState<Record<string, number>>({});
@@ -497,7 +496,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archivePageCount.current = 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
+    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);
@@ -509,19 +508,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     setArchiveLoading(true);
     setError('');
     try {
-      let cursor = append ? archiveCursor : null;
-      const combined: Auction[] = [];
-      const pages = append ? 1 : archivePageCount.current;
-      for (let page = 0; page < pages; page += 1) {
-        const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
-        const result = await getData<AuctionHistory>(`/api/auction?includeArchive=1${suffix}`);
-        if (version !== clientDataVersion() || sequence !== archiveSequence.current) return;
-        combined.push(...result.auctions); cursor = result.nextCursor ?? null;
-        if (!cursor) break;
-      }
-      if (append) archivePageCount.current += 1;
-      setArchiveCursor(cursor);
-      setArchiveAuctions((previous) => [...new Map([...(append ? previous : []), ...combined].map((auction) => [auction.id, auction])).values()]);
+      const suffix = append && archiveCursor ? `&cursor=${encodeURIComponent(archiveCursor)}` : '';
+      const result = await getData<AuctionHistory>(`/api/auction?includeArchive=1${suffix}`);
+      if (version !== clientDataVersion() || sequence !== archiveSequence.current) return;
+      setArchiveCursor(result.nextCursor ?? null);
+      setArchiveAuctions((previous) => [...new Map([...(append ? previous : []), ...result.auctions].map((auction) => [auction.id, auction])).values()]);
       archiveLoadedRef.current = true;
       setArchiveLoaded(true);
     } catch (historyError) {
@@ -532,7 +523,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    if (auctionView === 'all' && !archiveLoading) {
+    if (auctionView === 'all' && !archiveLoadedRef.current && !archiveLoading) {
       void loadFullAuctionHistory();
     }
   }, [auctionView]);
@@ -800,16 +791,18 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
   );
-  const allAuctions = [...new Map(
+  const auctionsById = new Map(
     [...archiveAuctions, ...data.auctions].map((auction) => [auction.id, auction]),
-  ).values()];
-  const wonAuctions = [...new Map([...wonHistory, ...allAuctions].map((auction) => [auction.id, auction])).values()]
+  );
+  const allAuctions = [...auctionsById.values()];
+  const historyAuctions = archiveAuctions.map((auction) => auctionsById.get(auction.id) ?? auction);
+  const wonAuctions = wonHistory.map((auction) => auctionsById.get(auction.id) ?? auction)
     .filter((auction) => auction.status === 'completed' && auction.isWinner && auction.winner);
   const auctionHolders = [...new Set(allAuctions.flatMap((auction) => {
     const bid = auction.winner ?? auction.highBid;
     return bid ? [bid.nickname] : [];
   }))].sort((first, second) => first.localeCompare(second));
-  const filteredAuctions = allAuctions.filter((auction) =>
+  const filteredAuctions = (auctionView === 'all' ? historyAuctions : allAuctions).filter((auction) =>
     (!auctionRoleFilter || canRoleBid(auctionRoleFilter, auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''])) &&
     (!auctionBossFilter || auction.bossType === auctionBossFilter) &&
     (!auctionHolderFilter ||
@@ -1109,7 +1102,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-4">
-            <div><h2 className="text-lg font-bold text-white">Browse auctions</h2><p role="status" className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${allAuctions.length} total loaded`}</p></div>
+            <div><h2 className="text-lg font-bold text-white">Browse auctions</h2><p role="status" className="text-xs text-slate-500">{auctionView === 'live' ? `${liveAuctions.length} live or finalizing` : `${historyAuctions.length} history records loaded`}</p></div>
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1" role="group" aria-label="Auction views">
               <button type="button" aria-pressed={auctionView === 'live'} onClick={() => setAuctionView('live')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'live' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Live <span className="ml-1 tabular-nums opacity-75">{liveAuctions.length}</span></button>
               <button type="button" aria-pressed={auctionView === 'all'} onClick={() => setAuctionView('all')} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${auctionView === 'all' ? 'bg-indigo-500 text-white shadow' : 'text-slate-400 hover:text-white'}`}>All history</button>
@@ -1189,17 +1182,17 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         </div>}
 
         {auctionView === 'all' && archiveLoading && (
-          <p role="status" className="flex items-center gap-2 rounded-xl border border-indigo-400/20 bg-indigo-400/5 px-4 py-3 text-sm text-indigo-200"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading full auction history…</p>
+          <p role="status" className="flex items-center gap-2 rounded-xl border border-indigo-400/20 bg-indigo-400/5 px-4 py-3 text-sm text-indigo-200"><LoaderCircle className="h-4 w-4 animate-spin" /> Loading auction history…</p>
         )}
         {auctionView === 'all' && archiveLoaded && (
-          <p role="status" className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-400">{allAuctions.length} auctions loaded{archiveCursor ? ' · More history is available below.' : ' · All available history loaded.'}</p>
+          <p role="status" className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs text-slate-400">{historyAuctions.length} history records loaded{archiveCursor ? ' · Load older auctions to see more.' : ' · All available history loaded.'}</p>
         )}
         {auctionView === 'all' && archiveCursor && <button type="button" className="secondary-button w-full" disabled={archiveLoading} onClick={() => void loadFullAuctionHistory(true)}>{archiveLoading ? <LoaderCircle size={15} className="animate-spin" /> : <Clock3 size={15} />}Load older auctions</button>}
         {auctionView === 'all' && !archiveLoaded && !archiveLoading && error && (
           <button type="button" onClick={() => void loadFullAuctionHistory()} className="rounded-xl border border-red-400/20 bg-red-400/5 px-4 py-3 text-left text-sm text-red-200">History did not load. Select here to retry.</button>
         )}
 
-        {auctionView === 'all' && archiveLoaded && allAuctions.length === 0 ? (
+        {auctionView === 'all' && archiveLoaded && historyAuctions.length === 0 ? (
           <div className="rounded-2xl border border-slate-800 bg-slate-900/40 px-5 py-12 text-center">
             <Gavel className="mx-auto h-7 w-7 text-slate-600" />
             <p className="mt-3 text-sm text-slate-400">There are no auctions yet.</p>

@@ -27,7 +27,7 @@ state.model = kind => ({ find(filter = {}) {
   return {
     select(fields) { call.fields = fields; return this; },
     sort(value) { order = value; return this; },
-    limit(value) { cap = value; return this; },
+    limit(value) { cap = value; call.limit = value; return this; },
     async lean() { return (kind === 'Auction' ? state.auctions : kind === 'AuctionItem' ? state.items : [])
       .filter(row => matches(row, filter)).sort((a,b) => {
         for (const [key,direction] of Object.entries(order)) {
@@ -102,7 +102,9 @@ test('live view never caps active records at the newest 100',async()=>{
 test('history is one bounded page and skips balances, holds, and the full catalog',async()=>{
   state.auctions=Array.from({length:55},(_,n)=>auction(n+1,{status:'completed',deliveryStatus:'done'}));
   const result=await read('?includeArchive=1');
-  assert.equal(result.auctions.length,50); assert.ok(result.nextCursor);
+  assert.equal(result.auctions.length,20); assert.ok(result.nextCursor);
+  assert.deepEqual(result.auctions.map(a=>a.id),Array.from({length:20},(_,n)=>at(id(55-n))));
+  assert.equal(state.calls.find(c=>c.kind==='Auction').limit,21);
   assert.equal(state.rosterReads,0); assert.equal(state.sweeps,0);
   assert.deepEqual(state.calls.map(c=>c.kind),['Auction','AuctionItem']);
   assert.ok(state.calls[1].filter._id.$in.length===1);
@@ -143,8 +145,20 @@ test('closed history cursor pages never duplicate or omit completed records', as
   state.auctions=Array.from({length:55},(_,n)=>auction(n+1,{status:'completed',deliveryStatus:'done'}));
   const first=await read('?includeArchive=1');
   const second=await read('?includeArchive=1&cursor='+first.nextCursor);
-  assert.equal(second.auctions.length,5); assert.equal(second.nextCursor,null);
-  assert.equal(new Set([...first.auctions,...second.auctions].map(a=>a.id)).size,55);
+  const third=await read('?includeArchive=1&cursor='+second.nextCursor);
+  assert.equal(first.auctions.length,20); assert.equal(second.auctions.length,20);
+  assert.equal(third.auctions.length,15); assert.equal(third.nextCursor,null);
+  assert.equal(new Set([...first.auctions,...second.auctions,...third.auctions].map(a=>a.id)).size,55);
+});
+
+test('personal wins also load only the latest 20 belonging to the current user',async()=>{
+  state.auctions=Array.from({length:30},(_,n)=>auction(n+1,{status:'completed',winner:bid}));
+  state.auctions.push(...Array.from({length:50},(_,n)=>auction(n+31,{status:'completed',winner:{...bid,userId:id(799)}})));
+  const first=await read('?includeArchive=1&won=1');
+  const second=await read('?includeArchive=1&won=1&cursor='+first.nextCursor);
+  assert.deepEqual(first.auctions.map(a=>a.id),Array.from({length:20},(_,n)=>at(id(30-n))));
+  assert.equal(second.auctions.length,10); assert.equal(second.nextCursor,null);
+  assert.equal(state.rosterReads,0);
 });
 
 test('invalid history cursors return a validation response rather than an unhandled rejection',async()=>{
