@@ -144,8 +144,8 @@ function formatRemaining(endsAt: string, now: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainingSeconds = seconds % 60;
-  if (hours === 0) return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
-  return `${hours}h ${minutes}m ${remainingSeconds}s`;
+  if (hours === 0) return `${minutes}m ${remainingSeconds}s`;
+  return `${hours}h ${minutes}m`;
 }
 
 let clockValue = 0;
@@ -170,7 +170,7 @@ function subscribeClock(listener: () => void) {
 function AuctionCountdown({ endsAt }: { endsAt: string }) {
   const now = useSyncExternalStore(subscribeClock, readClock, serverClock);
   const endingSoon = now > 0 && new Date(endsAt).getTime() - now <= 30_000;
-  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{now ? formatRemaining(endsAt, now) : '…'}</span>;
+  return <span className={`auction-countdown inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{now ? formatRemaining(endsAt, now) : '…'}</span>;
 }
 
 function AuctionItemImage({ itemId, imageCount, alt, className, showNavigation = true, showNameOnError = false }: {itemId:string; imageCount:number; alt:string; className:string; showNavigation?:boolean; showNameOnError?:boolean}) {
@@ -1196,7 +1196,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             {auctionView === 'live' && liveAuctions.length === 0 && <button type="button" onClick={() => setAuctionView('all')} className="secondary-button mt-3">Browse auction history</button>}
           </div>
         ) : (
-          <div className="grid w-full items-start gap-3 xl:grid-cols-2">
+          <div className="mx-auto grid w-full max-w-3xl grid-cols-1 items-start gap-3">
             {visibleAuctions.map((auction) => {
               const isActive = auction.status === 'active' && !auction.biddingClosed && new Date(auction.endsAt).getTime() > now;
               const auctionRoles = auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole ?? ''];
@@ -1219,21 +1219,21 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                 <article key={auction.id} aria-labelledby={`auction-title-${auction.id}`} data-active={isActive} className="auction-card group min-w-0 overflow-hidden rounded-2xl border border-slate-800">
                   <h3 id={`auction-title-${auction.id}`} className="sr-only">{auction.itemName}</h3>
                   <header className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}
-                      {!isActive && <span className={`rounded-full px-2 py-1 text-[10px] font-bold tracking-wider ${auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>}
+                    <div className="auction-role-strip flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto" role="group" aria-label="Eligible roles" tabIndex={0}>
+                      {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass className="shrink-0" />)}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      {!isActive && <span className={`rounded-full px-2 py-1 text-[10px] font-bold tracking-wider ${auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>}
                       {isActive && active && <AuctionCountdown endsAt={auction.endsAt} />}
                       {isActive && auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="auction-remove inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-400/10 hover:text-rose-200 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`} title="Remove auction"><X className="h-4 w-4" strokeWidth={2} /></button>}
                     </div>
                   </header>
 
-                  <div className="grid items-start gap-3 px-3 pb-3 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                  <div className="grid items-start gap-3 px-3 pb-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
                     <div className="auction-item-visual min-w-0 overflow-hidden rounded-xl">
                       <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative mx-auto aspect-square w-full max-w-64 rounded-xl sm:max-w-none" />
                     </div>
-                    <div className="flex min-w-0 flex-col gap-2.5">
+                    <div className="auction-card-details flex min-w-0 flex-col gap-2.5">
                     {auction.highBid && (
                       <div className="auction-leading-bid flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border p-3" data-mine={isActive && auction.highBid.isMine}>
                         <div className="min-w-0 flex-1">
@@ -1251,42 +1251,34 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                       <p className="text-xs text-indigo-200">Reposted by {auction.deliveredBy}</p>
                     )}
 
-                    {isActive && (
+                    {isActive && eligibleToons.length > 0 && data.canBidWeekly && (
                       <div className="auction-bid-controls space-y-2.5">
-                        {eligibleToons.length > 0 && data.canBidWeekly ? (
-                          <>
-                            {eligibleToons.length === 1 ? (
-                              <div className="px-0.5 py-1">
-                                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
-                                  <p className="min-w-0 break-all text-slate-300" title={eligibleToons[0].subClass}><span className="sr-only">Bidding as </span>{eligibleToons[0].account || eligibleToons[0].owner}{auctionRoles.some((role) => normalizeAuctionRole(role) === 'everyone') && <span className="text-slate-400"> · {eligibleToons[0].subClass}</span>}</p>
-                                  <p className="text-slate-400">Max <span className="font-semibold tabular-nums text-slate-200">{toonMaximumBid(eligibleToons[0]).toLocaleString()} DKP</span></p>
-                                </div>
-                                {eligibleToons[0].roleChange && <p className="mt-1 text-[10px] text-indigo-200/80">Switches to {eligibleToons[0].roleChange.scheduledRole} on {new Date(eligibleToons[0].roleChange.effectiveAt).toLocaleDateString(undefined, { timeZone: ROLE_CHANGE_TIME_ZONE, month: 'short', day: 'numeric' })} · role change scheduled</p>}
-                              </div>
-                            ) : (
-                              <label className="block min-w-0">
-                                <span className="sr-only">Choose toon and role</span>
-                                <select aria-label="Choose toon and role to bid with" value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="h-11 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 text-base text-white outline-none focus:border-amber-200/60">
-                                  {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner} · {toon.subClass} · Max {toonMaximumBid(toon).toLocaleString()} DKP</option>)}
-                                </select>
-                              </label>
-                            )}
-                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
-                              <label className="min-w-0">
-                                <span className="sr-only">Bid amount</span>
-                                <input aria-label={`Bid on ${auction.itemName}`} aria-describedby={maxBid < minimumBid ? `bid-help-${auction.id}` : undefined} inputMode="numeric" type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="DKP amount" className="h-11 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950/70 px-3 text-base text-white outline-none placeholder:text-slate-500 focus:border-amber-200/60" />
-                              </label>
-                              <button aria-label={`Place bid on ${auction.itemName}`} disabled={saving || syncing || !lastSyncedAt || !Number.isSafeInteger(Number(bidAmounts[auction.id])) || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="primary-button auction-bid-button disabled:opacity-45">
-                                <Gavel className="h-4 w-4" /> Bid
-                              </button>
+                        {eligibleToons.length === 1 ? (
+                          <div className="px-0.5 py-1">
+                            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+                              <p className="min-w-0 break-all text-slate-300" title={eligibleToons[0].subClass}><span className="sr-only">Bidding as </span>{eligibleToons[0].account || eligibleToons[0].owner}{auctionRoles.some((role) => normalizeAuctionRole(role) === 'everyone') && <span className="text-slate-400"> · {eligibleToons[0].subClass}</span>}</p>
+                              <p className="text-slate-400">Max <span className="font-semibold tabular-nums text-slate-200">{toonMaximumBid(eligibleToons[0]).toLocaleString()} DKP</span></p>
                             </div>
-                            {maxBid < minimumBid && <p id={`bid-help-${auction.id}`} className="text-xs text-slate-400">Insufficient available DKP.</p>}
-                          </>
+                            {eligibleToons[0].roleChange && <p className="mt-1 text-[10px] text-indigo-200/80">Switches to {eligibleToons[0].roleChange.scheduledRole} on {new Date(eligibleToons[0].roleChange.effectiveAt).toLocaleDateString(undefined, { timeZone: ROLE_CHANGE_TIME_ZONE, month: 'short', day: 'numeric' })} · role change scheduled</p>}
+                          </div>
                         ) : (
-                          <p className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5 text-xs text-slate-400">
-                            {data.canBidWeekly ? (auctionRoles.some((role) => normalizeAuctionRole(role) === 'everyone') ? 'Link a toon with valid DKP to bid on this item.' : `You need a linked ${auctionRoles.join(' or ')} toon to bid.`) : `You need ${data.weeklyMinimum} weekly DKP across your toons to bid.`}
-                          </p>
+                          <label className="block min-w-0">
+                            <span className="sr-only">Choose toon and role</span>
+                            <select aria-label="Choose toon and role to bid with" value={selectedRow ?? ''} onChange={(event) => setSelectedToons((current) => ({ ...current, [auction.id]: Number(event.target.value) }))} className="h-11 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 text-base text-white outline-none focus:border-amber-200/60">
+                              {eligibleToons.map((toon) => <option key={toon.rowIndex} value={toon.rowIndex}>{toon.account || toon.owner} · {toon.subClass} · Max {toonMaximumBid(toon).toLocaleString()} DKP</option>)}
+                            </select>
+                          </label>
                         )}
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                          <label className="min-w-0">
+                            <span className="sr-only">Bid amount</span>
+                            <input aria-label={`Bid on ${auction.itemName}`} aria-describedby={maxBid < minimumBid ? `bid-help-${auction.id}` : undefined} inputMode="numeric" type="number" min={minimumBid} max={maxBid} step={1} value={bidAmounts[auction.id] ?? ''} onChange={(event) => setBidAmounts((current) => ({ ...current, [auction.id]: event.target.value }))} placeholder="DKP amount" className="h-11 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950/70 px-3 text-base text-white outline-none placeholder:text-slate-500 focus:border-amber-200/60" />
+                          </label>
+                          <button aria-label={`Place bid on ${auction.itemName}`} disabled={saving || syncing || !lastSyncedAt || !Number.isSafeInteger(Number(bidAmounts[auction.id])) || !selectedToon || maxBid < minimumBid || Number(bidAmounts[auction.id]) < minimumBid || Number(bidAmounts[auction.id]) > maxBid} onClick={() => void submitBid(auction)} className="primary-button auction-bid-button disabled:opacity-45">
+                            <Gavel className="h-4 w-4" /> Bid
+                          </button>
+                        </div>
+                        {maxBid < minimumBid && <p id={`bid-help-${auction.id}`} className="text-xs text-slate-400">Insufficient available DKP.</p>}
                       </div>
                     )}
 
