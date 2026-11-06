@@ -66,7 +66,10 @@
 .workspace .auction-card[data-active='true'] { border-color: #dfbd8038; }
 .workspace .auction-card:hover { transform: none; box-shadow: 0 8px 24px #00000020; }
 .workspace .auction-card > header { padding: 8px 12px; margin: 0; }
-.workspace .auction-card > header .role-badge { max-width: 100%; }
+.workspace .auction-role-strip .role-badge { max-width: none; }
+.workspace .auction-role-strip { scrollbar-width: thin; scrollbar-color: #dfbd8050 transparent; }
+.workspace .auction-role-strip:focus-visible { outline: 2px solid #e2c18a; outline-offset: 2px; border-radius: 6px; }
+.workspace .auction-card-details:empty { display: none; }
 .workspace .auction-item-visual { background: radial-gradient(ellipse at 50% 35%, #dfbd8010, #080f1980 75%); border: 1px solid #a6bcd312; }
 .workspace .auction-card img, .workspace .auction-card:hover img { transform: none; }
 .workspace .auction-card .auction-item-image > img { object-fit: contain; }
