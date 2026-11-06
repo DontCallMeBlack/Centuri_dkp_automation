@@ -1,15 +1,19 @@
 'use client';
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useRouter } from 'next/navigation';
-import { CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Filter, Gavel, ImageOff, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trophy, X } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import AuctionItemImage from '@/components/AuctionItemImage';
+import AuctionPostingPanel from '@/components/AuctionPostingPanel';
+import type { AuctionCatalogItem } from '@/components/AuctionItemCreateForm';
+import { CalendarClock, Check, ChevronDown, ChevronUp, Clock3, Filter, Gavel, LoaderCircle, PackageCheck, Plus, RefreshCw, Search, ShieldAlert, Trophy, X } from 'lucide-react';
 import LoadingSurface from '@/components/LoadingSurface';
 import EmptyState from '@/components/EmptyState';
 import RoleBadge from '@/components/RoleBadge';
 import RosterDataIssues from '@/components/RosterDataIssues';
 import type { DkpCellIssue } from '@/lib/sheetRoster';
 import { ApiError, getData, clientDataVersion, peekData, rememberData, clearClientData, notifyDkpChanged } from '@/lib/client/api';
-import { normalizeAuctionRole, canRoleBid, resolveItemSubroles } from '@/lib/auctionRules';
+import { normalizeAuctionRole, canRoleBid } from '@/lib/auctionRules';
 import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
@@ -173,85 +177,6 @@ function AuctionCountdown({ endsAt }: { endsAt: string }) {
   return <span className={`auction-countdown inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 font-mono text-xs font-bold tabular-nums ${endingSoon ? 'animate-pulse border-rose-300/30 bg-rose-950/35 text-rose-200' : 'border-slate-700 bg-slate-950/60 text-slate-200'}`}><Clock3 className="h-3 w-3" />{now ? formatRemaining(endsAt, now) : '…'}</span>;
 }
 
-function AuctionItemImage({ itemId, imageCount, alt, className, showNavigation = true, showNameOnError = false }: {itemId:string; imageCount:number; alt:string; className:string; showNavigation?:boolean; showNameOnError?:boolean}) {
-  const imageContainerRef = useRef<HTMLDivElement>(null);
-  const [imageIndex, setImageIndex] = useState(0);
-  const [readyItemId, setReadyItemId] = useState<string | null>(null);
-  const [loadedSource, setLoadedSource] = useState<string | null>(null);
-  const [failedSource, setFailedSource] = useState<string | null>(null);
-  const total = Math.max(1,imageCount);
-  const source = `/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`;
-  const shouldLoad = readyItemId === itemId;
-  const loaded = loadedSource === source;
-  const failed = failedSource === source;
-
-  useEffect(() => {
-    setImageIndex(0);
-    const container = imageContainerRef.current;
-    if (!container) return;
-    if (!('IntersectionObserver' in window)) {
-      setReadyItemId(itemId);
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        setReadyItemId(itemId);
-        observer.disconnect();
-      }
-    }, { rootMargin: '220px 0px' });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [itemId]);
-
-  const changeImage = (index:number) => setImageIndex(index);
-  return <div className={`${className} relative overflow-hidden`}>
-    <div ref={imageContainerRef} className="pointer-events-none absolute inset-0" aria-hidden="true" />
-    {!failed && shouldLoad && <img src={source} alt={`${alt}, image ${imageIndex+1}`} loading="lazy" decoding="async" onLoad={() => setLoadedSource(source)} onError={() => setFailedSource(source)} className={`h-full w-full object-cover transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`} />}
-    {!loaded && !failed && <div className="pointer-events-none absolute inset-0 grid place-items-center overflow-hidden bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.2)_0%,rgba(15,23,42,0.92)_58%,rgba(2,6,23,1)_100%)]" aria-hidden="true">
-      <div className="absolute inset-x-[18%] top-1/2 h-px bg-gradient-to-r from-transparent via-amber-200/35 to-transparent" />
-      <div className="relative grid h-9 w-9 place-items-center rounded-2xl border border-amber-200/25 bg-slate-950/55 text-amber-200 shadow-[0_0_28px_rgba(251,191,36,0.16)] animate-pulse">
-        <Sparkles className="h-4 w-4" />
-      </div>
-    </div>}
-    {failed && <div role="img" aria-label={`${alt}: image unavailable`} className="flex h-full min-h-10 flex-col items-center justify-center gap-1 text-[9px] text-slate-500"><ImageOff size={17} />{showNameOnError && <span className="max-w-full break-words px-3 text-center text-sm font-semibold text-slate-200">{alt}</span>}<span>Image unavailable</span></div>}
-    {showNavigation && total > 1 && <ImageNavigation imageIndex={imageIndex} imageTotal={total} setImageIndex={changeImage} />}
-  </div>;
-}
-
-function ImageNavigation({
-  imageIndex,
-  imageTotal,
-  setImageIndex,
-}: {
-  imageIndex: number;
-  imageTotal: number;
-  setImageIndex: (index: number) => void;
-}) {
-  return (
-    <>
-      <button
-        type="button"
-        aria-label="Previous item image"
-        onClick={() => setImageIndex((imageIndex + imageTotal - 1) % imageTotal)}
-        className="absolute left-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-slate-950/80 text-white shadow-lg backdrop-blur hover:bg-slate-800"
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </button>
-      <span className="absolute bottom-1 right-1 rounded-full border border-white/10 bg-slate-950/80 px-2 py-0.5 text-[10px] font-semibold text-white shadow-lg">
-        {imageIndex + 1}/{imageTotal}
-      </span>
-      <button
-        type="button"
-        aria-label="Next item image"
-        onClick={() => setImageIndex((imageIndex + 1) % imageTotal)}
-        className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-slate-950/80 text-white shadow-lg backdrop-blur hover:bg-slate-800"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </button>
-    </>
-  );
-}
-
 export default function AuctionHousePanel({ active = true }: { active?: boolean }) {
   const sessionUser = useSessionUser();
   const activeRef = useRef(active);
@@ -274,7 +199,8 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
-  const [postFormOpen, setPostFormOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const postFormOpen = searchParams.get('tab') === 'post' && Boolean(data?.manager);
   const [todoListOpen, setTodoListOpen] = useState(false);
   const [wonItemsOpen, setWonItemsOpen] = useState(false);
   const [wonHistory, setWonHistory] = useState<Auction[]>([]);
@@ -283,8 +209,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [wonLoaded, setWonLoaded] = useState(false);
   const wonSequence = useRef(0);
   const [selectedItemId, setSelectedItemId] = useState('');
-  const [itemSearch, setItemSearch] = useState('');
-  const [itemResultLimit, setItemResultLimit] = useState(40);
   const [auctionRoleFilter, setAuctionRoleFilter] = useState('');
   const [auctionBossFilter, setAuctionBossFilter] = useState('');
   const [auctionHolderFilter, setAuctionHolderFilter] = useState('');
@@ -496,7 +420,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setError(''); setNotice(''); };
+    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setSelectedItemId(''); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);
@@ -592,8 +516,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           canResolveNoBid: false,
         });
       }
+      setAuctionView('live');
+      setSelectedItemId('');
       setNotice('Auction posted for 24 hours. Bids in the final 5 minutes leave 5 minutes on the clock.');
-      setPostFormOpen(false);
+      router.replace('/dashboard?view=auction', { scroll: false });
       refreshInBackground('Auction posted.');
     } catch (submitError) {
       setNotice('');
@@ -782,12 +708,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
     </div>;
   }
 
-  const filteredItems = data.items.filter((item) =>
-    item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()),
-  );
-  const visibleItems = filteredItems.slice(0, itemResultLimit);
-  const selectedCatalogItem = data.items.find((item) => item.id === selectedItemId);
-  const selectedItemRoleIsValid = Boolean(selectedCatalogItem && resolveItemSubroles(selectedCatalogItem.requiredRoles));
   const todoTasks = data.auctions.filter((auction) =>
     auction.canResolveNoBid || auction.canMarkDelivered,
   );
@@ -845,23 +765,19 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
             <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Weekly DKP</p><p className="mt-0.5 text-lg font-black tabular-nums text-white">{lastSyncedAt ? data.weeklyEarnedTotal.toLocaleString() : '\u2014'} <span className="text-xs font-semibold text-slate-500">/ {data.weeklyMinimum.toLocaleString()}</span></p></div>
             <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Live auctions</p><p className="mt-0.5 text-lg font-black tabular-nums text-emerald-300">{liveAuctions.length}</p></div>
-            {data.manager && (
-              <button
-                type="button"
-                onClick={() => setPostFormOpen((open) => !open)}
-                aria-expanded={postFormOpen}
-                aria-controls="auction-post-form"
-                aria-label={postFormOpen ? 'Close auction post form' : 'Post an auction'}
-                className="primary-button col-span-2 shrink-0 sm:col-span-1"
-              >
-                {postFormOpen ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                <span>{postFormOpen ? 'Close form' : 'Post auction'}</span>
-              </button>
+            {data.manager && !postFormOpen && (
+              <Link href="/dashboard?view=auction&tab=post" scroll={false} className="primary-button col-span-2 shrink-0 sm:col-span-1">
+                <Plus className="h-4 w-4" /><span>Post auction</span>
+              </Link>
             )}
           </div>
         </div>
       </section>
 
+      {data.manager && <nav aria-label="Auction workspace" className="auction-workspace-tabs">
+        <Link href="/dashboard?view=auction" scroll={false} aria-current={!postFormOpen ? 'page' : undefined}><Gavel size={15} />Auction house<span>{liveAuctions.length}</span></Link>
+        <Link href="/dashboard?view=auction&tab=post" scroll={false} aria-current={postFormOpen ? 'page' : undefined}><Plus size={15} />Post auction</Link>
+      </nav>}
       {!data.manager && (
         <p className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
           Auction posting is available to Chiefs, Generals, and Guardians.
@@ -887,94 +803,27 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         </p>
       )}
 
-      {data.manager && postFormOpen && (
-        <section id="auction-post-form" className="rounded-2xl border border-emerald-400/20 bg-slate-900/60 p-5 shadow-lg sm:p-6">
-          <div className="mb-5 flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><Sparkles className="h-4 w-4" /></div>
-            <div>
-              <h3 className="font-bold text-white">Post an auction</h3>
-              <p className="text-xs text-slate-400">24-hour auction · bids in the final 5 minutes extend the clock to 5 minutes</p>
-            </div>
-          </div>
-          <form onSubmit={submitAuction} className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-300" htmlFor="auction-item">Item</label>
-              <div className="space-y-2">
-                  <label className="relative block">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                    <input
-                      id="auction-item"
-                      type="search"
-                      autoComplete="off"
-                      value={itemSearch}
-                      onChange={(event) => {
-                        setItemSearch(event.target.value);
-                        setItemResultLimit(40);
-                      }}
-                      placeholder="Search saved items..."
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-9 pr-3.5 text-sm text-white outline-none placeholder:text-slate-500 focus:border-emerald-400/60"
-                    />
-                  </label>
-                  <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/70">
-                    {filteredItems.length === 0 ? (
-                      <p className="px-3 py-4 text-center text-xs text-slate-500">
-                        {data.items.length === 0 ? 'No saved items yet. Ask a Chief, General, or Guardian to add one from the Item catalog.' : 'No items match your search.'}
-                      </p>
-                    ) : visibleItems.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        aria-pressed={selectedItemId === item.id}
-                        onClick={() => setSelectedItemId(item.id)}
-                        className={`group flex w-full items-center gap-3 border-b border-slate-800/70 px-3 py-2 text-left last:border-b-0 transition-colors ${selectedItemId === item.id ? 'bg-emerald-400/10 shadow-[inset_0_0_0_1px_rgba(52,211,153,0.22)]' : 'hover:bg-slate-800/70'}`}
-                      >
-                        <AuctionItemImage
-                          itemId={item.id}
-                          showNavigation={false}
-                          imageCount={item.imageCount}
-                          alt={item.name}
-                          className="h-10 w-10 shrink-0 rounded-lg bg-slate-900"
-                        />
-                        <span title={item.name} className="min-w-0 flex-1 break-words text-xs font-medium leading-snug text-slate-200">{item.name}</span>
-                        <span className="max-w-28 shrink-0 break-words text-right text-[10px] leading-snug text-slate-500">{item.requiredRoles.join(' / ') || 'Role not set'} · {item.bossType}</span>
-                        {selectedItemId === item.id && <span aria-label="Chosen for auction" title="Chosen for auction" className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-emerald-300/60 bg-emerald-400/15 text-emerald-200 shadow-[0_0_18px_rgba(52,211,153,0.2)]"><Check className="h-4 w-4" strokeWidth={3} /></span>}
-                      </button>
-                    ))}
-                  </div>
-                  {filteredItems.length > visibleItems.length && (
-                    <button
-                      type="button"
-                      onClick={() => setItemResultLimit((limit) => limit + 40)}
-                      className="w-full rounded-lg border border-slate-800 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-                    >
-                      Show more ({filteredItems.length - visibleItems.length} remaining)
-                    </button>
-                  )}
-              </div>
-              {selectedCatalogItem && !selectedItemRoleIsValid && (
-                <p role="alert" className="rounded-lg border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-xs leading-snug text-amber-200">
-                  {selectedCatalogItem.requiredRoles.length
-                    ? 'Choose supported subroles with icons in Items before posting.'
-                    : 'A role must be set for this item in Items before it can be posted.'}
-                </p>
-              )}
-            </div>
-            <button
-              type="submit"
-              disabled={saving || !selectedCatalogItem || !selectedItemRoleIsValid}
-              className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition sm:col-span-2 ${
-                saving || !selectedCatalogItem || !selectedItemRoleIsValid
-                  ? 'cursor-not-allowed border border-slate-700 bg-slate-800 text-slate-400'
-                  : 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-lg shadow-emerald-950/30 hover:from-emerald-400 hover:to-green-400'
-              }`}
-            >
-              {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Gavel className="h-4 w-4" />}
-              {saving ? 'Posting auction...' : !selectedCatalogItem ? 'Choose an item to post' : !selectedItemRoleIsValid ? 'Set item roles before posting' : 'Post 24-hour auction'}
-            </button>
-          </form>
-        </section>
-      )}
-
+      {postFormOpen ? (
+        <AuctionPostingPanel
+          items={data.items}
+          selectedItemId={selectedItemId}
+          onSelect={setSelectedItemId}
+          saving={saving}
+          onSubmit={submitAuction}
+          onClose={() => router.push('/dashboard?view=auction', { scroll: false })}
+          onItemCreated={(item: AuctionCatalogItem) => {
+            setData((current) => {
+              if (!current) return current;
+              const updated = { ...current, items: [...current.items.filter((entry) => entry.id !== item.id), item].sort((a, b) => a.name.localeCompare(b.name)) };
+              dataRef.current = updated;
+              rememberData('/api/auction', updated);
+              rememberAuctionData(updated);
+              return updated;
+            });
+            setSelectedItemId(item.id);
+          }}
+        />
+      ) : <>
       {(data.manager || todoTasks.length > 0) && (
         <section className="rounded-2xl border border-amber-400/20 bg-slate-900/60 p-3 sm:p-4">
           <button
@@ -1303,6 +1152,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           </div>
         )}
       </section>
+      </>}
     </div>
   );
 }
