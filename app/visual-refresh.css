@@ -94,12 +94,12 @@
 .auction-picker-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-height: 480px; overflow-y: auto; padding: 2px; scrollbar-width: thin; scrollbar-color: #dfbd8050 transparent; }
 .auction-picker-card { min-width: 0; align-self: start; overflow: hidden; border: 1px solid #a6bcd322; border-radius: 14px; background: #0c1724; transition: border-color .18s, box-shadow .18s, transform .18s; }
 .auction-picker-card:hover { border-color: #dfbd8060; transform: translateY(-2px); }
-.auction-picker-card.is-selected { border-color: #dfbd80b0; box-shadow: 0 0 0 2px #dfbd8012, 0 6px 24px #0002; background: linear-gradient(155deg, #dfbd8010, #0c1724 80%); }
+.auction-picker-card.is-selected { border-color: #55dfaa; box-shadow: 0 0 0 2px #34d3991a, 0 6px 24px #10b98118, inset 0 1px 0 #a7f3d02b; background: linear-gradient(155deg, #173e31, #0d2923 80%); }
+.auction-picker-card.is-selected .auction-picker-image { background: radial-gradient(ellipse at 50% 40%, #34d39929, #0a211b 85%); border-bottom-color: #6ee7b733; }
+.auction-picker-card.is-selected .auction-picker-roles { color: #a7d6c4; }
 .auction-picker-image { background: radial-gradient(ellipse at 50% 40%, #dfbd8010, #080f19 85%); border-bottom: 1px solid #a6bcd312; }
 .auction-picker-image > img { object-fit: contain; padding: 8px; transition: transform .25s, opacity .2s; }
 .auction-picker-card:hover .auction-picker-image > img { transform: scale(1.04); }
-.auction-selection-mark { position: absolute; top: 9px; right: 9px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid #ffffff30; background: #08121dc0; }
-.auction-selection-mark.is-selected { border-color: #efd6a7; color: #172231; background: #efd6a7; box-shadow: 0 0 16px #dfbd8030; }
 .auction-search-empty { min-height: 330px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed #dfbd8033; border-radius: 16px; padding: 28px 20px; text-align: center; background: radial-gradient(ellipse at 50% 20%, #dfbd8008, transparent 70%); }
 .auction-field-label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: #d3dce8; }
 .auction-upload-preview { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 1; width: 100%; overflow: hidden; border: 1px dashed #dfbd8040; border-radius: 16px; background: radial-gradient(ellipse at 50% 35%, #dfbd800b, #08121e 80%); }
