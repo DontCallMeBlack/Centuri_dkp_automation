@@ -54,7 +54,7 @@ export default function AuctionPostingPanel({ items, selectedItemId, onSelect, o
           <div className="mt-5 space-y-3 border-y border-white/10 py-4"><p className="flex items-center justify-between text-xs text-slate-400"><span className="flex items-center gap-2"><Clock3 size={14} />Duration</span><span className="font-semibold text-slate-200">24 hours</span></p><p className="flex items-center gap-2 text-xs text-slate-400"><ShieldCheck size={14} className="shrink-0" />Final 5-minute bids reset the clock to 5 minutes.</p></div>
           {selected && !valid && <p role="alert" className="mt-4 text-xs leading-5 text-amber-200">Set supported subroles for this item in the item catalog before posting.</p>}
           <form onSubmit={onSubmit} className="mt-5"><button type="submit" disabled={saving || !valid} className="primary-button w-full disabled:cursor-not-allowed disabled:opacity-40">{saving ? <LoaderCircle size={16} className="animate-spin" /> : <Gavel size={16} />}{saving ? 'Posting auction…' : 'Post 24-hour auction'}<ArrowRight size={15} /></button></form>
-          <button type="button" disabled={saving} onClick={onClose} className="mt-4 flex w-full items-center justify-center gap-2 py-1 text-xs text-slate-500 transition hover:text-slate-200"><ArrowLeft size={12} />Back to auction house</button>
+          <button type="button" disabled={saving} onClick={onClose} className="mt-4 flex w-full items-center justify-center gap-2 py-1 text-xs text-slate-500 transition hover:text-slate-200"><ArrowLeft size={12} />Cancel</button>
         </div>
       </aside>
     </div>

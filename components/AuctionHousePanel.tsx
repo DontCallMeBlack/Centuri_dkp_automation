@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import Dialog from '@/components/Dialog';
 import AuctionItemImage from '@/components/AuctionItemImage';
 import AuctionPostingPanel from '@/components/AuctionPostingPanel';
 import type { AuctionCatalogItem } from '@/components/AuctionItemCreateForm';
@@ -199,8 +199,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(Date.now());
-  const searchParams = useSearchParams();
-  const postFormOpen = searchParams.get('tab') === 'post' && Boolean(data?.manager);
+  const [postFormOpen, setPostFormOpen] = useState(false);
   const [todoListOpen, setTodoListOpen] = useState(false);
   const [wonItemsOpen, setWonItemsOpen] = useState(false);
   const [wonHistory, setWonHistory] = useState<Auction[]>([]);
@@ -224,6 +223,10 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const [bidAmounts, setBidAmounts] = useState<Record<string, string>>({});
   const [auctionView, setAuctionView] = useState<'live' | 'all'>('live');
   const router = useRouter();
+
+  useEffect(() => {
+    if (!active) setPostFormOpen(false);
+  }, [active]);
 
   useEffect(() => {
     dataRef.current = data;
@@ -420,7 +423,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   };
 
   useEffect(() => {
-    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setSelectedItemId(''); setError(''); setNotice(''); };
+    const clear = () => { checkedAuctionWindows.current.clear(); lastTargetAt.current = 0; lastDiscoveryAt.current = Date.now(); wonSequence.current += 1; setWonHistory([]); setWonCursor(null); setWonLoading(false); setWonLoaded(false); setWonItemsOpen(false); initialRefreshStarted.current = false; archiveSequence.current += 1; archiveLoadedRef.current = false; setArchiveCursor(null); setArchiveLoading(false); setData(null); dataRef.current = null; setArchiveAuctions([]); setArchiveLoaded(false); setAuctionView('live'); setSelectedToons({}); setBidAmounts({}); setLastSyncedAt(0); setLoading(true); setSyncing(false); setPostFormOpen(false); setSelectedItemId(''); setError(''); setNotice(''); };
     window.addEventListener('centuri:clear-data', clear);
     return () => window.removeEventListener('centuri:clear-data', clear);
   }, []);
@@ -519,7 +522,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       setAuctionView('live');
       setSelectedItemId('');
       setNotice('Auction posted for 24 hours. Bids in the final 5 minutes leave 5 minutes on the clock.');
-      router.replace('/dashboard?view=auction', { scroll: false });
+      setPostFormOpen(false);
       refreshInBackground('Auction posted.');
     } catch (submitError) {
       setNotice('');
@@ -765,19 +768,15 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
             <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Weekly DKP</p><p className="mt-0.5 text-lg font-black tabular-nums text-white">{lastSyncedAt ? data.weeklyEarnedTotal.toLocaleString() : '\u2014'} <span className="text-xs font-semibold text-slate-500">/ {data.weeklyMinimum.toLocaleString()}</span></p></div>
             <div className="rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2.5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Live auctions</p><p className="mt-0.5 text-lg font-black tabular-nums text-emerald-300">{liveAuctions.length}</p></div>
-            {data.manager && !postFormOpen && (
-              <Link href="/dashboard?view=auction&tab=post" scroll={false} className="primary-button col-span-2 shrink-0 sm:col-span-1">
+            {data.manager && (
+              <button type="button" onClick={() => { setNotice(''); setPostFormOpen(true); }} aria-haspopup="dialog" aria-expanded={postFormOpen} className="primary-button col-span-2 shrink-0 sm:col-span-1">
                 <Plus className="h-4 w-4" /><span>Post auction</span>
-              </Link>
+              </button>
             )}
           </div>
         </div>
       </section>
 
-      {data.manager && <nav aria-label="Auction workspace" className="auction-workspace-tabs">
-        <Link href="/dashboard?view=auction" scroll={false} aria-current={!postFormOpen ? 'page' : undefined}><Gavel size={15} />Auction house<span>{liveAuctions.length}</span></Link>
-        <Link href="/dashboard?view=auction&tab=post" scroll={false} aria-current={postFormOpen ? 'page' : undefined}><Plus size={15} />Post auction</Link>
-      </nav>}
       {!data.manager && (
         <p className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
           Auction posting is available to Chiefs, Generals, and Guardians.
@@ -803,14 +802,20 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         </p>
       )}
 
-      {postFormOpen ? (
+      {active && data.manager && postFormOpen && <Dialog labelledBy="auction-post-dialog-title" busy={saving} onClose={() => setPostFormOpen(false)} className="auction-post-dialog">
+        <header className="auction-post-dialog-header">
+          <h2 id="auction-post-dialog-title" className="flex items-center gap-2 text-sm font-semibold text-amber-100"><Gavel size={17} />Post an auction</h2>
+          <button type="button" disabled={saving} onClick={() => setPostFormOpen(false)} aria-label="Close auction posting" className="auction-icon-button"><X size={18} /></button>
+        </header>
+        {error && <p role="alert" className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</p>}
+        {saving && notice && <p role="status" aria-live="polite" className="mt-4 flex items-center gap-2 text-sm text-amber-100"><LoaderCircle size={15} className="animate-spin" />{notice}</p>}
         <AuctionPostingPanel
           items={data.items}
           selectedItemId={selectedItemId}
           onSelect={setSelectedItemId}
           saving={saving}
           onSubmit={submitAuction}
-          onClose={() => router.push('/dashboard?view=auction', { scroll: false })}
+          onClose={() => setPostFormOpen(false)}
           onItemCreated={(item: AuctionCatalogItem) => {
             setData((current) => {
               if (!current) return current;
@@ -823,7 +828,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
             setSelectedItemId(item.id);
           }}
         />
-      ) : <>
+      </Dialog>}
       {(data.manager || todoTasks.length > 0) && (
         <section className="rounded-2xl border border-amber-400/20 bg-slate-900/60 p-3 sm:p-4">
           <button
@@ -1152,7 +1157,6 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           </div>
         )}
       </section>
-      </>}
     </div>
   );
 }
