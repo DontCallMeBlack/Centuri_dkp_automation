@@ -81,11 +81,8 @@
 .workspace .auction-card .auction-bid-button:disabled { background: #dfbd8033; border-color: #dfbd8026; color: #d6c4a1; opacity: 1; box-shadow: none; }
 .workspace .auction-card .auction-bid-button:hover:enabled { background: linear-gradient(120deg, #e9ca94, #fae4bb); }
 .workspace .auction-card-footer { border-top: 1px solid #a6bcd312; background: #080f192e; }
-.auction-workspace-tabs { display: flex; gap: 6px; padding: 5px; width: fit-content; max-width: 100%; border: 1px solid #a6bcd320; border-radius: 14px; background: #0a1420; }
-.auction-workspace-tabs a { display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 10px 16px; border-radius: 10px; color: #8e9db3; font-size: 12px; font-weight: 600; transition: background .18s, color .18s; }
-.auction-workspace-tabs a:hover { color: #f3e2c1; background: #ffffff05; }
-.auction-workspace-tabs a[aria-current] { background: linear-gradient(120deg, #dfbd801e, #dfbd8008); box-shadow: inset 0 0 0 1px #dfbd8030; color: #f0d6a8; }
-.auction-workspace-tabs a > span { border-radius: 5px; background: #dfbd8015; padding: 1px 6px; font-size: 10px; }
+.app-dialog.auction-post-dialog { width: min(1120px, calc(100vw - 32px)); max-width: 1120px; padding: 24px; }
+.auction-post-dialog-header { position: sticky; top: -24px; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -24px -24px 0; padding: 16px 24px; border-bottom: 1px solid #a6bcd320; background: #111e2df5; backdrop-filter: blur(16px); }
 .auction-post-intro { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; padding: 18px 0 12px; }
 .auction-post-steps { display: flex; align-items: center; gap: 10px; font-size: 10px; color: #728198; }
 .auction-post-steps > span { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
@@ -131,8 +128,8 @@
 @media (max-width: 600px) {
   .auction-picker { padding: 16px; }
   .auction-picker-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-height: 480px; }
-  .auction-workspace-tabs { width: 100%; }
-  .auction-workspace-tabs a { flex: 1; padding-inline: 8px; }
+  .app-dialog.auction-post-dialog { width: calc(100vw - 20px); padding: 16px; }
+  .auction-post-dialog-header { top: -16px; margin: -16px -16px 0; padding: 12px 16px; }
   .app-dialog.auction-create-dialog { padding: 18px; }
   .auction-upload-preview { aspect-ratio: 4 / 3; }
   .auction-item-create fieldset > div:has(> label .role-badge) { grid-template-columns: minmax(0, 1fr); }

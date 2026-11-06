@@ -15,5 +15,5 @@ export default function Dialog({ children, onClose, busy = false, labelledBy, cl
     return () => { dialog?.close(); document.body.style.overflow = overflow; previous?.focus(); };
   }, []);
   if (typeof document === 'undefined') return null;
-  return <dialog ref={ref} aria-labelledby={labelledBy} aria-busy={busy} className={`app-dialog ${className}`} onCancel={(event) => { event.preventDefault(); if (!busy) closeRef.current(); }} onClick={(event) => { if (event.target === event.currentTarget && !busy) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeRef.current(); } }}>{children}</dialog>;
+  return <dialog ref={ref} aria-labelledby={labelledBy} aria-busy={busy} className={`app-dialog ${className}`} onCancel={(event) => { event.preventDefault(); event.stopPropagation(); if (!busy) closeRef.current(); }} onClick={(event) => { if (event.target === event.currentTarget && !busy) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeRef.current(); } }}>{children}</dialog>;
 }
