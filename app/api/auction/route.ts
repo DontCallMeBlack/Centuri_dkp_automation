@@ -612,7 +612,14 @@ export async function POST(req: Request) {
           holdChanges.set(rowIndex, (holdChanges.get(rowIndex) ?? 0) + amount);
           for (const [holdRow, delta] of holdChanges) {
             const identity = holdRow === rowIndex ? toon : currentBid!;
-            const hold = await getBoundAuctionHold({ ...identity, rowIndex: holdRow }, session);
+            const releasingBid = holdRow === currentBid?.rowIndex ? currentBid : undefined;
+            const hold = await getBoundAuctionHold(
+              { ...identity, rowIndex: holdRow },
+              session,
+              delta < 0 && releasingBid
+                ? { auctionId: currentAuction._id, amount: releasingBid.amount }
+                : undefined,
+            );
             const nextHeldPoints = hold.heldPoints + delta;
             if (!Number.isSafeInteger(nextHeldPoints) || nextHeldPoints < 0) {
               throw new RequestValidationError('Auction point reservation is inconsistent. Ask a manager to review it.', 409);
