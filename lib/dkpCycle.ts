@@ -20,7 +20,8 @@ export interface WeeklyDkpActivityHistory {
 }
 
 function identityKey(record: { owner: string; account: string }) {
-  return JSON.stringify([record.owner.trim().toLowerCase(), record.account.trim().toLowerCase()]);
+  const normalize = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return JSON.stringify([normalize(record.owner), normalize(record.account)]);
 }
 
 export function buildWeeklyDkpResetPlan(

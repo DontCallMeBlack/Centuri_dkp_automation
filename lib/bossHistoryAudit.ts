@@ -20,15 +20,15 @@ const BOSS_HISTORY_ROLE_ALIASES: Record<string, string> = {
 };
 
 function getBossHistoryRoleRank(role = '') {
-  const normalizedRole = role.trim().replace(/\s+/g, ' ').toLowerCase();
+  const normalizedRole = typeof role === 'string' ? role.trim().replace(/\s+/g, ' ').toLowerCase() : '';
   const canonicalRole = BOSS_HISTORY_ROLE_ALIASES[normalizedRole] ?? normalizedRole;
   return BOSS_HISTORY_ROLE_RANK.get(canonicalRole) ?? BOSS_HISTORY_ROLE_ORDER.length;
 }
 
 export function compareBossHistoryAttendees(left: IBossAwardParticipant, right: IBossAwardParticipant) {
   return getBossHistoryRoleRank(left.subClass) - getBossHistoryRoleRank(right.subClass) ||
-    (left.account || left.owner).localeCompare(right.account || right.owner, undefined, { sensitivity: 'base' }) ||
-    left.owner.localeCompare(right.owner, undefined, { sensitivity: 'base' }) ||
+    String(left.account || left.owner || '').localeCompare(String(right.account || right.owner || ''), undefined, { sensitivity: 'base' }) ||
+    String(left.owner || '').localeCompare(String(right.owner || ''), undefined, { sensitivity: 'base' }) ||
     left.rowIndex - right.rowIndex;
 }
 

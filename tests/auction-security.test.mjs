@@ -9,6 +9,8 @@ import AuctionHold from '../lib/models/AuctionHold.ts';
 import { canRetryAuctionSettlement } from '../lib/auctionSettlement.ts';
 import { getSheetRecordKey } from '../lib/sheetRecordLinks.ts';
 import { buildDkpAdjustmentUpdates } from '../lib/dkpAccounting.ts';
+import { buildWeeklyDkpResetPlan } from '../lib/dkpCycle.ts';
+import { matchAttendeeNames } from '../lib/attendeeNames.ts';
 
 const identity = { owner: 'Ada', account: 'Main' };
 const reservation = (rowIndex, amount, account = 'Main') => ({ rowIndex, amount, owner: 'Ada', account });
@@ -77,6 +79,13 @@ test('DKP adjustments reject partial identities instead of throwing during norma
     rowIndex: 3, points: 1, mode: 'available', row: ['Ada', 'Main', '', '', '10', '0', '0'],
     owner: undefined, account: undefined, sheetName: 'Roster',
   }));
+});
+
+test('legacy attendee and weekly identities never throw on missing owner or account values', () => {
+  assert.doesNotThrow(() => matchAttendeeNames('Ada', [{ rowIndex: 3, owner: undefined, account: undefined }]));
+  assert.doesNotThrow(() => buildWeeklyDkpResetPlan([
+    { rowIndex: 3, owner: undefined, account: undefined, weeklyEarned: 0, earned: 10, available: 10, fiveWeekActivity: 0 },
+  ], 'DKP History'));
 });
 
 test('financial settlement recovery requires a senior manager and a known safe replay marker', () => {

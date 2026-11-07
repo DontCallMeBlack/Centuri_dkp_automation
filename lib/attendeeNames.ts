@@ -3,13 +3,17 @@ const MIN_MATCH_LEAD = 0.1;
 
 export interface AttendeeRosterRecord {
   rowIndex: number;
-  owner: string;
-  account: string;
+  owner: unknown;
+  account: unknown;
   subClass?: string;
 }
 
-function normalizeName(value: string) {
-  return value.normalize('NFKC').replace(/\s+/gu, '').toLowerCase();
+const safeText = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+
+function normalizeName(value: unknown) {
+  const text = safeText(value);
+  if (!text) return '';
+  return text.normalize('NFKC').replace(/\s+/gu, '').toLowerCase();
 }
 
 /** Cosine similarity of character-bigram counts; character order and digits matter. */
@@ -91,7 +95,7 @@ export interface AttendeeNameMatches {
 
 export function matchAttendeeNames(text: string, roster: AttendeeRosterRecord[]): AttendeeNameMatches {
   const result: AttendeeNameMatches = { rows: [], matchedCount: 0, fuzzy: [], unmatched: [], ambiguous: [], remaining: [] };
-  const nameOf = (record: AttendeeRosterRecord) => record.account.trim() || record.owner.trim();
+  const nameOf = (record: AttendeeRosterRecord) => safeText(record.account) || safeText(record.owner);
   // Preserve an exact toon name containing spaces when pasted on its own.
   const fullName = normalizeName(text);
   const inputs = roster.some((record) => normalizeName(nameOf(record)) === fullName)
@@ -126,7 +130,7 @@ export function filterAttendeeRoster<T extends AttendeeRosterRecord>(roster: T[]
   if (!normalized) return roster;
   const matches = (record: T, name: string) =>
     [record.account, record.owner, record.subClass ?? ''].some((value) => normalizeName(value).includes(name)) ||
-    toonNameMatchScore(name, record.account.trim() || record.owner) >= ATTENDEE_SIMILARITY_THRESHOLD;
+    toonNameMatchScore(name, safeText(record.account) || safeText(record.owner)) >= ATTENDEE_SIMILARITY_THRESHOLD;
   const fullMatches = roster.filter((record) => matches(record, normalized));
   const names = query.trim().split(/\s+/u).map(normalizeName);
   if (fullMatches.length || names.length === 1) return fullMatches;
