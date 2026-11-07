@@ -11,7 +11,7 @@ function isTransientTransactionError(error: unknown): boolean {
   if (transactionError.errorLabels?.includes('TransientTransactionError')) {
     return true;
   }
-  return new Set([24, 91, 112, 211, 244, 251, 10107]).has(transactionError.code ?? -1);
+  return new Set([24, 91, 112, 211, 244, 251, 10107, 11000]).has(transactionError.code ?? -1);
 }
 
 /** Shared write fence prevents snapshot-isolation write skew across account
