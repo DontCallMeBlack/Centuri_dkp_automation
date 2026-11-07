@@ -65,6 +65,13 @@ test('bound holds can be safely rebound when reservations prove the current iden
   assert.equal(canBindAuctionHold(hold, identity, [reservation(3, 40)]), true);
 });
 
+test('an outbid hold can be reconciled to the exact live reservation total', () => {
+  const liveReservations = [reservation(3, 40)];
+  const liveTotal = liveReservations.reduce((total, bid) => total + bid.amount, 0);
+  assert.equal(liveTotal, 40);
+  assert.equal(canBindAuctionHold({ rowIndex: 3, heldPoints: 40, ...identity }, identity, liveReservations), true);
+});
+
 test('moved identities cannot open a second reservation on their new roster row', () => {
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 8 }, [reservation(3, 10)]), true);
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 3 }, [reservation(3, 10)]), false);

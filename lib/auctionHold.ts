@@ -26,7 +26,11 @@ export async function getBoundAuctionHold(
   const reservationsMatchIdentity = rowReservations.length > 0 && rowReservations.every((reservation) =>
     getSheetRecordKey(reservation) === getSheetRecordKey(bid));
   const reservedPoints = rowReservations.reduce((sum, reservation) => sum + reservation.amount, 0);
-  if (reservationsMatchIdentity && Number.isSafeInteger(reservedPoints) && hold.heldPoints < reservedPoints) {
+  const reservationsAreValid = reservationsMatchIdentity && rowReservations.every((reservation) =>
+    Number.isSafeInteger(reservation.amount) && reservation.amount > 0) &&
+    Number.isSafeInteger(reservedPoints);
+  if (reservationsAreValid && ((release && hold.heldPoints !== reservedPoints) ||
+    (!release && hold.heldPoints < reservedPoints))) {
     hold.heldPoints = reservedPoints;
     hold.owner = bid.owner;
     hold.account = bid.account;
