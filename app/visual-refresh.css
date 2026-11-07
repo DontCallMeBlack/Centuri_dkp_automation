@@ -149,10 +149,14 @@
 .auth-grid .auth-input { height: 54px; background: #101e2d; border-color: #a6bcd335; }
 @media (max-width: 767px) {
   .workspace .workspace-content { padding: 24px 16px 40px; }
+  .workspace .workspace-content:has(.auction-page) { padding-inline: 6px; }
   .workspace .workspace-header { height: 64px; }
   .workspace .page-title { font-size: 29px; }
   .workspace .stat-card { min-height: 100px; padding: 16px 12px; }
   .workspace .stat-value { font-size: 28px; }
+  .workspace .auction-page .auction-heading > div.relative { padding-inline: 12px; }
+  .workspace .auction-card > header { padding-inline: 8px; }
+  .workspace .auction-card > .grid { padding-inline: 8px; }
   .workspace .roster-table td { padding-block: 14px; }
   .workspace .roster-table td:last-child { font-size: 14px; }
   .workspace .clan-administration > .surface { padding: 14px; }
