@@ -77,6 +77,9 @@ export async function readFormDataLimited(request: Request, maxBytes = 3 * 1024 
 export function requestErrorResponse(error: unknown, fallback: string): Response {
   if (error instanceof DkpIntegrityError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof RequestValidationError) return Response.json({ error: error.message }, { status: error.status });
+  if (error instanceof Error && ['ValidationError', 'CastError'].includes(error.name)) {
+    return Response.json({ error: error.message }, { status: 409 });
+  }
   // Never log request bodies, credentials, database URLs or provider responses.
   const mongoError = error instanceof Error
     ? error as Error & { code?: number; errorLabels?: string[]; cause?: unknown }

@@ -398,7 +398,13 @@ async function withWeeklyResetLock<T>(cacheKey: string, operation: (lockId: stri
   } finally {
     clearInterval(interval);
     await heartbeat;
-    await releaseWeeklyResetLock(cacheKey, lockId);
+    try {
+      await releaseWeeklyResetLock(cacheKey, lockId);
+    } catch (error: unknown) {
+      // The lock has a lease expiry, so cleanup failure must not turn a
+      // successfully completed mutation into a failed client request.
+      console.error('DKP ledger lock cleanup failed; the lease will expire safely.', error instanceof Error ? error.name : 'UnknownError');
+    }
   }
 }
 
