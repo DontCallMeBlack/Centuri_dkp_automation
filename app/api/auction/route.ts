@@ -611,7 +611,7 @@ export async function POST(req: Request) {
           if (currentBid) holdChanges.set(currentBid.rowIndex, -currentBid.amount);
           holdChanges.set(rowIndex, (holdChanges.get(rowIndex) ?? 0) + amount);
           for (const [holdRow, delta] of holdChanges) {
-            const identity = holdRow === rowIndex ? toon : currentBid!;
+            const identity = currentBid && holdRow === currentBid.rowIndex ? currentBid : holdRow === rowIndex ? toon : currentBid!;
             const releasingBid = holdRow === currentBid?.rowIndex ? currentBid : undefined;
             const hold = await getBoundAuctionHold(
               { ...identity, rowIndex: holdRow },
