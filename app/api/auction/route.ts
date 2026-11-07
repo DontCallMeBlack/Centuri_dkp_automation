@@ -13,16 +13,15 @@ import { isDkpRequestId } from '@/lib/bossDkp';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { readHistoryPage, historyCursor } from '@/lib/historyPagination';
 import { getSessionUser } from '@/lib/auth/session';
-import { adjustPlayersDKP, getSheetRoster, getSheetRosterSnapshot, withDkpLedgerLock } from '@/lib/googleSheets';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { canRetryAuctionSettlement } from '@/lib/auctionSettlement';
-import { settleExpiredAuctions } from '@/lib/auctionSettlementWorker';
 import { getBoundAuctionHold } from '@/lib/auctionHold';
 import { canAffordBid, DkpIntegrityError } from '@/lib/dkpAccounting';
 import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
 import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
 import { readAuctionCreatorRoles } from '@/lib/auctionFollowUpReads';
 import { auctionDisplayFilter } from '@/lib/auctionReadScope';
+import { hasAuctionExpiryWork } from '@/lib/auctionExpiryWork';
 import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
@@ -59,13 +58,15 @@ async function getAuctionActor(userId: mongoose.Types.ObjectId, session: mongoos
 
 
 /** Financial work can finish after the response while the UI continues polling. */
-function scheduleExpirySweep() {
+function scheduleExpirySweep(auctions?: ReadonlyArray<Pick<IAuction, 'status' | 'endsAt'>>) {
+  if (auctions && !hasAuctionExpiryWork(auctions, Date.now())) return;
   if (expirySweepRunning || Date.now() - lastLiveExpirySweepAt < 2_000) return;
   lastLiveExpirySweepAt = Date.now();
   after(async () => {
     if (expirySweepRunning) return;
     expirySweepRunning = true;
     try {
+      const { settleExpiredAuctions } = await import('@/lib/auctionSettlementWorker');
       await settleExpiredAuctions();
     } catch (error: unknown) {
       console.error('Auction expiry sweep will retry on a later request.', error instanceof Error ? error.name : 'UnknownError');
@@ -83,22 +84,29 @@ export async function GET(request: Request) {
     if (new URL(request.url).searchParams.get('live') === '1') return getLiveAuctionUpdates(request, user);
     const url = new URL(request.url);
     if (url.searchParams.get('includeArchive') === '1') return await getAuctionHistory(url, user);
-    scheduleExpirySweep();
+    const { getSheetRosterSnapshot } = await import('@/lib/googleSheets');
     const [rosterSnapshot, auctions, items, holds] = await Promise.all([
       getSheetRosterSnapshot(),
-      Auction.find(auctionDisplayFilter()).sort({ createdAt: -1, _id: -1 }).lean(),
+      Auction.find(auctionDisplayFilter()).sort({ createdAt: -1, _id: -1 }).lean().then((records) => {
+        scheduleExpirySweep(records);
+        return records;
+      }),
       AuctionItem.find().select('name requiredRoles requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
       AuctionHold.find().select('rowIndex heldPoints owner account').lean(),
     ]);
     const roster = rosterSnapshot.roster;
-    const { roleChanges, roleApprovals } = await readToonRoleSchedules(roster.map(getSheetRecordKey));
+    const linkedRows = getLinkedSheetRecordRows(user, roster);
+    const linkedRowSet = new Set(linkedRows);
+    const { roleChanges, roleApprovals } = await readToonRoleSchedules(
+      roster.filter((record) => linkedRowSet.has(record.rowIndex)).map(getSheetRecordKey));
     const roleChangesByIdentity = new Map(roleChanges.map((change) => [change.identityKey, change] as const));
     const roleApprovalsByIdentity = new Map<string, typeof roleApprovals>();
     for (const approval of roleApprovals) {
       roleApprovalsByIdentity.set(approval.identityKey, [...(roleApprovalsByIdentity.get(approval.identityKey) ?? []), approval]);
     }
     const roleReadAt = new Date();
-    const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
+    // Keep the complete roster for duplicate-identity matching whenever needed.
+    const rosterWithWeekly = linkedRows.length ? await getRosterWithWeeklyEarned(roster) : [];
     const roles = ITEM_SUBROLES;
     const catalogImageCounts = new Map(
       items.map((item) => [item._id.toString(), item.imageCount ?? 1]),
@@ -106,8 +114,6 @@ export async function GET(request: Request) {
     const catalogBossTypes = new Map(
       items.map((item) => [item._id.toString(), item.bossType ?? 'Unassigned']),
     );
-    const linkedRows = getLinkedSheetRecordRows(user, rosterWithWeekly);
-    const linkedRowSet = new Set(linkedRows);
     const linkedToons = rosterWithWeekly
       .filter((record) => linkedRowSet.has(record.rowIndex))
       .map((record) => {
@@ -265,10 +271,12 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
     for (const id of knownVersions.keys()) if (!requestedIds.has(id)) knownVersions.delete(id);
   }
   try {
-    scheduleExpirySweep();
+    // A targeted read must still recover expired auctions outside its own IDs.
+    if (targetIds !== null) scheduleExpirySweep();
     const fields = '_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError settlementAttemptId settlementDkpApplied settlementLeaseUntil settlementNeedsReview bidVersion';
     const auctions = await Auction.find(targetIds !== null ? { _id: { $in: targetIds } } : auctionDisplayFilter([...knownVersions.keys()].map((id) => new mongoose.Types.ObjectId(id))))
-      .select(fields).sort({ createdAt: -1, _id: -1 }).lean();
+      .select('_id itemId bidVersion status endsAt deliveryStatus').sort({ createdAt: -1, _id: -1 }).lean();
+    if (targetIds === null) scheduleExpirySweep(auctions);
     const versionToken = (auction: typeof auctions[number]) => [
       auction.bidVersion ?? 0,
       auction.status,
@@ -285,8 +293,16 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
       return NextResponse.json({ changed: false }, { status: 200, headers: { 'Cache-Control': 'no-store' } });
     }
 
-    const serialized = await serializeReadAuctions(changedAuctions, user);
-    const responseAuctions = serialized.map((auction, index) => ({ ...auction, versionToken: versionToken(changedAuctions[index]) }));
+    // Most polls have no changes. Fetch bid/identity/details only for changed IDs.
+    const details = changedAuctions.length ? await Auction.find({ _id: { $in: changedAuctions.map((auction) => auction._id) } })
+      .select(fields).sort({ createdAt: -1, _id: -1 }).lean() : [];
+    const detailIds = new Set(details.map((auction) => auction._id.toString()));
+    for (const auction of changedAuctions) {
+      const id = auction._id.toString();
+      if (knownVersions.has(id) && !detailIds.has(id)) removedIds.push(id);
+    }
+    const serialized = await serializeReadAuctions(details, user);
+    const responseAuctions = serialized.map((auction, index) => ({ ...auction, versionToken: versionToken(details[index]) }));
 
     return NextResponse.json({ changed: true, auctions: responseAuctions, removedIds }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error: unknown) {
@@ -297,6 +313,7 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
 export async function POST(req: Request) {
   const rejected = guardMutationRequest(req);
   if (rejected) return rejected;
+  let payload: Record<string, unknown> = {};
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -309,7 +326,7 @@ export async function POST(req: Request) {
 
     }
 
-    const payload = await readJsonObject(req);
+    payload = await readJsonObject(req);
 
     if (payload.action === 'retry-settlement') {
       const { auctionId } = payload;
@@ -559,6 +576,7 @@ export async function POST(req: Request) {
       const { auctionId, rowIndex, amount } = payload;
       // Balance reads and reservation writes share the same lock as all Sheet
       // adjustments. A debit cannot slip between affordability and reservation.
+      const { withDkpLedgerLock } = await import('@/lib/googleSheets');
       const accepted = await withDkpLedgerLock(async (roster) => {
         const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
         return withClanAdministrationTransaction(async (session) => {
@@ -705,6 +723,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unknown auction action' }, { status: 400 });
   } catch (error: unknown) {
     if (error instanceof DkpIntegrityError) return NextResponse.json({ error: error.message }, { status: 409 });
+    console.error('Auction POST runtime failure', {
+      action: typeof payload?.action === 'string' ? payload.action : 'unknown',
+      name: error instanceof Error ? error.name : 'UnknownError',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return requestErrorResponse(error, 'Unable to process auction request. Please refresh and retry.');
   }
 }
