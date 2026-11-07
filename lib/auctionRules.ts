@@ -44,6 +44,6 @@ export function canRoleBid(subClass: string, roles: string[]) {
   return roles.some((role) => normalizeAuctionRole(role) === 'everyone' || normalizeAuctionRole(role) === normalizeAuctionRole(subClass));
 }
 
-export function normalizeAuctionRole(role: string) {
-  return role.trim().replace(/\s+/g, ' ').toLowerCase();
+export function normalizeAuctionRole(role: unknown) {
+  return typeof role === 'string' ? role.trim().replace(/\s+/g, ' ').toLowerCase() : '';
 }
