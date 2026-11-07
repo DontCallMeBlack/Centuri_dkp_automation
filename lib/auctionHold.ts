@@ -4,6 +4,7 @@ import AuctionHold from '@/lib/models/AuctionHold';
 import type { IAuctionBid, IAuction } from '@/lib/models/Auction';
 import { canBindAuctionHold } from '@/lib/auctionSecurity';
 import { RequestValidationError } from '@/lib/security/request';
+import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 const RESERVING_STATUSES: IAuction['status'][] = ['active', 'removing', 'settling', 'settlement-failed'];
 
 /** Called inside a transaction; old holds are bound only after checking their outstanding bids. */
@@ -17,6 +18,18 @@ export async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'o
   const auctions = await Auction.find({ status: { $in: RESERVING_STATUSES }, 'highBid.rowIndex': bid.rowIndex })
     .select('highBid').session(session).lean();
   const reservations = auctions.flatMap((auction) => auction.highBid ? [auction.highBid] : []);
+  const hasKnownOwner = typeof hold.owner === 'string' && hold.owner.trim().length > 0;
+  const hasKnownAccount = typeof hold.account === 'string' && hold.account.trim().length > 0;
+  const hasBoundIdentity = hasKnownOwner &&
+    typeof hold.account === 'string' && hold.account.trim().length > 0;
+  const reservationPoints = reservations.reduce((sum, reservation) => sum + reservation.amount, 0);
+  if (reservations.length > 0 && reservations.every((reservation) =>
+    Number.isSafeInteger(reservation.amount) && reservation.amount > 0 &&
+    (!hasBoundIdentity || getSheetRecordKey(reservation) === getSheetRecordKey(bid)) &&
+    (!hasKnownOwner || typeof reservation.owner !== 'string' || reservation.owner.trim().toLowerCase() === hold.owner!.trim().toLowerCase() || !reservation.owner.trim()) &&
+    (!hasKnownAccount || typeof reservation.account !== 'string' || reservation.account.trim().toLowerCase() === hold.account!.trim().toLowerCase() || !reservation.account.trim()))) {
+    hold.heldPoints = reservationPoints;
+  }
   if (!canBindAuctionHold(hold, bid, reservations)) {
     console.error('Auction reservation bind mismatch', {
       rowIndex: bid.rowIndex,
