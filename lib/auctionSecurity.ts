@@ -31,7 +31,7 @@ export function holdMatchesIdentity(hold: Hold, identity: ToonIdentity) {
   return typeof hold.owner === 'string' && typeof hold.account === 'string' &&
     getSheetRecordKey({ owner: hold.owner, account: hold.account }) === getSheetRecordKey(identity);
 }
-
+//comment
 /** Adopt an old row-only reservation only when every outstanding bid proves its identity and total. */
 export function canBindAuctionHold(hold: Hold, identity: ToonIdentity, reservations: Reservation[]) {
   if (!Number.isSafeInteger(hold.heldPoints) || hold.heldPoints < 0) return false;
