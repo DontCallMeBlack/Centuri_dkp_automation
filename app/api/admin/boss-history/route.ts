@@ -203,7 +203,7 @@ async function changeAward(req: Request, kind: 'edit' | 'delete') {
             ...(kind === 'edit' ? { removalReasons } : {}),
           },
         },
-        }, { new: true, session });
+        }, { returnDocument: 'after', session });
       });
       award = claimed ?? await BossAward.findById(awardId);
     }

@@ -8,7 +8,7 @@ async function consume(key: string, limit: number, windowMs: number): Promise<nu
   const bucket = Math.floor(now / windowMs);
   const _id = `${key}:${bucket}`;
   const expiresAt = new Date((bucket + 1) * windowMs);
-  const increment = () => AuthRateLimit.findOneAndUpdate({ _id }, { $inc: { count: 1 }, $setOnInsert: { expiresAt } }, { upsert: true, new: true }).lean();
+  const increment = () => AuthRateLimit.findOneAndUpdate({ _id }, { $inc: { count: 1 }, $setOnInsert: { expiresAt } }, { upsert: true, returnDocument: 'after' }).lean();
   const record = await increment().catch((error: unknown) => {
     if (typeof error === 'object' && error && 'code' in error && error.code === 11000) return increment();
     throw error;

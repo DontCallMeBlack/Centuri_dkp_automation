@@ -59,7 +59,7 @@ export async function settleExpiredAuctions() {
         $or: recoverable,
       },
       { $set: { status: 'settling', settlementError: undefined, settlementAttemptId: attemptId, settlementLeaseUntil: new Date(Date.now() + 5 * 60_000) } },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!claimed?.highBid) continue;
 

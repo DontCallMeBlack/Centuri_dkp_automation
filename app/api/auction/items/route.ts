@@ -250,7 +250,7 @@ export async function DELETE(request: Request) {
     const item = await withItemManager(user._id, async (session) => AuctionItem.findOneAndUpdate(
       { _id: itemId, isListed: { $ne: false } },
       { $set: { isListed: false } },
-      { new: true, session },
+      { returnDocument: 'after', session },
     ));
     if (!item) return NextResponse.json({ error: 'Catalog item not found.' }, { status: 404 });
 

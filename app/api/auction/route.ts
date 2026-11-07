@@ -428,7 +428,7 @@ export async function POST(req: Request) {
                 deliveredAt: new Date(),
               },
             },
-            { new: true, session },
+            { returnDocument: 'after', session },
           );
           if (!resolvedAuction) {
             throw new Error('This no-bid auction has already been resolved.');
@@ -495,7 +495,7 @@ export async function POST(req: Request) {
         const claimed = await Auction.findOneAndUpdate(
           { _id: auctionId, status: 'active', endsAt: { $gt: new Date() } },
           { $set: { status: 'removing' } },
-          { new: true, session },
+          { returnDocument: 'after', session },
         );
         if (!claimed) throw new RequestValidationError('This auction ended or changed while you were removing it.', 409);
         if (claimed.highBid) {
@@ -543,7 +543,7 @@ export async function POST(req: Request) {
         return Auction.findOneAndUpdate(
           { _id: auctionId, status: 'active', biddingClosed: { $ne: true }, endsAt: { $gt: now } },
           { $set: { biddingClosed: true, endsAt: now } },
-          { new: true, session },
+          { returnDocument: 'after', session },
         ).select('_id');
       });
       if (!closedAuction) return NextResponse.json({ error: 'This auction ended or changed while you were closing it' }, { status: 409 });
@@ -690,7 +690,7 @@ export async function POST(req: Request) {
               deliveredAt: new Date(),
             },
           },
-          { new: true, session },
+          { returnDocument: 'after', session },
         );
       });
       if (!auction) {

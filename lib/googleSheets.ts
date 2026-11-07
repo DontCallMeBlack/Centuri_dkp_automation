@@ -154,7 +154,7 @@ async function ensureSheetRosterCacheDocument(cacheKey: string) {
         weeklyResetLockUntil: new Date(0),
       },
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   ).lean().catch(async (error: unknown) => {
     if (isRecord(error) && error.code === 11000) {
       const existing = await SheetRosterCache.findOne({ cacheKey }).lean();
@@ -183,7 +183,7 @@ async function acquireWeeklyResetLock(cacheKey: string) {
           weeklyResetLockId: lockId,
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
     if (acquired) return lockId;
     await new Promise((resolve) => setTimeout(resolve, WEEKLY_RESET_POLL_MS));
@@ -639,7 +639,7 @@ async function readSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
     const acquired = await SheetRosterCache.findOneAndUpdate(
       { cacheKey, refreshLockUntil: { $lte: new Date() } },
       { $set: { refreshLockUntil: lockUntil } },
-      { new: true },
+      { returnDocument: 'after' },
     ).lean();
 
     if (acquired) {
