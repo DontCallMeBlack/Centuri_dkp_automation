@@ -3,6 +3,7 @@ import Auction from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import type { IAuctionBid, IAuction } from '@/lib/models/Auction';
 import { canBindAuctionHold } from '@/lib/auctionSecurity';
+import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { RequestValidationError } from '@/lib/security/request';
 const RESERVING_STATUSES: IAuction['status'][] = ['active', 'removing', 'settling', 'settlement-failed'];
 
@@ -17,6 +18,16 @@ export async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'o
   const auctions = await Auction.find({ status: { $in: RESERVING_STATUSES }, 'highBid.rowIndex': bid.rowIndex })
     .select('highBid').session(session).lean();
   const reservations = auctions.flatMap((auction) => auction.highBid ? [auction.highBid] : []);
+  const rowReservations = reservations.filter((reservation) => reservation.rowIndex === bid.rowIndex);
+  const reservationsMatchIdentity = rowReservations.length > 0 && rowReservations.every((reservation) =>
+    getSheetRecordKey(reservation) === getSheetRecordKey(bid));
+  const reservedPoints = rowReservations.reduce((sum, reservation) => sum + reservation.amount, 0);
+  if (reservationsMatchIdentity && Number.isSafeInteger(reservedPoints) && hold.heldPoints < reservedPoints) {
+    hold.heldPoints = reservedPoints;
+    hold.owner = bid.owner;
+    hold.account = bid.account;
+    await hold.save({ session });
+  }
   if (!canBindAuctionHold(hold, bid, reservations)) {
     throw new RequestValidationError('This toon has an inconsistent or moved auction reservation. Ask a manager to review it.', 409);
   }
