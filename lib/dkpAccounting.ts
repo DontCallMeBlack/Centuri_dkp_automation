@@ -53,9 +53,11 @@ export function buildDkpAdjustmentUpdates(input: DkpAdjustmentInput) {
   }
   if (!['balance', 'available', 'weekly-earned', 'auction-spend'].includes(mode)) throw new DkpIntegrityError('Unknown DKP adjustment mode.');
   if (!row || !row[0]) throw new DkpIntegrityError(`Google Sheets roster row ${rowIndex} could not be read.`);
+  const normalizedOwner = typeof owner === 'string' ? owner.trim().toLowerCase() : undefined;
+  const normalizedAccount = typeof account === 'string' ? account.trim().toLowerCase() : undefined;
   if (
-    (owner !== undefined && row[0].trim().toLowerCase() !== owner.trim().toLowerCase()) ||
-    (account !== undefined && (row[1] || '').trim().toLowerCase() !== account.trim().toLowerCase())
+    (owner !== undefined && row[0].trim().toLowerCase() !== normalizedOwner) ||
+    (account !== undefined && String(row[1] ?? '').trim().toLowerCase() !== normalizedAccount)
   ) {
     throw new DkpIntegrityError(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);
   }
@@ -141,4 +143,3 @@ export function snapshotDkpCells(updates: DkpCellSnapshot[], rows: string[][]): 
     return { range, values: [[readCell(rows[rowIndex - 3] ?? [], match[1].charCodeAt(0) - 65, match[1], rowIndex)]] };
   });
 }
-

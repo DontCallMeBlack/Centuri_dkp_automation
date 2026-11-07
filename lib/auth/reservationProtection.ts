@@ -48,7 +48,7 @@ export function getReservationConflict(
     ...(subject.rows ?? []),
     ...subject.identities.flatMap((record) => record.rowIndex === undefined ? [] : [record.rowIndex]),
   ]);
-  const normalize = (value: string) => value.trim().toLowerCase();
+  const normalize = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : '';
   const owners = new Set((subject.legacyOwners ?? []).map(normalize).filter(Boolean));
   const identityOwners = new Set(subject.identities.map((record) => normalize(record.owner)));
   const matches = (record: ProtectedBid) => {

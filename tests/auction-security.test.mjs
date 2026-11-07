@@ -8,6 +8,7 @@ import Auction from '../lib/models/Auction.ts';
 import AuctionHold from '../lib/models/AuctionHold.ts';
 import { canRetryAuctionSettlement } from '../lib/auctionSettlement.ts';
 import { getSheetRecordKey } from '../lib/sheetRecordLinks.ts';
+import { buildDkpAdjustmentUpdates } from '../lib/dkpAccounting.ts';
 
 const identity = { owner: 'Ada', account: 'Main' };
 const reservation = (rowIndex, amount, account = 'Main') => ({ rowIndex, amount, owner: 'Ada', account });
@@ -69,6 +70,13 @@ test('moved identities cannot open a second reservation on their new roster row'
 test('partial legacy identities are normalized without throwing', () => {
   assert.equal(getSheetRecordKey({ owner: undefined, account: undefined }), '["",""]');
   assert.equal(getSheetRecordKey({ owner: ' Ada ', account: null }), '["ada",""]');
+});
+
+test('DKP adjustments reject partial identities instead of throwing during normalization', () => {
+  assert.doesNotThrow(() => buildDkpAdjustmentUpdates({
+    rowIndex: 3, points: 1, mode: 'available', row: ['Ada', 'Main', '', '', '10', '0', '0'],
+    owner: undefined, account: undefined, sheetName: 'Roster',
+  }));
 });
 
 test('financial settlement recovery requires a senior manager and a known safe replay marker', () => {
