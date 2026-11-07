@@ -35,6 +35,18 @@ export function holdMatchesIdentity(hold: Hold, identity: ToonIdentity) {
 function normalizedIdentityPart(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
+
+/** Reconcile a stale hold to reservations when they all prove the same known identity. */
+export function getConsistentReservationIdentity(reservations: Reservation[], expectedPoints: number): ToonIdentity | null {
+  const complete = reservations.every((bid) =>
+    Number.isSafeInteger(bid.amount) && bid.amount > 0 &&
+    normalizedIdentityPart(bid.owner) && normalizedIdentityPart(bid.account));
+  if (!complete || reservations.length === 0) return null;
+  const key = getSheetRecordKey(reservations[0]);
+  const points = reservations.reduce((sum, bid) => sum + bid.amount, 0);
+  if (points !== expectedPoints || !reservations.every((bid) => getSheetRecordKey(bid) === key)) return null;
+  return { owner: reservations[0].owner, account: reservations[0].account };
+}
 //comment
 /** Adopt an old row-only reservation only when every outstanding bid proves its identity and total. */
 export function canBindAuctionHold(hold: Hold, identity: ToonIdentity, reservations: Reservation[]) {

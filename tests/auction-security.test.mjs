@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
 import sharp from 'sharp';
-import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid } from '../lib/auctionSecurity.ts';
+import { canBindAuctionHold, getConsistentReservationIdentity, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid } from '../lib/auctionSecurity.ts';
 import { optimizeAuctionImage, verifyAuctionImageType, AuctionImageError, MAX_AUCTION_IMAGE_BYTES, MAX_AUCTION_UPLOAD_IMAGE_BYTES } from '../lib/auctionImage.ts';
 import Auction from '../lib/models/Auction.ts';
 import AuctionHold from '../lib/models/AuctionHold.ts';
@@ -74,6 +74,22 @@ test('bound holds reject row reuse and corrupt counters, and unused rows can be 
   assert.equal(canBindAuctionHold({ ...hold, heldPoints: 1.5 }, identity, []), false);
   assert.equal(holdMatchesIdentity(hold, { owner: ' ada ', account: 'MAIN' }), true);
   assert.equal(holdMatchesIdentity({ rowIndex: 3, heldPoints: 40 }, identity), false);
+});
+
+test('stale holds reconcile to a single consistent reservation identity', () => {
+  const reservations = [
+    { rowIndex: 45, owner: 'Old Toon', account: 'Old Account', amount: 2 },
+    { rowIndex: 45, owner: 'old toon', account: 'old account', amount: 2 },
+  ];
+  assert.deepEqual(getConsistentReservationIdentity(reservations, 4), {
+    owner: 'Old Toon',
+    account: 'Old Account',
+  });
+  assert.equal(getConsistentReservationIdentity(reservations, 3), null);
+  assert.equal(getConsistentReservationIdentity([
+    ...reservations,
+    { rowIndex: 45, owner: 'Another Toon', account: 'Another Account', amount: 1 },
+  ], 5), null);
 });
 
 test('moved identities cannot open a second reservation on their new roster row', () => {

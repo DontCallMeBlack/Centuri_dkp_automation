@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import Auction from '@/lib/models/Auction';
 import AuctionHold from '@/lib/models/AuctionHold';
 import type { IAuctionBid, IAuction } from '@/lib/models/Auction';
-import { canBindAuctionHold } from '@/lib/auctionSecurity';
+import { canBindAuctionHold, getConsistentReservationIdentity, holdMatchesIdentity } from '@/lib/auctionSecurity';
 import { RequestValidationError } from '@/lib/security/request';
 import { getSheetRecordKey } from '@/lib/sheetRecordLinks';
 const RESERVING_STATUSES: IAuction['status'][] = ['active', 'removing', 'settling', 'settlement-failed'];
@@ -23,6 +23,11 @@ export async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'o
   const hasBoundIdentity = hasKnownOwner &&
     typeof hold.account === 'string' && hold.account.trim().length > 0;
   const reservationPoints = reservations.reduce((sum, reservation) => sum + reservation.amount, 0);
+  const consistentReservationIdentity = getConsistentReservationIdentity(reservations, hold.heldPoints);
+  if (consistentReservationIdentity && !holdMatchesIdentity(hold, consistentReservationIdentity)) {
+    hold.owner = consistentReservationIdentity.owner;
+    hold.account = consistentReservationIdentity.account;
+  }
   const reservationsFullyMatchCurrent = reservations.length > 0 && reservations.every((reservation) =>
     typeof reservation.owner === 'string' && reservation.owner.trim().length > 0 &&
     typeof reservation.account === 'string' && reservation.account.trim().length > 0 &&
