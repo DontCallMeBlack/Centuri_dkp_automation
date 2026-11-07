@@ -1267,7 +1267,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
     let rowIndex: number;
     let subClass: string;
     if (input.action === 'create') {
-      if (roster.some((record) => record.account.trim().toLowerCase() === account.toLowerCase())) throw new RequestValidationError('A toon with this name is already in the clan.', 409);
+      if (roster.some((record) => String(record.account ?? '').trim().toLowerCase() === account.toLowerCase())) throw new RequestValidationError('A toon with this name is already in the clan.', 409);
       // The durable roster mutation compacts all live toons, so the new toon is
       // appended immediately after the current live roster.
       rowIndex = roster.length + 3;
@@ -1430,7 +1430,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
           const otherUsers = users.filter((candidate) => candidate._id.toString() !== user._id.toString());
           const candidateLinks = (candidate: typeof users[number], record: (typeof restoredRoster)[number]) => candidate.sheetRecords?.length
             ? candidate.sheetRecords.some((saved) => getSheetRecordKey(saved) === getSheetRecordKey(record))
-            : candidate.sheetRecordName?.trim().toLowerCase() === record.owner.trim().toLowerCase();
+            : String(candidate.sheetRecordName ?? '').trim().toLowerCase() === String(record.owner ?? '').trim().toLowerCase();
           if (otherUsers.some((candidate) => restoredForUser.some((record) => candidateLinks(candidate, record)))) {
             throw new RequestValidationError('A saved toon is now linked to another account.', 409);
           }

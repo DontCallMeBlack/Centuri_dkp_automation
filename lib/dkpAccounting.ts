@@ -56,7 +56,7 @@ export function buildDkpAdjustmentUpdates(input: DkpAdjustmentInput) {
   const normalizedOwner = typeof owner === 'string' ? owner.trim().toLowerCase() : undefined;
   const normalizedAccount = typeof account === 'string' ? account.trim().toLowerCase() : undefined;
   if (
-    (owner !== undefined && row[0].trim().toLowerCase() !== normalizedOwner) ||
+    (owner !== undefined && String(row[0] ?? '').trim().toLowerCase() !== normalizedOwner) ||
     (account !== undefined && String(row[1] ?? '').trim().toLowerCase() !== normalizedAccount)
   ) {
     throw new DkpIntegrityError(`Google Sheets roster row ${rowIndex} changed; reload the roster and retry.`);

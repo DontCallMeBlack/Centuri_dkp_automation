@@ -11,6 +11,7 @@ import { getSheetRecordKey } from '../lib/sheetRecordLinks.ts';
 import { buildDkpAdjustmentUpdates } from '../lib/dkpAccounting.ts';
 import { buildWeeklyDkpResetPlan } from '../lib/dkpCycle.ts';
 import { matchAttendeeNames } from '../lib/attendeeNames.ts';
+import { normalizeNickname } from '../lib/auth/validation.ts';
 
 const identity = { owner: 'Ada', account: 'Main' };
 const reservation = (rowIndex, amount, account = 'Main') => ({ rowIndex, amount, owner: 'Ada', account });
@@ -86,6 +87,11 @@ test('legacy attendee and weekly identities never throw on missing owner or acco
   assert.doesNotThrow(() => buildWeeklyDkpResetPlan([
     { rowIndex: 3, owner: undefined, account: undefined, weeklyEarned: 0, earned: 10, available: 10, fiveWeekActivity: 0 },
   ], 'DKP History'));
+});
+
+test('legacy nickname and attendee input values are normalized safely', () => {
+  assert.equal(normalizeNickname(undefined), '');
+  assert.doesNotThrow(() => matchAttendeeNames(undefined, [{ rowIndex: 3, owner: undefined, account: undefined }]));
 });
 
 test('financial settlement recovery requires a senior manager and a known safe replay marker', () => {

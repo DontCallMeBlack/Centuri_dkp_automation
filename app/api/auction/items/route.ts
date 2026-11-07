@@ -42,7 +42,8 @@ async function getValidRoles(value: FormDataEntryValue[]) {
   if (value.length > 4 || value.some((entry) => typeof entry !== 'string' || entry.length > 512)) return null;
   const requested = value.filter((entry): entry is string => typeof entry === 'string')
     .flatMap((entry) => entry.split(','))
-    .map((role) => role.trim())
+    .map((role) => typeof role === 'string' ? role.trim() : '')
+    .filter(Boolean)
     .filter(Boolean);
   return resolveItemSubroles(requested);
 }

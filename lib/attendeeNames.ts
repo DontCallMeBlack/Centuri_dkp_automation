@@ -96,11 +96,12 @@ export interface AttendeeNameMatches {
 export function matchAttendeeNames(text: string, roster: AttendeeRosterRecord[]): AttendeeNameMatches {
   const result: AttendeeNameMatches = { rows: [], matchedCount: 0, fuzzy: [], unmatched: [], ambiguous: [], remaining: [] };
   const nameOf = (record: AttendeeRosterRecord) => safeText(record.account) || safeText(record.owner);
+  const inputText = safeText(text);
   // Preserve an exact toon name containing spaces when pasted on its own.
-  const fullName = normalizeName(text);
+  const fullName = normalizeName(inputText);
   const inputs = roster.some((record) => normalizeName(nameOf(record)) === fullName)
-    ? [text.trim()]
-    : text.trim().split(/\s+/u).filter(Boolean);
+    ? [inputText]
+    : inputText.split(/\s+/u).filter(Boolean);
   const seenNames = new Set<string>();
   const rows = new Set<number>();
   for (const input of inputs) {
@@ -132,7 +133,7 @@ export function filterAttendeeRoster<T extends AttendeeRosterRecord>(roster: T[]
     [record.account, record.owner, record.subClass ?? ''].some((value) => normalizeName(value).includes(name)) ||
     toonNameMatchScore(name, safeText(record.account) || safeText(record.owner)) >= ATTENDEE_SIMILARITY_THRESHOLD;
   const fullMatches = roster.filter((record) => matches(record, normalized));
-  const names = query.trim().split(/\s+/u).map(normalizeName);
+  const names = safeText(query).split(/\s+/u).map(normalizeName);
   if (fullMatches.length || names.length === 1) return fullMatches;
   // Retained unresolved names should each show their possible roster matches.
   return roster.filter((record) => names.some((name) => matches(record, name)));

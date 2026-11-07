@@ -1,5 +1,7 @@
 export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
-export function normalizeNickname(nickname: string) { return nickname.trim().normalize('NFKC').toLowerCase(); }
+export function normalizeNickname(nickname: unknown) {
+  return typeof nickname === 'string' ? nickname.trim().normalize('NFKC').toLowerCase() : '';
+}
 export function validateSignup(nickname: unknown, password: unknown): string | null {
   if (typeof nickname !== 'string' || typeof password !== 'string') return 'Enter a nickname and password.';
   const name = nickname.trim().normalize('NFKC');
