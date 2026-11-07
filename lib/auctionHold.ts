@@ -53,6 +53,10 @@ export async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'o
         hasAccount: typeof reservation.account === 'string' && reservation.account.trim().length > 0,
       })),
       reservationPoints: reservations.reduce((sum, reservation) => sum + reservation.amount, 0),
+      currentOwnerMatches: reservations.map((reservation) =>
+        typeof reservation.owner === 'string' && reservation.owner.trim().toLowerCase() === String(bid.owner ?? '').trim().toLowerCase()),
+      currentAccountMatches: reservations.map((reservation) =>
+        typeof reservation.account === 'string' && reservation.account.trim().toLowerCase() === String(bid.account ?? '').trim().toLowerCase()),
     });
     throw new RequestValidationError('This toon has an inconsistent or moved auction reservation. Ask a manager to review it.', 409);
   }
