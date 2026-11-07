@@ -78,6 +78,15 @@ export function requestErrorResponse(error: unknown, fallback: string): Response
   if (error instanceof DkpIntegrityError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof RequestValidationError) return Response.json({ error: error.message }, { status: error.status });
   // Never log request bodies, credentials, database URLs or provider responses.
-  console.error(fallback, error instanceof Error ? error.name : 'UnknownError');
+  const mongoError = error instanceof Error
+    ? error as Error & { code?: number; errorLabels?: string[]; cause?: unknown }
+    : undefined;
+  console.error(fallback, {
+    name: error instanceof Error ? error.name : 'UnknownError',
+    message: error instanceof Error ? error.message : undefined,
+    code: mongoError?.code,
+    labels: mongoError?.errorLabels,
+    cause: mongoError?.cause instanceof Error ? mongoError.cause.message : undefined,
+  });
   return Response.json({ error: fallback }, { status: 500 });
 }

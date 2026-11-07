@@ -7,11 +7,28 @@ export const CLAN_ADMINISTRATION_KEY = 'clan-administration';
 
 function isTransientTransactionError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const transactionError = error as Error & { code?: number; errorLabels?: string[] };
-  if (transactionError.errorLabels?.includes('TransientTransactionError')) {
-    return true;
+  const seen = new Set<Error>();
+  const transientCodes = new Set([6, 7, 24, 89, 91, 112, 211, 244, 251, 11600, 11602, 10107, 11000, 13436, 13500]);
+  let current: unknown = error;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const transactionError = current as Error & {
+      code?: number;
+      errorLabels?: string[];
+      cause?: unknown;
+      originalError?: unknown;
+      error?: unknown;
+    };
+    if (transactionError.errorLabels?.some((label) =>
+      label === 'TransientTransactionError' || label === 'UnknownTransactionCommitResult')) {
+      return true;
+    }
+    if (typeof transactionError.code === 'number' && transientCodes.has(transactionError.code)) {
+      return true;
+    }
+    current = transactionError.cause ?? transactionError.originalError ?? transactionError.error;
   }
-  return new Set([24, 91, 112, 211, 244, 251, 10107, 11000]).has(transactionError.code ?? -1);
+  return false;
 }
 
 /** Shared write fence prevents snapshot-isolation write skew across account
