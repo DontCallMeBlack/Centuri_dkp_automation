@@ -52,6 +52,15 @@ test('legacy reservation adoption proves the identity and exact total of every o
   assert.equal(canBindAuctionHold({ rowIndex: 3, heldPoints: 40 }, identity, [
     { rowIndex: 3, amount: 40 },
   ]), true);
+  assert.equal(canBindAuctionHold({ rowIndex: 3, heldPoints: 40, owner: null, account: null }, identity, [
+    { rowIndex: 3, amount: 40, owner: null, account: null },
+  ]), true);
+  assert.equal(canBindAuctionHold({ rowIndex: 3, heldPoints: 40, owner: 'Ada', account: '' }, identity, [
+    { rowIndex: 3, amount: 40, owner: 'Ada', account: null },
+  ]), true);
+  assert.equal(canBindAuctionHold({ rowIndex: 3, heldPoints: 40, owner: 'Bea', account: null }, identity, [
+    { rowIndex: 3, amount: 40 },
+  ]), false);
 });
 
 test('bound holds reject row reuse and corrupt counters, and unused rows can be rebound', () => {

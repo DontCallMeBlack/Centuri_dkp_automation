@@ -31,18 +31,23 @@ export function holdMatchesIdentity(hold: Hold, identity: ToonIdentity) {
   return typeof hold.owner === 'string' && typeof hold.account === 'string' &&
     getSheetRecordKey({ owner: hold.owner, account: hold.account }) === getSheetRecordKey(identity);
 }
+
+function normalizedIdentityPart(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
 //comment
 /** Adopt an old row-only reservation only when every outstanding bid proves its identity and total. */
 export function canBindAuctionHold(hold: Hold, identity: ToonIdentity, reservations: Reservation[]) {
   if (!Number.isSafeInteger(hold.heldPoints) || hold.heldPoints < 0) return false;
   const rowReservations = reservations.filter((bid) => bid.rowIndex === hold.rowIndex);
   if (hold.heldPoints === 0) return rowReservations.length === 0;
-  if (hold.owner === undefined && hold.account === undefined) {
+  if (normalizedIdentityPart(hold.owner) === '' || normalizedIdentityPart(hold.account) === '') {
+    if (normalizedIdentityPart(hold.owner) && normalizedIdentityPart(hold.owner) !== normalizedIdentityPart(identity.owner)) return false;
+    if (normalizedIdentityPart(hold.account) && normalizedIdentityPart(hold.account) !== normalizedIdentityPart(identity.account)) return false;
     return rowReservations.length > 0 &&
       rowReservations.every((bid) => Number.isSafeInteger(bid.amount) && bid.amount > 0 &&
-        (bid.owner === undefined || typeof bid.owner === 'string') &&
-        (bid.account === undefined || typeof bid.account === 'string') &&
-        (typeof bid.owner !== 'string' || typeof bid.account !== 'string' || getSheetRecordKey(bid) === getSheetRecordKey(identity))) &&
+        (normalizedIdentityPart(bid.owner) === '' || normalizedIdentityPart(bid.owner) === normalizedIdentityPart(identity.owner)) &&
+        (normalizedIdentityPart(bid.account) === '' || normalizedIdentityPart(bid.account) === normalizedIdentityPart(identity.account))) &&
       rowReservations.reduce((sum, bid) => sum + bid.amount, 0) === hold.heldPoints;
   }
   if ((hold.owner !== undefined || hold.account !== undefined) && !holdMatchesIdentity(hold, identity)) return false;
