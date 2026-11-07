@@ -40,24 +40,6 @@ export async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'o
     hold.heldPoints = reservationPoints;
   }
   if (!canBindAuctionHold(hold, bid, reservations)) {
-    console.error('Auction reservation bind mismatch', {
-      rowIndex: bid.rowIndex,
-      hold: {
-        heldPoints: hold.heldPoints,
-        hasOwner: typeof hold.owner === 'string' && hold.owner.trim().length > 0,
-        hasAccount: typeof hold.account === 'string' && hold.account.trim().length > 0,
-      },
-      reservations: reservations.map((reservation) => ({
-        amount: reservation.amount,
-        hasOwner: typeof reservation.owner === 'string' && reservation.owner.trim().length > 0,
-        hasAccount: typeof reservation.account === 'string' && reservation.account.trim().length > 0,
-      })),
-      reservationPoints: reservations.reduce((sum, reservation) => sum + reservation.amount, 0),
-      currentOwnerMatches: reservations.map((reservation) =>
-        typeof reservation.owner === 'string' && reservation.owner.trim().toLowerCase() === String(bid.owner ?? '').trim().toLowerCase()),
-      currentAccountMatches: reservations.map((reservation) =>
-        typeof reservation.account === 'string' && reservation.account.trim().toLowerCase() === String(bid.account ?? '').trim().toLowerCase()),
-    });
     throw new RequestValidationError('This toon has an inconsistent or moved auction reservation. Ask a manager to review it.', 409);
   }
   hold.owner = bid.owner;

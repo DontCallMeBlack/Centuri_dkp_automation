@@ -723,6 +723,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unknown auction action' }, { status: 400 });
   } catch (error: unknown) {
     if (error instanceof DkpIntegrityError) return NextResponse.json({ error: error.message }, { status: 409 });
+    if (error instanceof RequestValidationError) return requestErrorResponse(error, error.message);
     console.error('Auction POST runtime failure', {
       action: typeof payload?.action === 'string' ? payload.action : 'unknown',
       name: error instanceof Error ? error.name : 'UnknownError',
