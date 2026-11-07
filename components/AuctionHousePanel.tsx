@@ -1071,23 +1071,26 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
               return (
                 <article key={auction.id} aria-labelledby={`auction-title-${auction.id}`} data-active={isActive} className="auction-card group min-w-0 overflow-hidden rounded-2xl border border-slate-800">
-                  <h3 id={`auction-title-${auction.id}`} className="sr-only">{auction.itemName}</h3>
-                  <header className="flex items-center justify-between gap-2">
-                    <div className="auction-role-strip flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto" role="group" aria-label="Eligible roles" tabIndex={0}>
+                  <header className="auction-card-header">
+                    <div className="auction-card-heading min-w-0">
+                      <p className="auction-card-kicker">{auction.bossType} <span aria-hidden="true">/</span> Clan loot</p>
+                      <h3 id={`auction-title-${auction.id}`} className="break-words">{auction.itemName}</h3>
+                    </div>
+                    <div className="auction-role-strip flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Eligible roles">
                       {auctionRoles.map((role) => <RoleBadge key={role} role={role} gameClass className="shrink-0" />)}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="auction-card-status flex shrink-0 items-center gap-1.5">
                       {!isActive && <span className={`rounded-full px-2 py-1 text-[10px] font-bold tracking-wider ${auction.status === 'settlement-failed' ? 'bg-red-400/10 text-red-300' : 'bg-slate-800 text-slate-300'}`}>{auction.status === 'settling' || auction.status === 'active' ? 'FINALIZING' : auction.status === 'settlement-failed' ? 'REVIEW' : 'ENDED'}</span>}
                       {isActive && active && <AuctionCountdown endsAt={auction.endsAt} />}
                       {isActive && auction.canRemove && <button type="button" disabled={saving} onClick={() => void removeAuction(auction)} className="auction-remove inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-400/10 hover:text-rose-200 disabled:cursor-wait disabled:opacity-50" aria-label={`Remove ${auction.itemName} auction`} title="Remove auction"><X className="h-4 w-4" strokeWidth={2} /></button>}
                     </div>
                   </header>
 
-                  <div className="auction-card-body grid items-start sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+                  <div className="auction-card-body grid items-start sm:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                     <div className="auction-item-visual min-w-0 overflow-hidden">
-                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative aspect-square w-full" />
+                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative aspect-[8/7] w-full" />
                     </div>
-                    <div className="auction-card-details flex min-w-0 flex-col gap-3 p-4">
+                    <div className="auction-card-details flex min-w-0 flex-col gap-3">
                     {auction.highBid && (
                       <div className="auction-leading-bid flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border p-3" data-mine={isActive && auction.highBid.isMine}>
                         <div className="min-w-0 flex-1">
