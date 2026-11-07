@@ -1,7 +1,7 @@
 export interface SheetRecordIdentity {
   rowIndex?: number;
-  owner: string;
-  account: string;
+  owner?: string;
+  account?: string;
 }
 
 interface RosterRecord extends SheetRecordIdentity {
@@ -13,8 +13,8 @@ interface UserSheetLinks {
   sheetRecordName?: string;
 }
 
-function normalize(value: string) {
-  return value.trim().toLowerCase();
+function normalize(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 export function getSheetRecordKey(record: SheetRecordIdentity) {

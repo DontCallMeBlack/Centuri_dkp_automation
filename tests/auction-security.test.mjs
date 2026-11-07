@@ -7,6 +7,7 @@ import { optimizeAuctionImage, verifyAuctionImageType, AuctionImageError, MAX_AU
 import Auction from '../lib/models/Auction.ts';
 import AuctionHold from '../lib/models/AuctionHold.ts';
 import { canRetryAuctionSettlement } from '../lib/auctionSettlement.ts';
+import { getSheetRecordKey } from '../lib/sheetRecordLinks.ts';
 
 const identity = { owner: 'Ada', account: 'Main' };
 const reservation = (rowIndex, amount, account = 'Main') => ({ rowIndex, amount, owner: 'Ada', account });
@@ -63,6 +64,11 @@ test('moved identities cannot open a second reservation on their new roster row'
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 8 }, [reservation(3, 10)]), true);
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 3 }, [reservation(3, 10)]), false);
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 8 }, [reservation(3, 10, 'Alt')]), false);
+});
+
+test('legacy sheet links tolerate missing owner and account values', () => {
+  assert.equal(getSheetRecordKey({ owner: undefined, account: undefined }), '["",""]');
+  assert.equal(getSheetRecordKey({ owner: ' Ada ', account: undefined }), getSheetRecordKey({ owner: 'ada', account: '' }));
 });
 
 test('financial settlement recovery requires a senior manager and a known safe replay marker', () => {
