@@ -37,6 +37,14 @@ export function canBindAuctionHold(hold: Hold, identity: ToonIdentity, reservati
   if (!Number.isSafeInteger(hold.heldPoints) || hold.heldPoints < 0) return false;
   const rowReservations = reservations.filter((bid) => bid.rowIndex === hold.rowIndex);
   if (hold.heldPoints === 0) return rowReservations.length === 0;
+  if (hold.owner === undefined && hold.account === undefined) {
+    return rowReservations.length > 0 &&
+      rowReservations.every((bid) => Number.isSafeInteger(bid.amount) && bid.amount > 0 &&
+        (bid.owner === undefined || typeof bid.owner === 'string') &&
+        (bid.account === undefined || typeof bid.account === 'string') &&
+        (typeof bid.owner !== 'string' || typeof bid.account !== 'string' || getSheetRecordKey(bid) === getSheetRecordKey(identity))) &&
+      rowReservations.reduce((sum, bid) => sum + bid.amount, 0) === hold.heldPoints;
+  }
   if ((hold.owner !== undefined || hold.account !== undefined) && !holdMatchesIdentity(hold, identity)) return false;
   return rowReservations.length > 0 && rowReservations.every((bid) =>
     Number.isSafeInteger(bid.amount) && bid.amount > 0 && getSheetRecordKey(bid) === getSheetRecordKey(identity),

@@ -49,6 +49,9 @@ test('legacy reservation adoption proves the identity and exact total of every o
   assert.equal(canBindAuctionHold(hold, identity, []), false);
   assert.equal(canBindAuctionHold(hold, identity, [reservation(3, -40)]), false);
   assert.equal(canBindAuctionHold(hold, identity, [reservation(3, Infinity)]), false);
+  assert.equal(canBindAuctionHold({ rowIndex: 3, heldPoints: 40 }, identity, [
+    { rowIndex: 3, amount: 40 },
+  ]), true);
 });
 
 test('bound holds reject row reuse and corrupt counters, and unused rows can be rebound', () => {
