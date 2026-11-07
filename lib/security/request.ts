@@ -74,22 +74,51 @@ export async function readFormDataLimited(request: Request, maxBytes = 3 * 1024 
   } catch { throw new RequestValidationError('The uploaded form could not be read.'); }
 }
 
-export function requestErrorResponse(error: unknown, fallback: string): Response {
+function safeErrorDetails(error: unknown): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  const seen = new Set<object>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && typeof current === 'object' && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    const nested = current as Record<string, unknown> & { name?: unknown; message?: unknown; code?: unknown; errorLabels?: unknown; error?: unknown; cause?: unknown; originalError?: unknown };
+    const name = typeof nested.name === 'string' ? nested.name : undefined;
+    const message = typeof nested.message === 'string' ? nested.message : undefined;
+    const code = typeof nested.code === 'number' || typeof nested.code === 'string' ? nested.code : undefined;
+    const labels = Array.isArray(nested.errorLabels) ? nested.errorLabels.filter((label): label is string => typeof label === 'string') : undefined;
+    if (name) details.name ??= name;
+    if (message) details.message ??= message;
+    if (code !== undefined) details.code ??= code;
+    if (labels?.length) details.labels ??= labels;
+    current = nested.cause ?? nested.originalError ?? nested.error;
+  }
+  return details;
+}
+
+export function requestErrorResponse(
+  error: unknown,
+  fallback: string,
+  options: { exposeDetails?: boolean; operation?: unknown } = {},
+): Response {
   if (error instanceof DkpIntegrityError) return Response.json({ error: error.message }, { status: 409 });
   if (error instanceof RequestValidationError) return Response.json({ error: error.message }, { status: error.status });
   if (error instanceof Error && ['ValidationError', 'CastError'].includes(error.name)) {
     return Response.json({ error: error.message }, { status: 409 });
   }
   // Never log request bodies, credentials, database URLs or provider responses.
-  const mongoError = error instanceof Error
-    ? error as Error & { code?: number; errorLabels?: string[]; cause?: unknown }
-    : undefined;
+  const details = safeErrorDetails(error);
   console.error(fallback, {
     name: error instanceof Error ? error.name : 'UnknownError',
     message: error instanceof Error ? error.message : undefined,
-    code: mongoError?.code,
-    labels: mongoError?.errorLabels,
-    cause: mongoError?.cause instanceof Error ? mongoError.cause.message : undefined,
+    ...details,
+    operation: typeof options.operation === 'string' ? options.operation : undefined,
   });
-  return Response.json({ error: fallback }, { status: 500 });
+  if (!options.exposeDetails) return Response.json({ error: fallback }, { status: 500 });
+  const operation = typeof options.operation === 'string' ? options.operation : 'auction';
+  const name = typeof details.name === 'string' ? details.name : 'UnknownError';
+  const code = details.code === undefined ? 'none' : String(details.code);
+  const message = typeof details.message === 'string' ? details.message.slice(0, 240) : 'No additional error message';
+  return Response.json({
+    error: `${fallback} Debug [${operation}/${name}/code:${code}]: ${message}`,
+    debug: { operation, ...details },
+  }, { status: 500 });
 }

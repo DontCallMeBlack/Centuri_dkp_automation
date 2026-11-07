@@ -297,6 +297,7 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
 export async function POST(req: Request) {
   const rejected = guardMutationRequest(req);
   if (rejected) return rejected;
+  let auctionOperation = 'auction';
   try {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -310,6 +311,7 @@ export async function POST(req: Request) {
     }
 
     const payload = await readJsonObject(req);
+    auctionOperation = typeof payload.action === 'string' ? payload.action : 'auction';
 
     if (payload.action === 'retry-settlement') {
       const { auctionId } = payload;
@@ -705,6 +707,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Unknown auction action' }, { status: 400 });
   } catch (error: unknown) {
     if (error instanceof DkpIntegrityError) return NextResponse.json({ error: error.message }, { status: 409 });
-    return requestErrorResponse(error, 'Unable to process auction request. Please refresh and retry.');
+    return requestErrorResponse(error, 'Unable to process auction request. Please refresh and retry.', {
+      exposeDetails: true,
+      operation: auctionOperation,
+    });
   }
 }
