@@ -60,6 +60,11 @@ test('bound holds reject row reuse and corrupt counters, and unused rows can be 
   assert.equal(holdMatchesIdentity({ rowIndex: 3, heldPoints: 40 }, identity), false);
 });
 
+test('bound holds can be safely rebound when reservations prove the current identity', () => {
+  const hold = { rowIndex: 3, heldPoints: 40, owner: 'Old Ada', account: 'Old Main' };
+  assert.equal(canBindAuctionHold(hold, identity, [reservation(3, 40)]), true);
+});
+
 test('moved identities cannot open a second reservation on their new roster row', () => {
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 8 }, [reservation(3, 10)]), true);
   assert.equal(hasMovedAuctionReservation({ ...identity, rowIndex: 3 }, [reservation(3, 10)]), false);

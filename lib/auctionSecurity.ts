@@ -37,10 +37,11 @@ export function canBindAuctionHold(hold: Hold, identity: ToonIdentity, reservati
   if (!Number.isSafeInteger(hold.heldPoints) || hold.heldPoints < 0) return false;
   const rowReservations = reservations.filter((bid) => bid.rowIndex === hold.rowIndex);
   if (hold.heldPoints === 0) return rowReservations.length === 0;
-  if ((hold.owner !== undefined || hold.account !== undefined) && !holdMatchesIdentity(hold, identity)) return false;
-  return rowReservations.length > 0 && rowReservations.every((bid) =>
+  const reservationsMatchIdentity = rowReservations.length > 0 && rowReservations.every((bid) =>
     Number.isSafeInteger(bid.amount) && bid.amount > 0 && getSheetRecordKey(bid) === getSheetRecordKey(identity),
   ) && rowReservations.reduce((sum, bid) => sum + bid.amount, 0) === hold.heldPoints;
+  if (!reservationsMatchIdentity) return false;
+  return !hold.owner && !hold.account ? true : holdMatchesIdentity(hold, identity) || reservationsMatchIdentity;
 }
 
 /** A moved toon cannot reserve again against a second row while its original hold is outstanding. */
