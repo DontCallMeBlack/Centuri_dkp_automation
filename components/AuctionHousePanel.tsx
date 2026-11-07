@@ -692,7 +692,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       if (!response.ok) throw new Error(result.error || 'Settlement could not be retried.');
       setNotice(result.message || 'Settlement retry requested.');
       updateAuctionInView(auction.id, { status: 'settling', canRetrySettlement: false, settlementError: null });
-      refreshInBackground('Settlement retry requested.'); notifyDkpChanged();
+      notifyDkpChanged(); refreshInBackground('Settlement retry requested.');
     } catch (cause) { setNotice(''); setError(cause instanceof Error ? cause.message : 'Unable to retry settlement.'); }
     finally { setSaving(false); }
   };
@@ -1083,11 +1083,11 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                     </div>
                   </header>
 
-                  <div className="grid items-start gap-3 px-3 pb-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
-                    <div className="auction-item-visual min-w-0 overflow-hidden rounded-xl">
-                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative mx-auto aspect-square w-full max-w-64 rounded-xl sm:max-w-none" />
+                  <div className="auction-card-body grid items-start sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+                    <div className="auction-item-visual min-w-0 overflow-hidden">
+                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative aspect-square w-full" />
                     </div>
-                    <div className="auction-card-details flex min-w-0 flex-col gap-2.5">
+                    <div className="auction-card-details flex min-w-0 flex-col gap-3 p-4">
                     {auction.highBid && (
                       <div className="auction-leading-bid flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border p-3" data-mine={isActive && auction.highBid.isMine}>
                         <div className="min-w-0 flex-1">

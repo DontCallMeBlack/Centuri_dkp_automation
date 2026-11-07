@@ -32,8 +32,18 @@ export async function GET() {
       getSheetRoster(), User.find({ status: 'approved' }).select('nickname sheetRecords sheetRecordName').lean(),
       RosterMutation.findOne({ spreadsheetId: process.env.GOOGLE_SHEET_ID?.trim(), status: 'pending' }).select('action owner account rowIndex').lean(),
     ]);
+    const linkedAccountsByRow = new Map<number, string[]>();
+    if (roster.length) {
+      for (const user of users) {
+        for (const rowIndex of getLinkedSheetRecordRows(user, roster)) {
+          const accounts = linkedAccountsByRow.get(rowIndex);
+          if (accounts) accounts.push(user.nickname);
+          else linkedAccountsByRow.set(rowIndex, [user.nickname]);
+        }
+      }
+    }
     return Response.json({
-      toons: roster.map((toon) => ({ ...toon, linkedAccounts: users.filter((user) => getLinkedSheetRecordRows(user, roster).includes(toon.rowIndex)).map((user) => user.nickname) })),
+      toons: roster.map((toon) => ({ ...toon, linkedAccounts: linkedAccountsByRow.get(toon.rowIndex) ?? [] })),
       pending: pending ? { action: pending.action, owner: pending.owner, account: pending.account } : null,
     }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) { return requestErrorResponse(error, 'Unable to load clan toons.'); }
