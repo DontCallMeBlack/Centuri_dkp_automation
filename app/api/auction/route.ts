@@ -629,13 +629,14 @@ export async function POST(req: Request) {
           for (const [holdRow, delta] of holdChanges) {
             const identity = holdRow === rowIndex ? toon : currentBid!;
             const hold = await getBoundAuctionHold({ ...identity, rowIndex: holdRow }, session);
+            const heldPointsBeforeChange = hold.heldPoints;
             const nextHeldPoints = hold.heldPoints + delta;
             if (!Number.isSafeInteger(nextHeldPoints) || nextHeldPoints < 0) {
               throw new RequestValidationError('Auction point reservation is inconsistent. Ask a manager to review it.', 409);
             }
             // Releasing an outbid reservation remains possible if that toon has
             // left the roster or its externally maintained balance changed.
-            if (delta > 0 && !canAffordBid(delta, hold.heldPoints, toon.available)) {
+            if (delta > 0 && !canAffordBid(delta, heldPointsBeforeChange, toon.available)) {
               throw new RequestValidationError('This toon does not have enough unreserved DKP for that bid.', 409);
             }
             hold.heldPoints = nextHeldPoints;

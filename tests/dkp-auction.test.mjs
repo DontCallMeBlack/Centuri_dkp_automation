@@ -225,6 +225,8 @@ test('bid affordability respects available DKP and reservations', async (t) => {
     ['reservations reduce unspent amount', 10, 10, 19, false],
     ['bid fits after other holds', 10, 10, 20, true],
     ['no held points leaves full balance', 10, 0, 10, true],
+    ['outbid increase fits from existing reservation', 50, 50, 100, true],
+    ['outbid increase fits with other reservations', 50, 100, 150, true],
     ['negative holds are rejected', 10, -1, 10, false],
     ['negative available is rejected', 1, 0, -1, false],
     ['fractional bid is rejected', 1.5, 0, 5, false],
