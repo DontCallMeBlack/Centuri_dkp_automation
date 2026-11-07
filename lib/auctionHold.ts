@@ -23,6 +23,15 @@ export async function getBoundAuctionHold(bid: Pick<IAuctionBid, 'rowIndex' | 'o
   const hasBoundIdentity = hasKnownOwner &&
     typeof hold.account === 'string' && hold.account.trim().length > 0;
   const reservationPoints = reservations.reduce((sum, reservation) => sum + reservation.amount, 0);
+  const reservationsFullyMatchCurrent = reservations.length > 0 && reservations.every((reservation) =>
+    typeof reservation.owner === 'string' && reservation.owner.trim().length > 0 &&
+    typeof reservation.account === 'string' && reservation.account.trim().length > 0 &&
+    getSheetRecordKey(reservation) === getSheetRecordKey(bid));
+  if (reservationsFullyMatchCurrent) {
+    hold.owner = bid.owner;
+    hold.account = bid.account;
+    hold.heldPoints = reservationPoints;
+  }
   if (reservations.length > 0 && reservations.every((reservation) =>
     Number.isSafeInteger(reservation.amount) && reservation.amount > 0 &&
     (!hasBoundIdentity || getSheetRecordKey(reservation) === getSheetRecordKey(bid)) &&
