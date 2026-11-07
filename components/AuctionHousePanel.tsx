@@ -1085,7 +1085,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
                   <div className="grid items-start gap-3 px-3 pb-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
                     <div className="auction-item-visual min-w-0 overflow-hidden rounded-xl">
-                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative mx-auto aspect-square w-full max-w-64 rounded-xl sm:max-w-none" />
+                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative mx-auto aspect-square w-full rounded-xl" />
                     </div>
                     <div className="auction-card-details flex min-w-0 flex-col gap-2.5">
                     {auction.highBid && (

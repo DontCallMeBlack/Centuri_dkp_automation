@@ -156,7 +156,7 @@
   .workspace .stat-value { font-size: 28px; }
   .workspace .auction-page .auction-heading > div.relative { padding-inline: 12px; }
   .workspace .auction-card > header { padding-inline: 8px; }
-  .workspace .auction-card > .grid { padding-inline: 8px; }
+  .workspace .auction-card > .grid { padding-inline: 4px; }
   .workspace .roster-table td { padding-block: 14px; }
   .workspace .roster-table td:last-child { font-size: 14px; }
   .workspace .clan-administration > .surface { padding: 14px; }
