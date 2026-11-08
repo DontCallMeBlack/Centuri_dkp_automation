@@ -2,6 +2,7 @@ import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { Types } from 'mongoose';
+import { readAuctionLiveUpdates } from '../lib/client/auctionLiveUpdates.ts';
 
 const state = globalThis.__auctionReads = {};
 state.sheetModuleLoads = 0;
@@ -250,4 +251,25 @@ test('targeted live checks reject malformed or oversized ID lists',async()=>{
     assert.equal((await GET(new Request('https://centuri.test/api/auction?live=1&ids='+encodeURIComponent(ids)))).status,400);
   }
   assert.equal(state.calls.length,0);
+});
+
+test('the real live route and batched client reconcile deletions beyond 200 loaded auctions', async () => {
+  state.auctions = Array.from({ length: 205 }, (_, n) => auction(n + 1, {
+    createdAt: new Date(n * 1000), endsAt: new Date(Date.now() + 86_400_000),
+  }));
+  const tracked = state.auctions.map(a => ({
+    id: at(a._id), itemId: at(a.itemId), createdAt: a.createdAt.toISOString(),
+    endsAt: a.endsAt.toISOString(), status: a.status, deliveryStatus: a.deliveryStatus,
+    bidVersion: a.bidVersion, versionToken: token(a),
+  }));
+  state.auctions = state.auctions.filter(a => ![1, 104, 205].includes(Number.parseInt(at(a._id), 16)));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async path => GET(new Request('https://centuri.test' + path));
+  try {
+    const result = await readAuctionLiveUpdates(tracked, true);
+    assert.equal(result.changed, true);
+    assert.deepEqual(result.removedIds.sort(), [1, 104, 205].map(n => at(id(n))).sort());
+    assert.ok(state.calls.filter(call => call.kind === 'Auction').some(call => call.filter._id?.$in?.length === 100));
+    assert.equal(state.rosterReads, 0, 'Version reconciliation does not rebuild Sheet balances');
+  } finally { globalThis.fetch = originalFetch; }
 });

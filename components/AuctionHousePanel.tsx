@@ -18,6 +18,7 @@ import { ROLE_CHANGE_TIME_ZONE } from '@/lib/toonRoleChanges';
 import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { auctionPollPlan } from '@/lib/client/auctionPolling';
+import { auctionBalanceChanged, readAuctionLiveUpdates } from '@/lib/client/auctionLiveUpdates';
 
 interface AuctionToon {
   rowIndex: number;
@@ -257,21 +258,14 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
         }
         if (!plan.discover && !plan.ids.length) return;
         const scopedAuctions = plan.discover ? current.auctions : current.auctions.filter((auction) => plan.ids.includes(auction.id));
-        const scope = plan.discover ? '' : `&ids=${encodeURIComponent(JSON.stringify(plan.ids.slice(0, 200)))}`;
         if (plan.discover) lastDiscoveryAt.current = Date.now();
         lastTargetAt.current = Date.now();
-        const versions = [...scopedAuctions]
-          .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
-          .slice(0, 100)
-          .map((auction) => [auction.id, auction.versionToken ?? `${auction.bidVersion ?? 0}:${auction.status}:${auction.endsAt}:${auction.deliveryStatus}:${auction.itemId}`]);
-        const response = await fetch(`/api/auction?live=1&versions=${encodeURIComponent(JSON.stringify(versions))}${scope}`, { cache: 'no-store' });
-        if (!response.ok) throw new Error('Live bid updates are delayed. Retrying automatically.');
-        const result = await response.json();
+        const result = await readAuctionLiveUpdates(scopedAuctions, plan.discover);
         if (!mounted || pollGeneration !== clientDataVersion() || epoch !== liveEpoch.current) return;
         setError('');
         setLastSyncedAt(Date.now());
         if (!result.changed || !Array.isArray(result.auctions)) return;
-        const personalBalanceChanged = (result.auctions as Auction[]).some((live) => { const old=current.auctions.find((entry) => entry.id === live.id); return Boolean(old?.highBid?.isMine || live.highBid?.isMine || old?.winner?.isMine) && (old?.bidVersion !== live.bidVersion || old?.status !== live.status || old?.highBid?.amount !== live.highBid?.amount); });
+        const personalBalanceChanged = auctionBalanceChanged(current.auctions, result.auctions, result.removedIds);
         const byId = new Map((result.auctions as Auction[]).map((auction) => [auction.id, auction]));
         setData((previous) => {
           if (!previous) return previous;
