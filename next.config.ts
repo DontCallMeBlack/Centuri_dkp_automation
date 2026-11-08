@@ -3,6 +3,7 @@ import type { NextConfig } from 'next';
 const production = process.env.NODE_ENV === 'production';
 
 const config: NextConfig = {
+  agentRules: false,
   poweredByHeader: false,
   async headers() {
     return [{ source: '/:path*', headers: [
