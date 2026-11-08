@@ -1,7 +1,7 @@
 import { getSessionUser, canManageClan } from '@/lib/auth/session';
 import { createHash } from 'node:crypto';
-import { changeClanToon, ensureWeeklyDkpReset, getSheetRoster, resetToonDkp } from '@/lib/googleSheets';
-import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
+import { getSheetRoster } from '@/lib/sheetRosterSnapshot';
+import { createSheetRecordLinkResolver } from '@/lib/sheetRecordLinks';
 import { ITEM_SUBROLES } from '@/lib/auctionRules';
 import { isDkpRequestId } from '@/lib/bossDkp';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
@@ -9,9 +9,6 @@ import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestVali
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import RosterMutation from '@/lib/models/RosterMutation';
 import User from '@/lib/models/User';
-import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
-import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
-import { withdrawToonOpenAuctionBids } from '@/lib/auctionBidWithdrawal';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,8 +31,9 @@ export async function GET() {
     ]);
     const linkedAccountsByRow = new Map<number, string[]>();
     if (roster.length) {
+      const resolveLinks = createSheetRecordLinkResolver(roster);
       for (const user of users) {
-        for (const rowIndex of getLinkedSheetRecordRows(user, roster)) {
+        for (const rowIndex of resolveLinks(user)) {
           const accounts = linkedAccountsByRow.get(rowIndex);
           if (accounts) accounts.push(user.nickname);
           else linkedAccountsByRow.set(rowIndex, [user.nickname]);
@@ -58,6 +56,7 @@ export async function POST(request: Request) {
     if (!canManageClan(actor.role)) throw new RequestValidationError('Only Chiefs and Generals can manage clan toons.', 403);
     await limitMemberRequests(actor._id.toString(), 'roster-write');
     const body = await readJsonObject(request);
+    const { changeClanToon, ensureWeeklyDkpReset, resetToonDkp } = await import('@/lib/googleSheets');
     if (body.action === 'recover') {
       await ensureWeeklyDkpReset();
       return Response.json({ success: true, message: 'The interrupted clan toon change has finished.' });
@@ -77,6 +76,9 @@ export async function POST(request: Request) {
     } else if (body.action === 'wipe') {
       if (typeof body.rowIndex !== 'number' || !Number.isInteger(body.rowIndex) || body.rowIndex < 3 || body.rowIndex > 1000) throw new RequestValidationError('Select a valid roster entry.');
       if (body.wipeConfirmed !== true) throw new RequestValidationError('Confirm the Available DKP wipe.');
+      const [{ default: ClanAuditEvent }, { getRosterWithWeeklyEarned }, { withdrawToonOpenAuctionBids }] = await Promise.all([
+        import('@/lib/models/ClanAuditEvent'), import('@/lib/dkpWeeklyEarned'), import('@/lib/auctionBidWithdrawal'),
+      ]);
       let bidChanges = { withdrawnBids: 0, promotedBids: 0 };
       result = await resetToonDkp({
         actorUserId: actor._id.toString(), requestId: body.requestId,

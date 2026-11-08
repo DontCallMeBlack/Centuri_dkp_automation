@@ -14,6 +14,7 @@ export interface AuctionCatalogItem {
   requiredRoles: string[];
   bossType: string;
   imageCount: number;
+  imageVersion?: string;
 }
 
 const BOSSES = ['Prot', 'Bt', 'Gele', 'Dino', 'Crom', 'Legacy'];
@@ -62,7 +63,7 @@ export default function AuctionItemCreateForm({ initialName = '', forPosting = f
       if (typeof result.id !== 'string') throw new Error('The saved item could not be confirmed. Refresh the catalog before retrying.');
       invalidateData('/api/auction/items');
       invalidateData('/api/auction');
-      onCreated({ id: result.id, name: name.trim(), requiredRoles, bossType, imageCount: files.length });
+      onCreated({ id: result.id, name: name.trim(), requiredRoles, bossType, imageCount: files.length, imageVersion: result.imageVersion });
       window.dispatchEvent(new Event('centuri:catalog-changed'));
     } catch (cause) {
       if (mounted.current && version === clientDataVersion()) setError(cause instanceof Error ? cause.message : 'Unable to add this item.');

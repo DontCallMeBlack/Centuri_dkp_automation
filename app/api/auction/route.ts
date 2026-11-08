@@ -1,30 +1,20 @@
 import { after, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import mongoose from 'mongoose';
-import Auction, { type IAuction, type IAuctionBid } from '@/lib/models/Auction';
-import AuctionHold from '@/lib/models/AuctionHold';
-import AuctionBidHistory from '@/lib/models/AuctionBidHistory';
-import AuctionItem from '@/lib/models/AuctionItem';
+import Auction, { type IAuction } from '@/lib/models/Auction';
 import User from '@/lib/models/User';
-import ToonRoleChange from '@/lib/models/ToonRoleChange';
-import ToonRoleChangeRequest from '@/lib/models/ToonRoleChangeRequest';
-import AuctionCreationRequest from '@/lib/models/AuctionCreationRequest';
 import { isDkpRequestId } from '@/lib/bossDkp';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { readHistoryPage, historyCursor } from '@/lib/historyPagination';
 import { getSessionUser } from '@/lib/auth/session';
 import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import { canRetryAuctionSettlement } from '@/lib/auctionSettlement';
-import { getBoundAuctionHold } from '@/lib/auctionHold';
 import { canAffordBid, DkpIntegrityError } from '@/lib/dkpAccounting';
-import { getRosterWithWeeklyEarned } from '@/lib/dkpWeeklyEarned';
-import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
 import { readAuctionCreatorRoles } from '@/lib/auctionFollowUpReads';
 import { auctionDisplayFilter } from '@/lib/auctionReadScope';
-import { hasAuctionExpiryWork } from '@/lib/auctionExpiryWork';
-import { canBindAuctionHold, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
+import { auctionExpiryWorkFilter, hasAuctionExpiryWork, type AuctionExpiryRecord } from '@/lib/auctionExpiryWork';
+import { hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid as serializeBid } from '@/lib/auctionSecurity';
 import { guardMutationRequest, readJsonObject, requestErrorResponse, RequestValidationError } from '@/lib/security/request';
-import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { requireRosterValues } from '@/lib/sheetRoster';
 import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 import {
@@ -58,7 +48,7 @@ async function getAuctionActor(userId: mongoose.Types.ObjectId, session: mongoos
 
 
 /** Financial work can finish after the response while the UI continues polling. */
-function scheduleExpirySweep(auctions?: ReadonlyArray<Pick<IAuction, 'status' | 'endsAt'>>) {
+function scheduleExpirySweep(auctions?: ReadonlyArray<AuctionExpiryRecord>) {
   if (auctions && !hasAuctionExpiryWork(auctions, Date.now())) return;
   if (expirySweepRunning || Date.now() - lastLiveExpirySweepAt < 2_000) return;
   lastLiveExpirySweepAt = Date.now();
@@ -66,6 +56,7 @@ function scheduleExpirySweep(auctions?: ReadonlyArray<Pick<IAuction, 'status' | 
     if (expirySweepRunning) return;
     expirySweepRunning = true;
     try {
+      if (!auctions && !await Auction.exists(auctionExpiryWorkFilter(new Date()))) return;
       const { settleExpiredAuctions } = await import('@/lib/auctionSettlementWorker');
       await settleExpiredAuctions();
     } catch (error: unknown) {
@@ -84,14 +75,25 @@ export async function GET(request: Request) {
     if (new URL(request.url).searchParams.get('live') === '1') return getLiveAuctionUpdates(request, user);
     const url = new URL(request.url);
     if (url.searchParams.get('includeArchive') === '1') return await getAuctionHistory(url, user);
-    const { getSheetRosterSnapshot } = await import('@/lib/googleSheets');
+    const [{ getSheetRosterSnapshot }, { default: AuctionItem }, { default: AuctionHold }, { readToonRoleSchedules }] = await Promise.all([
+      import('@/lib/sheetRosterSnapshot'),
+      import('@/lib/models/AuctionItem'),
+      import('@/lib/models/AuctionHold'),
+      import('@/lib/readToonRoleSchedules'),
+    ]);
+    const auctionsRead = Auction.find(auctionDisplayFilter()).sort({ createdAt: -1, _id: -1 }).lean().then((records) => {
+      scheduleExpirySweep(records);
+      return records;
+    });
     const [rosterSnapshot, auctions, items, holds] = await Promise.all([
       getSheetRosterSnapshot(),
-      Auction.find(auctionDisplayFilter()).sort({ createdAt: -1, _id: -1 }).lean().then((records) => {
-        scheduleExpirySweep(records);
-        return records;
-      }),
-      AuctionItem.find().select('name requiredRoles requiredRole bossType imageCount isListed').sort({ name: 1 }).lean(),
+      auctionsRead,
+      // Only listed catalog entries and images referenced by displayed auctions
+      // are needed. Old archived image snapshots must not grow every full read.
+      auctionsRead.then((records) => AuctionItem.find({ $or: [
+        { isListed: { $ne: false } },
+        { _id: { $in: [...new Set(records.map((auction) => auction.itemId.toString()))] } },
+      ] }).select('name requiredRoles requiredRole bossType imageCount imageVersion isListed').sort({ name: 1 }).lean()),
       AuctionHold.find().select('rowIndex heldPoints owner account').lean(),
     ]);
     const roster = rosterSnapshot.roster;
@@ -106,11 +108,13 @@ export async function GET(request: Request) {
     }
     const roleReadAt = new Date();
     // Keep the complete roster for duplicate-identity matching whenever needed.
-    const rosterWithWeekly = linkedRows.length ? await getRosterWithWeeklyEarned(roster) : [];
+    const rosterWithWeekly = linkedRows.length
+      ? await (await import('@/lib/dkpWeeklyEarned')).getRosterWithWeeklyEarned(roster) : [];
     const roles = ITEM_SUBROLES;
     const catalogImageCounts = new Map(
       items.map((item) => [item._id.toString(), item.imageCount ?? 1]),
     );
+    const catalogImageVersions = new Map(items.map((item) => [item._id.toString(), item.imageVersion ?? 'legacy']));
     const catalogBossTypes = new Map(
       items.map((item) => [item._id.toString(), item.bossType ?? 'Unassigned']),
     );
@@ -155,6 +159,7 @@ export async function GET(request: Request) {
         requiredRoles: requiredRoles?.length ? requiredRoles : requiredRole ? [requiredRole] : [],
         bossType: catalogBossTypes.get(_id.toString()) ?? 'Unassigned',
         imageCount: catalogImageCounts.get(_id.toString()) ?? 1,
+        imageVersion: catalogImageVersions.get(_id.toString()) ?? 'legacy',
       })),
       nextCursor: null,
       auctions: await serializeReadAuctions(auctions, user, items),
@@ -168,20 +173,23 @@ type AuctionReadRecord = Omit<IAuction, keyof mongoose.Document> & { _id: mongoo
 type AuctionReader = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
 
 async function serializeReadAuctions(auctions: AuctionReadRecord[], user: AuctionReader,
-  metadata?: Array<{ _id: mongoose.Types.ObjectId; imageCount?: number; bossType?: string }>) {
+  metadata?: Array<{ _id: mongoose.Types.ObjectId; imageCount?: number; imageVersion?: string; bossType?: string }>) {
   if (!auctions.length) return [];
   const [items, creators] = await Promise.all([
-    metadata ?? AuctionItem.find({ _id: { $in: [...new Set(auctions.map((auction) => auction.itemId.toString()))] } })
-      .select('imageCount bossType').lean(),
+    metadata ?? import('@/lib/models/AuctionItem').then(({ default: AuctionItem }) =>
+      AuctionItem.find({ _id: { $in: [...new Set(auctions.map((auction) => auction.itemId.toString()))] } })
+        .select('imageCount imageVersion bossType').lean()),
     readAuctionCreatorRoles(user.role, auctions),
   ]);
   const catalogImageCounts = new Map(items.map((item) => [item._id.toString(), item.imageCount ?? 1]));
+  const catalogImageVersions = new Map(items.map((item) => [item._id.toString(), item.imageVersion ?? 'legacy']));
   const catalogBossTypes = new Map(items.map((item) => [item._id.toString(), item.bossType ?? 'Unassigned']));
   const creatorById = new Map(creators.map((creator) => [creator._id.toString(), creator]));
   return auctions.map((auction) => ({
     id: auction._id.toString(),
     itemId: auction.itemId.toString(),
     imageCount: catalogImageCounts.get(auction.itemId.toString()) ?? 1,
+    imageVersion: catalogImageVersions.get(auction.itemId.toString()) ?? 'legacy',
     itemName: auction.itemName,
     bossType: auction.bossType ?? catalogBossTypes.get(auction.itemId.toString()) ?? 'Unassigned',
     requiredRoles: auction.requiredRoles?.length ? auction.requiredRoles : [auction.requiredRole],
@@ -275,7 +283,7 @@ async function getLiveAuctionUpdates(request: Request, user: NonNullable<Awaited
     if (targetIds !== null) scheduleExpirySweep();
     const fields = '_id itemId itemName bossType requiredRole requiredRoles createdBy createdByUserId createdAt endsAt biddingClosed status highBid winner deliveryStatus deliveredBy deliveredAt settlementError settlementAttemptId settlementDkpApplied settlementLeaseUntil settlementNeedsReview bidVersion';
     const auctions = await Auction.find(targetIds !== null ? { _id: { $in: targetIds } } : auctionDisplayFilter([...knownVersions.keys()].map((id) => new mongoose.Types.ObjectId(id))))
-      .select('_id itemId bidVersion status endsAt deliveryStatus').sort({ createdAt: -1, _id: -1 }).lean();
+      .select('_id itemId bidVersion status endsAt deliveryStatus updatedAt settlementNeedsReview settlementRetryAt settlementLeaseUntil').sort({ createdAt: -1, _id: -1 }).lean();
     if (targetIds === null) scheduleExpirySweep(auctions);
     const versionToken = (auction: typeof auctions[number]) => [
       auction.bidVersion ?? 0,
@@ -327,6 +335,7 @@ export async function POST(req: Request) {
     }
 
     payload = await readJsonObject(req);
+    const { withClanAdministrationTransaction } = await import('@/lib/auth/administration');
 
     if (payload.action === 'retry-settlement') {
       const { auctionId } = payload;
@@ -351,6 +360,9 @@ export async function POST(req: Request) {
 
     if (payload.action === 'create-auction') {
       if (!isManager(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
+      const [{ default: AuctionItem }, { default: AuctionCreationRequest }] = await Promise.all([
+        import('@/lib/models/AuctionItem'), import('@/lib/models/AuctionCreationRequest'),
+      ]);
       const { itemId, requestId } = payload;
       if (typeof itemId !== 'string' || !mongoose.isValidObjectId(itemId)) {
         return NextResponse.json({ error: 'Select a valid saved item' }, { status: 400 });
@@ -504,6 +516,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Only open auctions can be removed; ended auctions remain in the history' }, { status: 409 });
       }
 
+      const { getBoundAuctionHold } = await import('@/lib/auctionHold');
       await withClanAdministrationTransaction(async (session) => {
         const actor = await getAuctionActor(user._id, session);
         if (actor.role !== 'chief' && actor.role !== 'general' && !(actor.role === 'guardian' && ownsAuction)) {
@@ -576,7 +589,11 @@ export async function POST(req: Request) {
       const { auctionId, rowIndex, amount } = payload;
       // Balance reads and reservation writes share the same lock as all Sheet
       // adjustments. A debit cannot slip between affordability and reservation.
-      const { withDkpLedgerLock } = await import('@/lib/googleSheets');
+      const [{ withDkpLedgerLock }, { getRosterWithWeeklyEarned }, { getBoundAuctionHold },
+        { default: AuctionBidHistory }, { default: ToonRoleChange }, { default: ToonRoleChangeRequest }] = await Promise.all([
+        import('@/lib/googleSheets'), import('@/lib/dkpWeeklyEarned'), import('@/lib/auctionHold'),
+        import('@/lib/models/AuctionBidHistory'), import('@/lib/models/ToonRoleChange'), import('@/lib/models/ToonRoleChangeRequest'),
+      ]);
       const accepted = await withDkpLedgerLock(async (roster) => {
         const rosterWithWeekly = await getRosterWithWeeklyEarned(roster);
         return withClanAdministrationTransaction(async (session) => {

@@ -1,8 +1,7 @@
 // lib/googleSheets.ts
 import { createHash, randomUUID } from 'node:crypto';
 import mongoose, { type ClientSession, type Types } from 'mongoose';
-// Import only Sheets; the root SDK eagerly loads hundreds of unrelated APIs.
-import { sheets as googleSheets, auth as googleAuth } from 'googleapis/build/src/apis/sheets';
+import type { sheets as googleSheets } from 'googleapis/build/src/apis/sheets';
 import AuctionHold from '@/lib/models/AuctionHold';
 import DkpSheetMutation from '@/lib/models/DkpSheetMutation';
 import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRosterCache';
@@ -34,36 +33,16 @@ import { parseSheetRoster, requireRosterValues } from '@/lib/sheetRoster';
 import { isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 import { planToonOwnerChange, planOwnerMutationReplay } from '@/lib/toonOwnerChange';
 import { readToonAwardCutoffs, isAwardInToonLifecycle } from '@/lib/toonAwardLifecycle';
+import { ensureSheetRosterCacheDocument, getSpreadsheetId, invalidateSheetRosterCache } from './sheetRosterSnapshot';
+export { getSheetRoster, getSheetRosterSnapshot, invalidateSheetRosterCache } from './sheetRosterSnapshot';
 
 const SHEET_NAME = "'DKP_Sheet_automated'";
-const ROSTER_CACHE_TTL_MS = 30_000;
-const ROSTER_REFRESH_LOCK_MS = 20_000;
-const ROSTER_REFRESH_WAIT_MS = 15_000;
-const ROSTER_CACHE_POLL_MS = 250;
 const WEEKLY_RESET_LOCK_MS = 120_000;
 const WEEKLY_RESET_WAIT_MS = 30_000;
 const WEEKLY_RESET_POLL_MS = 250;
 type SheetValueUpdate = { range: string; values: number[][] };
 type SheetIdentity = { rowIndex: number; owner: string; account: string };
 
-const auth = new googleAuth.GoogleAuth({
-  credentials: {
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  },
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-
-function getSpreadsheetId() {
-  if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production') {
-    throw new RequestValidationError('Live DKP access is disabled outside production deployments.', 503);
-  }
-  const spreadsheetId = process.env.GOOGLE_SHEET_ID?.trim();
-  if (!spreadsheetId) {
-    throw new RequestValidationError('Google Sheets is not configured. The site owner must set GOOGLE_SHEET_ID in the server environment.', 503);
-  }
-  return spreadsheetId;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -110,8 +89,9 @@ async function withGoogleSheetsRetry<T>(operation: () => Promise<T>, retryTransi
   }
 }
 
-function createSheetsClient() {
-  return googleSheets({ version: 'v4', auth, timeout: 20_000 });
+async function createSheetsClient() {
+  const client = await import('./googleSheetsClient');
+  return client.createSheetsClient();
 }
 
 async function getRosterSheetId(sheets: ReturnType<typeof googleSheets>) {
@@ -123,8 +103,9 @@ async function getRosterSheetId(sheets: ReturnType<typeof googleSheets>) {
   return sheet.properties.sheetId;
 }
 
-async function readSheetRows(sheets = createSheetsClient()) {
-  const response = await withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({
+async function readSheetRows(sheets?: ReturnType<typeof googleSheets>) {
+  const client = sheets ?? await createSheetsClient();
+  const response = await withGoogleSheetsRetry(() => client.spreadsheets.values.get({
     spreadsheetId: getSpreadsheetId(), range: `${SHEET_NAME}!A3:I1000`,
     valueRenderOption: 'UNFORMATTED_VALUE',
   }), true);
@@ -137,32 +118,10 @@ function rosterFromRows(rows: string[][]): ISheetRosterRecord[] {
   return parseSheetRoster(rows, { allowInvalid: true });
 }
 
-async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
+export async function fetchSheetRoster(): Promise<ISheetRosterRecord[]> {
   return rosterFromRows(await readSheetRows());
 }
 
-async function ensureSheetRosterCacheDocument(cacheKey: string) {
-  return SheetRosterCache.findOneAndUpdate(
-    { cacheKey },
-    {
-      $setOnInsert: {
-        cacheKey,
-        roster: [],
-        fetchedAt: new Date(0),
-        refreshLockUntil: new Date(0),
-        generation: 0,
-        weeklyResetLockUntil: new Date(0),
-      },
-    },
-    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
-  ).lean().catch(async (error: unknown) => {
-    if (isRecord(error) && error.code === 11000) {
-      const existing = await SheetRosterCache.findOne({ cacheKey }).lean();
-      if (existing) return existing;
-    }
-    throw error;
-  });
-}
 
 async function acquireWeeklyResetLock(cacheKey: string) {
   const waitUntil = Date.now() + WEEKLY_RESET_WAIT_MS;
@@ -253,7 +212,7 @@ async function replayPendingSheetMutation(spreadsheetId: string, sheets: ReturnT
 
 async function processWeeklyDkpResetWhileLocked(cacheKey: string, lockId: string) {
   assertDkpWritesEnabled();
-  const sheets = createSheetsClient();
+  const sheets = await createSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
   while (true) {
@@ -457,7 +416,7 @@ export async function applyDueToonRoleChanges(at?: Date) {
     }).sort({ createdAt: -1 }).lean() : [];
     const dueChanges = unverifiedDueChanges.filter((change) => scheduleApprovals.some((approval) =>
       approval.identityKey === change.identityKey && isApprovedToonRoleSchedule(change, approval)));
-    const sheets = createSheetsClient();
+    const sheets = await createSheetsClient();
     const rows = dueChanges.length ? await readSheetRows(sheets) : [];
     const roster = dueChanges.length ? rosterFromRows(rows) : [];
     const updates: Array<{ range: string; values: string[][] }> = [];
@@ -553,191 +512,6 @@ function assertDkpWritesEnabled() {
   }
 }
 
-function serializeRosterRecord(record: ISheetRosterRecord): ISheetRosterRecord {
-  return {
-    rowIndex: record.rowIndex,
-    owner: record.owner,
-    account: record.account,
-    subClass: record.subClass,
-    weeklyEarned: record.weeklyEarned,
-    weeklySpent: record.weeklySpent,
-    earned: record.earned,
-    spent: record.spent,
-    available: record.available,
-    fiveWeekActivity: record.fiveWeekActivity === undefined ? 0 : record.fiveWeekActivity,
-    dkpIssues: record.dkpIssues ?? [],
-  };
-}
-
-function isRosterCacheFresh(fetchedAt: Date | undefined, now: number) {
-  return fetchedAt instanceof Date && now - fetchedAt.getTime() < ROSTER_CACHE_TTL_MS;
-}
-
-let rosterRead: ReturnType<typeof readSheetRosterSnapshot> | null = null;
-
-export function getSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
-  // Share concurrent display reads in this instance, without retaining a stale
-  // balance or weakening explicit fresh reads used before an award.
-  if (options.fresh) return readSheetRosterSnapshot(options);
-  if (rosterRead) return rosterRead;
-  const request = readSheetRosterSnapshot(options).finally(() => {
-    if (rosterRead === request) rosterRead = null;
-  });
-  rosterRead = request;
-  return request;
-}
-
-async function readSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
-  await dbConnect();
-  const cacheKey = getSpreadsheetId();
-  // Read-only views must remain available while a different toon's data needs
-  // repair. Rollover/recovery still runs under the ledger lock before writes.
-  const now = Date.now();
-  // Ordinary reads must not queue writes against the same shared document.
-  const staleAtRequest = await SheetRosterCache.findOne({ cacheKey }).lean()
-    ?? await ensureSheetRosterCacheDocument(cacheKey);
-
-  const requestStartedAt = new Date(now);
-  if (!options.fresh && staleAtRequest && isRosterCacheFresh(staleAtRequest.fetchedAt, now)) {
-    return {
-      roster: staleAtRequest.roster.map(serializeRosterRecord),
-      fetchedAt: staleAtRequest.fetchedAt,
-      stale: false,
-      refreshDelayed: Boolean(staleAtRequest.lastRefreshError),
-      cacheStatus: 'cache' as const,
-    };
-  }
-
-  const waitUntil = Date.now() + ROSTER_REFRESH_WAIT_MS;
-  let lastError: unknown;
-  while (Date.now() < waitUntil) {
-    const current = await SheetRosterCache.findOne({ cacheKey }).lean();
-    if (
-      options.fresh &&
-      current?.fetchedAt &&
-      current.fetchedAt.getTime() >= requestStartedAt.getTime()
-    ) {
-      return {
-        roster: current.roster.map(serializeRosterRecord),
-        fetchedAt: current.fetchedAt,
-        stale: false,
-        refreshDelayed: Boolean(current.lastRefreshError),
-        cacheStatus: 'sheet' as const,
-      };
-    }
-    if (!options.fresh && current?.roster.length && isRosterCacheFresh(current.fetchedAt, Date.now())) {
-      return {
-        roster: current.roster.map(serializeRosterRecord),
-        fetchedAt: current.fetchedAt,
-        stale: false,
-        refreshDelayed: Boolean(current.lastRefreshError),
-        cacheStatus: 'cache' as const,
-      };
-    }
-
-    const lockUntil = new Date(Date.now() + ROSTER_REFRESH_LOCK_MS);
-    const acquired = await SheetRosterCache.findOneAndUpdate(
-      { cacheKey, refreshLockUntil: { $lte: new Date() } },
-      { $set: { refreshLockUntil: lockUntil } },
-      { returnDocument: 'after' },
-    ).lean();
-
-    if (acquired) {
-      try {
-        const roster = await fetchSheetRoster();
-        const saved = await SheetRosterCache.updateOne(
-          {
-            cacheKey,
-            generation: acquired.generation,
-            refreshLockUntil: lockUntil,
-          },
-          {
-            $set: {
-              roster,
-              fetchedAt: new Date(),
-              refreshLockUntil: new Date(0),
-            },
-            $unset: { lastRefreshError: 1 },
-          },
-        );
-        if (saved.modifiedCount > 0) {
-          const updated = await SheetRosterCache.findOne({ cacheKey }).select('fetchedAt').lean();
-          return {
-            roster,
-            fetchedAt: updated?.fetchedAt ?? new Date(),
-            stale: false,
-            refreshDelayed: false,
-            cacheStatus: 'sheet' as const,
-          };
-        }
-        await SheetRosterCache.updateOne(
-          { cacheKey, refreshLockUntil: lockUntil },
-          { $set: { refreshLockUntil: new Date(0) } },
-        );
-      } catch (error: unknown) {
-        lastError = error;
-        const errorMessage = error instanceof Error ? error.message : 'Google Sheets refresh failed';
-        await SheetRosterCache.updateOne(
-          { cacheKey, refreshLockUntil: lockUntil },
-          {
-            $set: {
-              refreshLockUntil: new Date(0),
-              lastRefreshError: errorMessage.slice(0, 500),
-            },
-          },
-        );
-        const failedCache = await SheetRosterCache.findOne({ cacheKey }).lean();
-        if (!options.fresh && failedCache?.roster.length) {
-          return {
-            roster: failedCache.roster.map(serializeRosterRecord),
-            fetchedAt: failedCache.fetchedAt,
-            stale: true,
-            refreshDelayed: true,
-            cacheStatus: 'stale' as const,
-          };
-        }
-        throw error;
-      }
-    } else if (!options.fresh && current?.roster.length) {
-      return {
-        roster: current.roster.map(serializeRosterRecord),
-        fetchedAt: current.fetchedAt,
-        stale: true,
-        refreshDelayed: Boolean(current.lastRefreshError),
-        cacheStatus: 'stale' as const,
-      };
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, ROSTER_CACHE_POLL_MS));
-  }
-
-  const latest = await SheetRosterCache.findOne({ cacheKey }).lean();
-  if (!options.fresh && latest?.roster.length) {
-    return {
-      roster: latest.roster.map(serializeRosterRecord),
-      fetchedAt: latest.fetchedAt,
-      stale: true,
-      refreshDelayed: Boolean(latest.lastRefreshError),
-      cacheStatus: 'stale' as const,
-    };
-  }
-  if (lastError instanceof Error) throw lastError;
-  throw new Error('Google Sheets roster refresh is still in progress. Please retry shortly.');
-}
-
-export async function getSheetRoster(options: { fresh?: boolean } = {}) {
-  const snapshot = await getSheetRosterSnapshot(options);
-  return snapshot.roster;
-}
-
-export async function invalidateSheetRosterCache() {
-  rosterRead = null;
-  const cacheKey = getSpreadsheetId();
-  await SheetRosterCache.updateOne(
-    { cacheKey },
-    { $set: { fetchedAt: new Date(0) }, $inc: { generation: 1 } },
-  );
-}
 
 type ToonDkpResetMode = 'available' | 'all';
 type ToonDkpResetIdentity = { owner: string; account: string };
@@ -774,7 +548,7 @@ export async function resetToonDkp(options: {
       throw new DkpIntegrityError('The previous toon DKP change is awaiting recovery. Retry the same request.');
     }
 
-    const sheets = createSheetsClient();
+    const sheets = await createSheetsClient();
     const rows = await readSheetRows(sheets);
     const roster = rosterFromRows(rows);
     const matchingRecords = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(options.identity));
@@ -893,7 +667,7 @@ export async function adjustPlayersDKP(
       if (existing.status === 'applied') return;
       throw new DkpIntegrityError('The previous DKP operation is awaiting recovery. Retry the same request.');
     }
-    const sheets = createSheetsClient();
+    const sheets = await createSheetsClient();
     const rows = await readSheetRows(sheets);
     const roster = rosterFromRows(rows);
     let operationalTargets = targets.map((target) => {
@@ -1025,7 +799,7 @@ export async function restoreToonDkpSnapshot(options: {
       let recoveredStatus = existing.status;
       let recoveredRowIndex = existing.identities?.[0]?.rowIndex;
       if (recoveredStatus === 'pending') {
-        const sheets = createSheetsClient();
+        const sheets = await createSheetsClient();
         while (recoveredStatus === 'pending') {
           const replayed = await replayPendingSheetMutation(spreadsheetId, sheets, lockId);
           const refreshed = await DkpSheetMutation.findById(existing._id).lean();
@@ -1038,7 +812,7 @@ export async function restoreToonDkpSnapshot(options: {
       return { rowIndex: recoveredRowIndex, replayed: true };
     }
 
-    const sheets = createSheetsClient();
+    const sheets = await createSheetsClient();
     const rows = await readSheetRows(sheets);
     const roster = rosterFromRows(rows);
     const matching = roster.filter((record) => getSheetRecordKey(record) === getSheetRecordKey(options.identity));
@@ -1090,7 +864,7 @@ export async function restoreToonDkpSnapshot(options: {
 async function replayPendingRosterMutation(spreadsheetId: string, lockId: string) {
   const mutation = await RosterMutation.findOne({ spreadsheetId, status: 'pending' });
   if (!mutation) return;
-  const sheets = createSheetsClient();
+  const sheets = await createSheetsClient();
   const rows = await readSheetRows(sheets);
   const current = Array.from({ length: 9 }, (_, index) => String(rows[mutation.rowIndex - 3]?.[index] ?? ''));
   const same = (values: Array<string | number>) => values.length === 9 && values.every((value, index) => String(value) === current[index]);

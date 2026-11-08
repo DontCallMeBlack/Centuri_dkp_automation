@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
+import { randomUUID } from 'node:crypto';
 import AuctionItem from '@/lib/models/AuctionItem';
 import Auction from '@/lib/models/Auction';
 import { normalizeAuctionBossType, ITEM_SUBROLES, resolveItemSubroles } from '@/lib/auctionRules';
@@ -16,6 +17,7 @@ import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import User from '@/lib/models/User';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
 import { ensureCatalogNameIndex } from '@/lib/catalogNameIndex';
+import { LEGACY_AUCTION_IMAGE_VERSION } from '@/lib/auctionImageUrl';
 
 const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_TOTAL_UPLOAD_BYTES + 128 * 1024;
@@ -99,7 +101,7 @@ export async function GET() {
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!canManageItems(user.role)) return NextResponse.json({ error: 'Permission denied' }, { status: 403 });
-    const items = await AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRoles requiredRole bossType imageCount').sort({ name: 1 }).lean();
+    const items = await AuctionItem.find({ isListed: { $ne: false } }).select('name requiredRoles requiredRole bossType imageCount imageVersion').sort({ name: 1 }).lean();
     const roles = ITEM_SUBROLES;
     return NextResponse.json({
       success: true,
@@ -110,6 +112,7 @@ export async function GET() {
         requiredRoles: item.requiredRoles?.length ? item.requiredRoles : item.requiredRole ? [item.requiredRole] : [],
         bossType: item.bossType ?? 'Unassigned',
         imageCount: item.imageCount ?? 1,
+        imageVersion: item.imageVersion ?? LEGACY_AUCTION_IMAGE_VERSION,
       })),
     });
   } catch (error: unknown) {
@@ -151,11 +154,12 @@ export async function POST(request: Request) {
         bossType,
         images,
         imageCount: images.length,
+        imageVersion: randomUUID(),
         createdBy: nickname,
       }], { session });
       return created;
     });
-    return NextResponse.json({ success: true, id: item._id.toString() });
+    return NextResponse.json({ success: true, id: item._id.toString(), imageVersion: item.imageVersion });
   } catch (error: unknown) {
     if (isDuplicateKeyError(error)) {
       return NextResponse.json({ error: 'A listed catalog item already uses that name. Edit that item or choose another name.' }, { status: 409 });
@@ -193,7 +197,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Choose one or two supported subroles, or Everyone on its own.' }, { status: 400 });
     }
     const images = await readOptimizedImages(form);
-    await withItemManager(user._id, async (session) => {
+    const updatedItem = await withItemManager(user._id, async (session) => {
       const item = await AuctionItem.findById(itemId).session(session);
       if (!item || item.isListed === false) throw new RequestValidationError('Catalog item not found.', 404);
 
@@ -206,12 +210,14 @@ export async function PATCH(request: Request) {
             bossType: normalizeAuctionBossType(item.bossType) ?? 'Unassigned',
             images: item.images.map((image) => ({ data: Buffer.from(image.data), contentType: image.contentType })),
             image: item.image, imageType: item.imageType, imageCount: item.imageCount,
+            imageVersion: item.imageVersion,
             isListed: false, createdBy: item.createdBy, createdAt: item.createdAt,
           }], { session });
           await Auction.updateMany({ itemId: item._id }, { $set: { itemId: snapshot._id } }, { session, timestamps: false });
         }
         item.images = images;
         item.imageCount = images.length;
+        item.imageVersion = randomUUID();
         item.image = undefined;
         item.imageType = undefined;
       }
@@ -220,8 +226,9 @@ export async function PATCH(request: Request) {
       item.requiredRole = selectedRoles[0];
       item.bossType = bossType;
       await item.save({ session });
+      return item;
     });
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, imageVersion: updatedItem.imageVersion ?? LEGACY_AUCTION_IMAGE_VERSION });
   } catch (error: unknown) {
     if (isDuplicateKeyError(error)) {
       return NextResponse.json({ error: 'A listed catalog item already uses that name. Edit that item or choose another name.' }, { status: 409 });

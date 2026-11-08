@@ -10,7 +10,7 @@ import { optimizeAuctionImage, AuctionImageError } from '../lib/auctionImage.ts'
 // boundaries. These tests never connect to MongoDB or change live inventory.
 const state = globalThis.__catalogSecurityFixture = {};
 const mocks = {
-  '@/lib/auth/session': 'export async function getSessionUser() { return globalThis.__catalogSecurityFixture.user; }',
+  '@/lib/auth/session': 'export async function getSessionUser() { globalThis.__catalogSecurityFixture.sessionReads++; return globalThis.__catalogSecurityFixture.user; }',
   '@/lib/models/AuctionItem': 'export default { find(...args) { return globalThis.__catalogSecurityFixture.find(...args); }, findById(...args) { return globalThis.__catalogSecurityFixture.findById(...args); } };',
   '@/lib/models/Auction': 'export default {};',
   '@/lib/models/User': 'export default {};',
@@ -40,7 +40,7 @@ const upload = (count = 1, type = 'image/svg+xml', bytes = '<svg onload="alert(1
   return form;
 };
 beforeEach(() => {
-  state.user = { _id: id, role: 'chief' }; state.rateLimits = 0;
+  state.user = { _id: id, role: 'chief' }; state.rateLimits = 0; state.sessionReads = 0;
   state.find = state.findById = () => { throw new Error('Unexpected database read'); };
 });
 
@@ -78,7 +78,7 @@ test('1000-item response projects metadata and never serializes image bytes or i
   state.find = (filter) => {
     assert.deepEqual(filter, { isListed: { $ne: false } });
     return { select(fields) {
-      assert.equal(fields, 'name requiredRoles requiredRole bossType imageCount');
+      assert.equal(fields, 'name requiredRoles requiredRole bossType imageCount imageVersion');
       return { sort(order) { assert.deepEqual(order, { name: 1 }); return { lean: async () => items }; } };
     } };
   };
@@ -118,7 +118,7 @@ test('image reads are sliced, private, non-sniffable and conditionally cached af
   state.findById = (itemId) => {
     reads++; assert.equal(itemId, id);
     return { select(projection) {
-      assert.deepEqual(projection, { images: { $slice: [7, 1] }, image: 1, imageType: 1 });
+      assert.deepEqual(projection, { images: { $slice: [7, 1] }, image: 1, imageType: 1, imageVersion: 1 });
       return { lean: async () => ({ images: [{ data: bytes, contentType: 'image/webp' }] }) };
     } };
   };
@@ -161,6 +161,55 @@ test('lean BSON images preserve bytes, legacy slot rules, and changed-image reva
   assert.equal(updated.headers.get('content-type'), 'image/png');
   assert.equal(Buffer.from(await updated.arrayBuffer()).toString(), 'legacy-image');
   assert.equal((await images.GET(request(`/api/auction/image?id=${id}&index=1`))).status, 404);
+});
+
+test('immutable version reads reuse bytes and ETags only after a fresh session check', async () => {
+  const imageVersion = '00000000-0000-4000-8000-000000000001';
+  const path = `/api/auction/image?id=${id}&index=0&version=${imageVersion}`;
+  let reads = 0;
+  state.findById = () => { reads++; return { select: () => ({ lean: async () => ({
+    imageVersion, images: [{ data: Buffer.from('version-one'), contentType: 'image/webp' }],
+  }) }) }; };
+  const first = await images.GET(request(path));
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  assert.equal(first.headers.get('vary'), 'Cookie');
+  assert.equal(await first.text(), 'version-one');
+  const headers = { 'if-none-match': first.headers.get('etag') };
+  state.findById = () => { throw new Error('Warm immutable images should not read storage'); };
+  const unchanged = await images.GET(request(path, headers));
+  assert.equal(unchanged.status, 304); assert.equal(await unchanged.text(), '');
+  assert.equal(await (await images.GET(request(path))).text(), 'version-one');
+  state.user = null;
+  assert.equal((await images.GET(request(path, headers))).status, 401);
+  assert.equal(reads, 1);
+  assert.equal(state.sessionReads, 4, 'Authorization must run even on warm/conditional requests');
+});
+
+test('a stale uncached version never receives replacement bytes or a long-lived error', async () => {
+  const oldVersion = '00000000-0000-4000-8000-000000000002';
+  const imageVersion = '00000000-0000-4000-8000-000000000003';
+  state.findById = () => ({ select: () => ({ lean: async () => ({
+    imageVersion, images: [{ data: Buffer.from('replacement'), contentType: 'image/webp' }],
+  }) }) });
+  const response = await images.GET(request(`/api/auction/image?id=${id}&version=${oldVersion}`));
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.ok(!(await response.text()).includes('replacement'));
+  const current = await images.GET(request(`/api/auction/image?id=${id}&version=${imageVersion}`));
+  assert.equal(current.status, 200); assert.equal(await current.text(), 'replacement');
+});
+
+test('existing image sets have a stable legacy revision and version syntax is bounded', async () => {
+  state.findById = () => ({ select: () => ({ lean: async () => ({
+    images: [{ data: Buffer.from('existing'), contentType: 'image/webp' }],
+  }) }) });
+  const existing = await images.GET(request(`/api/auction/image?id=${id}&index=6&version=legacy`));
+  assert.equal(existing.status, 200);
+  assert.equal(existing.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  for (const version of ['', 'x'.repeat(1000), '../secret', '0', '{"$ne":null}']) {
+    assert.equal((await images.GET(request(`/api/auction/image?id=${id}&version=${encodeURIComponent(version)}`))).status, 400);
+  }
 });
 
 test('create and edit reject executable images, MIME spoofing, corrupt rasters and too many files', async () => {

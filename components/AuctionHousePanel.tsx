@@ -39,6 +39,7 @@ interface CatalogItem {
   requiredRole?: string;
   bossType: string;
   imageCount: number;
+  imageVersion?: string;
 }
 
 interface AuctionBid {
@@ -55,6 +56,7 @@ interface Auction {
   id: string;
   itemId: string;
   imageCount: number;
+  imageVersion?: string;
   itemName: string;
   bossType: string;
   requiredRoles: string[];
@@ -491,6 +493,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
           id: result.auctionId,
           itemId: item.id,
           imageCount: item.imageCount,
+          imageVersion: item.imageVersion,
           itemName: item.name,
           bossType: item.bossType,
           requiredRoles: item.requiredRoles,
@@ -852,6 +855,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
                     <AuctionItemImage
                       itemId={auction.itemId}
                       imageCount={auction.imageCount}
+                      imageVersion={auction.imageVersion}
                       alt={auction.itemName}
                       className="h-16 w-16 shrink-0 rounded-lg bg-slate-900 object-contain"
                     />
@@ -1082,7 +1086,7 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
 
                   <div className="auction-card-body grid items-start sm:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                     <div className="auction-item-visual min-w-0 overflow-hidden">
-                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} alt={auction.itemName} showNameOnError className="auction-item-image relative aspect-[8/7] w-full" />
+                      <AuctionItemImage itemId={auction.itemId} imageCount={auction.imageCount} imageVersion={auction.imageVersion} alt={auction.itemName} showNameOnError className="auction-item-image relative aspect-[8/7] w-full" />
                     </div>
                     <div className="auction-card-details flex min-w-0 flex-col gap-3">
                     {auction.highBid && (

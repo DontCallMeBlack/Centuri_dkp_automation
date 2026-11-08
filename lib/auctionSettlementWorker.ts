@@ -2,10 +2,10 @@ import mongoose from 'mongoose';
 import { randomUUID } from 'node:crypto';
 import Auction from '@/lib/models/Auction';
 import { getBoundAuctionHold } from '@/lib/auctionHold';
-import { adjustPlayersDKP } from '@/lib/googleSheets';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { RequestValidationError } from '@/lib/security/request';
 import { needsSettlementManualReview, getAuctionSettlementMutationKey } from '@/lib/auctionSettlement';
+import { auctionSettlementRecoveryStates } from '@/lib/auctionExpiryWork';
 
 export async function settleExpiredAuctions() {
   if (process.env.DKP_WRITES_PAUSED === 'true') return;
@@ -17,14 +17,7 @@ export async function settleExpiredAuctions() {
     { status: 'removing', updatedAt: { $lt: new Date(now.getTime() - 5 * 60_000) } },
     { $set: { status: 'active' } },
   );
-  const recoverable: Record<string, unknown>[] = [
-    { status: 'active' },
-    {
-      status: 'settlement-failed', settlementNeedsReview: { $ne: true },
-      $or: [{ settlementRetryAt: { $lte: now } }, { settlementRetryAt: { $exists: false } }],
-    },
-    { status: 'settling', $or: [{ settlementLeaseUntil: { $lte: now } }, { settlementLeaseUntil: { $exists: false } }] },
-  ];
+  const recoverable = auctionSettlementRecoveryStates(now);
   const expiredAuctions = await Auction.find({
     $or: recoverable,
     endsAt: { $lte: now },
@@ -77,6 +70,8 @@ export async function settleExpiredAuctions() {
         } finally {
           await bindingSession.endSession();
         }
+        // Idle/no-bid sweeps never need the Sheets SDK or financial write code.
+        const { adjustPlayersDKP } = await import('@/lib/googleSheets');
         await adjustPlayersDKP(
           [{
             rowIndex: winningBid.rowIndex,

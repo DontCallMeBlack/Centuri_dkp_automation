@@ -6,6 +6,7 @@ import { readAuctionLiveUpdates } from '../lib/client/auctionLiveUpdates.ts';
 
 const state = globalThis.__auctionReads = {};
 state.sheetModuleLoads = 0;
+state.moduleLoads = [];
 const id = n => new Types.ObjectId(n.toString(16).padStart(24, '0'));
 const at = value => value?.toString();
 function matches(record, filter) {
@@ -16,14 +17,19 @@ function matches(record, filter) {
       return Object.entries(expected).every(([operator, operand]) => {
         if (operator === '$in') return operand.some(item => at(item) === at(value));
         if (operator === '$exists') return (value !== undefined) === operand;
+        if (operator === '$ne') return value !== operand;
         if (operator === '$lt') return value < operand;
+        if (operator === '$lte') return value <= operand;
         throw Error('Unhandled fixture operator: '+operator);
       });
     }
     return at(value) === at(expected);
   });
 }
-state.model = kind => ({ find(filter = {}) {
+state.model = kind => ({ async exists(filter) {
+  state.calls.push({kind, filter, exists:true});
+  return (kind === 'Auction' ? state.auctions : state.items).some(row => matches(row, filter)) ? {_id:id(1)} : null;
+}, find(filter = {}) {
   const call = { kind, filter }; state.calls.push(call);
   let cap = Infinity; let order = {};
   return {
@@ -48,21 +54,22 @@ state.model = kind => ({ find(filter = {}) {
 } });
 const unused = names => names.map(name => `export function ${name}(){throw Error('Unexpected write: ${name}');}`).join('\n');
 const mocks = {
-  'next/server': `export const NextResponse = {json: (value, init) => Response.json(value, init)}; export function after(){globalThis.__auctionReads.sweeps++;}`,
+  'next/server': `export const NextResponse = {json: (value, init) => Response.json(value, init)}; export function after(callback){globalThis.__auctionReads.sweeps++;globalThis.__auctionReads.background.push(callback);}`,
   '@/lib/auth/session': `export async function getSessionUser(){return globalThis.__auctionReads.user;}`,
   '@/lib/auth/rateLimit': `export async function limitMemberRequests(){}`,
-  '@/lib/googleSheets': `globalThis.__auctionReads.sheetModuleLoads++; export async function getSheetRosterSnapshot(){globalThis.__auctionReads.rosterReads++; return {roster:globalThis.__auctionReads.roster,fetchedAt:new Date(),stale:false,refreshDelayed:false};} ${unused(['adjustPlayersDKP','getSheetRoster','withDkpLedgerLock'])}`,
+  '@/lib/sheetRosterSnapshot': `export async function getSheetRosterSnapshot(){globalThis.__auctionReads.rosterReads++; return {roster:globalThis.__auctionReads.roster,fetchedAt:new Date(),stale:false,refreshDelayed:false};}`,
+  '@/lib/googleSheets': `globalThis.__auctionReads.sheetModuleLoads++; ${unused(['adjustPlayersDKP','getSheetRoster','withDkpLedgerLock'])}`,
   '@/lib/dkpWeeklyEarned': `export async function getRosterWithWeeklyEarned(rows){globalThis.__auctionReads.weeklyReads++; globalThis.__auctionReads.weeklyRosterRows=rows; return rows;}`,
   '@/lib/readToonRoleSchedules': `export async function readToonRoleSchedules(identities){globalThis.__auctionReads.roleIdentities=identities;return {roleChanges:[],roleApprovals:[]};}`,
   '@/lib/auctionFollowUpReads': `export async function readAuctionCreatorRoles(){return [];}`,
-  '@/lib/auctionSettlementWorker': unused(['settleExpiredAuctions']),
+  '@/lib/auctionSettlementWorker': `export async function settleExpiredAuctions(){globalThis.__auctionReads.workerRuns++;}`,
   '@/lib/auctionHold': unused(['getBoundAuctionHold']),
   '@/lib/auth/administration': unused(['withClanAdministrationTransaction']),
 };
 const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   let source = mocks[specifier];
   if (specifier.startsWith('@/lib/models/')) source = `export default globalThis.__auctionReads.model('${specifier.split('/').at(-1)}');`;
-  if (source) return { url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit:true };
+  if (source) return { url: `data:text/javascript,${encodeURIComponent(`globalThis.__auctionReads.moduleLoads.push(${JSON.stringify(specifier)});\n${source}`)}`, shortCircuit:true };
   if (specifier.startsWith('@/')) return nextResolve(new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, context);
   if (specifier.startsWith('.') && context.parentURL?.includes('/lib/') && !/\.[a-z]+$/i.test(specifier)) return nextResolve(new URL(`${specifier}.ts`,context.parentURL).href,context);
   return nextResolve(specifier,context);
@@ -77,6 +84,8 @@ const read = async suffix => { const response = await GET(new Request('https://c
 const token = a => `${a.bidVersion}:${a.status}:${a.endsAt.toISOString()}:${a.deliveryStatus}:${a.itemId}`;
 beforeEach(() => {
   state.user = {_id:id(800),nickname:'Chief',role:'chief',sheetRecords:[]}; state.calls=[]; state.rosterReads=0; state.sweeps=0;
+  state.background=[];
+  state.workerRuns=0;
   state.roster=[]; state.weeklyReads=0; state.roleIdentities=[]; state.beforeRead=null;
   state.items=[{_id:id(900),name:'Boots',requiredRoles:['tank'],imageCount:1,isListed:true}]; state.auctions=[];
 });
@@ -90,8 +99,13 @@ test('38 unchanged future auctions use only version fields and do not schedule i
   assert.equal(state.rosterReads, 0);
   assert.equal(state.weeklyReads, 0);
   assert.equal(state.sheetModuleLoads, 0, 'A cold unchanged live request does not load the Sheets SDK');
+  const deferredModules = ['@/lib/models/AuctionHold', '@/lib/models/AuctionItem', '@/lib/models/AuctionBidHistory',
+    '@/lib/models/ToonRoleChange', '@/lib/models/ToonRoleChangeRequest', '@/lib/models/AuctionCreationRequest',
+    '@/lib/auctionHold', '@/lib/auth/administration', '@/lib/dkpWeeklyEarned', '@/lib/readToonRoleSchedules'];
+  assert.deepEqual(state.moduleLoads.filter(name=>deferredModules.includes(name)), [],
+    'An unchanged live request must not load catalog, roster eligibility or mutation dependencies');
   assert.deepEqual(state.calls.map(call => call.kind), ['Auction']);
-  assert.equal(state.calls[0].fields, '_id itemId bidVersion status endsAt deliveryStatus');
+  assert.equal(state.calls[0].fields, '_id itemId bidVersion status endsAt deliveryStatus updatedAt settlementNeedsReview settlementRetryAt settlementLeaseUntil');
 });
 
 test('future full reads skip the worker and unlinked accounts skip private weekly calculations', async () => {
@@ -122,6 +136,29 @@ test('linked accounts read only their role schedules but retain the whole weekly
   assert.equal(result.weeklyEarnedTotal, 12);
 });
 
+test('full reads exclude unrelated archived catalog snapshots but retain auction image metadata', async () => {
+  state.auctions=[auction(1, {itemId:id(901)})];
+  state.items.push({_id:id(901),name:'Archived Boots',imageCount:2,imageVersion:'v1',isListed:false},
+    {_id:id(902),name:'Unrelated archive',imageCount:8,isListed:false},
+    {_id:id(903),name:'Legacy listed item',imageCount:1});
+  const result=await read('');
+  assert.deepEqual(result.items.map(item=>item.id).sort(), [at(id(900)),at(id(903))]);
+  assert.equal(result.items[0].imageVersion, 'legacy');
+  assert.equal(result.auctions[0].imageCount,2);
+  assert.equal(result.auctions[0].imageVersion,'v1');
+  const catalogRead=state.calls.find(call=>call.kind==='AuctionItem');
+  assert.equal(matches(state.items[2],catalogRead.filter),false);
+  assert.equal(matches(state.items[1],catalogRead.filter),true);
+});
+
+test('manual-review failures and future retries do not schedule background sweeps', async () => {
+  state.auctions=[auction(1,{status:'settlement-failed',settlementNeedsReview:true}),
+    auction(2,{status:'settlement-failed',settlementRetryAt:new Date(Date.now()+86_400_000)}),
+    auction(3,{status:'settling',settlementLeaseUntil:new Date(Date.now()+86_400_000)})];
+  await read('?live=1');
+  assert.equal(state.sweeps,0);
+});
+
 test('expired discovery records and targeted polls still schedule the global expiry worker', async () => {
   const realNow = Date.now;
   let now = realNow() + 60_000;
@@ -135,6 +172,34 @@ test('expired discovery records and targeted polls still schedule the global exp
     await read('?live=1&ids='+encodeURIComponent(JSON.stringify([at(id(2))])));
     assert.equal(state.sweeps, 2, 'A future targeted auction cannot rule out expiry elsewhere');
   } finally { Date.now = realNow; }
+});
+
+test('targeted idle polling probes globally without loading the settlement worker or Sheets SDK', async () => {
+  const realNow=Date.now;
+  Date.now=()=>realNow()+3_600_000;
+  try {
+    state.auctions=[auction(1,{endsAt:new Date(Date.now()+86_400_000)})];
+    const loads=state.sheetModuleLoads;
+    await read('?live=1&ids='+encodeURIComponent(JSON.stringify([at(id(1))])));
+    assert.equal(state.background.length,1);
+    await state.background[0]();
+    assert.equal(state.calls.filter(call=>call.exists).length,1);
+    assert.equal(state.sheetModuleLoads,loads);
+    assert.equal(state.workerRuns,0);
+  } finally { Date.now=realNow; }
+});
+
+test('a targeted future auction still recovers expired work outside its requested IDs', async () => {
+  const realNow=Date.now;
+  Date.now=()=>realNow()+7_200_000;
+  try {
+    state.auctions=[auction(1,{endsAt:new Date(Date.now()+86_400_000)}),
+      auction(2,{endsAt:new Date(realNow()-1)})];
+    const result=await read('?live=1&ids='+encodeURIComponent(JSON.stringify([at(id(1))])));
+    assert.deepEqual(result.auctions.map(a=>a.id),[at(id(1))]);
+    await state.background[0]();
+    assert.equal(state.workerRuns,1);
+  } finally { Date.now=realNow; }
 });
 
 test('live detail reads report a tracked auction deleted between version and detail queries', async () => {

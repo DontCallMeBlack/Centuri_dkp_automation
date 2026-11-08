@@ -1,17 +1,13 @@
 import { NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { canManageClan, getSessionUser } from '@/lib/auth/session';
-import { getSheetRoster, getSheetRosterSnapshot, adjustPlayersDKP } from '@/lib/googleSheets';
-import { getLinkedSheetRecordRows, getSheetRecordKey } from '@/lib/sheetRecordLinks';
-import BossAward from '@/lib/models/BossAward';
-import BossCooldown from '@/lib/models/BossCooldown';
-import BossCooldownAttempt from '@/lib/models/BossCooldownAttempt';
+import { getSheetRosterSnapshot } from '@/lib/sheetRosterSnapshot';
+import { createSheetRecordLinkResolver, getSheetRecordKey } from '@/lib/sheetRecordLinks';
 import User from '@/lib/models/User';
 import { BOSS_DKP_POINTS, BOSS_KILL_COOLDOWN_MS, getBossKillCooldownRemainingMs, getBossRequestFingerprint, isDkpRequestId, isRosterRowArray } from '@/lib/bossDkp';
 import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
-import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import { RequestValidationError } from '@/lib/security/request';
 import { readToonRoleSchedules } from '@/lib/readToonRoleSchedules';
 import { getEffectiveToonRole, isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
@@ -46,11 +42,12 @@ export async function GET(req: Request) {
       return { ...record, subClass: getEffectiveToonRole(record.subClass, change, roleReadAt, approval) };
     });
     const recordsByRow = new Map(effectiveRoster.map((record) => [record.rowIndex, record]));
-    const sheetRecordRows = getLinkedSheetRecordRows(user, roster);
+    const resolveLinks = createSheetRecordLinkResolver(roster);
+    const sheetRecordRows = resolveLinks(user);
     const clanMembers = activeUsers.map((member) => ({
       nickname: member.nickname,
       role: member.role,
-      toons: getLinkedSheetRecordRows(member, roster)
+      toons: resolveLinks(member)
         .flatMap((rowIndex) => {
           const record = recordsByRow.get(rowIndex);
           return record ? [record] : [];
@@ -95,6 +92,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Select at least one valid roster record' }, { status: 400 });
     }
 
+    const [
+      { getSheetRoster, adjustPlayersDKP }, { default: BossAward },
+      { default: BossCooldown }, { default: BossCooldownAttempt },
+      { withClanAdministrationTransaction },
+    ] = await Promise.all([
+      import('@/lib/googleSheets'), import('@/lib/models/BossAward'),
+      import('@/lib/models/BossCooldown'), import('@/lib/models/BossCooldownAttempt'),
+      import('@/lib/auth/administration'),
+    ]);
     const fingerprint = getBossRequestFingerprint('grant', bossName, selectedRows);
     const logCooldownAttempt = async (attemptedAt: Date, cooldownExpiresAt: Date) => {
       await BossCooldownAttempt.updateOne(

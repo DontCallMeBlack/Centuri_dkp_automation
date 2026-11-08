@@ -1,5 +1,3 @@
-import sharp from 'sharp';
-
 export const MAX_AUCTION_IMAGE_BYTES = 75 * 1024;
 export const MAX_AUCTION_ITEM_IMAGE_BYTES = 150 * 1024;
 export const MAX_AUCTION_UPLOAD_IMAGE_BYTES = 1024 * 1024;
@@ -32,6 +30,9 @@ export async function optimizeAuctionImage(imageBytes: Uint8Array) {
     throw new AuctionImageError('Upload a PNG, JPEG, or WebP image no larger than 1 MB.');
   }
   try {
+    // Catalog metadata GETs use the validation constants from this module, but
+    // only an upload needs to initialize the native image processing library.
+    const { default: sharp } = await import('sharp');
     for (const { width, quality } of WEBP_VARIANTS) {
       const optimized = await sharp(imageBytes, { limitInputPixels: 40_000_000, failOn: 'warning', animated: false })
         .rotate()

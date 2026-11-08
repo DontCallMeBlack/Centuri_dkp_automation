@@ -10,6 +10,7 @@ import { resolveItemSubroles } from '@/lib/auctionRules';
 import { ApiError, clearClientData, clientDataVersion, getData, invalidateData, peekData, rememberData } from '@/lib/client/api';
 import { LoaderCircle, Save, Search, Trash2, Pencil, Plus } from 'lucide-react';
 import AuctionItemCreateForm from '@/components/AuctionItemCreateForm';
+import { auctionImageUrl } from '@/lib/auctionImageUrl';
 
 interface CatalogItem {
   id: string;
@@ -17,6 +18,7 @@ interface CatalogItem {
   requiredRoles: string[];
   bossType: string;
   imageCount: number;
+  imageVersion?: string;
 }
  
 const BOSS_TYPES = [
@@ -36,7 +38,7 @@ function ItemEditor({
   onRemoved,
 }: {
   item: CatalogItem;
-  onSaved: (itemId: string, name: string, requiredRoles: string[], bossType: string, imageCount?: number) => void;
+  onSaved: (itemId: string, name: string, requiredRoles: string[], bossType: string, imageCount?: number, imageVersion?: string) => void;
   onRemoved: (itemId: string) => Promise<void>;
 }) {
   const [name, setName] = useState(item.name);
@@ -51,7 +53,6 @@ function ItemEditor({
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [imageVersion, setImageVersion] = useState(0);
   const [expanded, setExpanded] = useState(false);
 
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -64,8 +65,7 @@ function ItemEditor({
       const response = await fetch('/api/auction/items', { method: 'PATCH', body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Unable to save item changes.');
-      onSaved(item.id, name.trim(), requiredRoles, bossType, files.length || undefined);
-      if (files.length) setImageVersion((version) => version + 1);
+      onSaved(item.id, name.trim(), requiredRoles, bossType, files.length || undefined, result.imageVersion);
       setFiles([]);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save item changes.');
@@ -74,15 +74,15 @@ function ItemEditor({
     }
   };
 
-  if (!expanded) return <article className="surface item-catalog-card grid min-w-0 max-w-full grid-cols-[3.5rem_minmax(0,1fr)_2.5rem] items-center gap-3 p-3 sm:flex sm:gap-4 sm:p-4"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/5 bg-slate-950/60 sm:h-16 sm:w-16"><img loading="lazy" decoding="async" width={64} height={64} src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`} alt={item.name} className="h-full w-full object-contain" /></div><div className="min-w-0"><h4 className="truncate text-sm font-semibold text-slate-200" title={item.name}>{item.name}</h4><div className="mt-2 flex min-w-0 flex-wrap gap-1.5">{item.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="self-center text-[10px] text-slate-500">{item.bossType} / {item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span></div></div><button type="button" className="secondary-button h-10 w-10 shrink-0 !p-0 sm:h-auto sm:w-auto sm:!px-4" onClick={() => setExpanded(true)} aria-label={`Edit ${item.name}`}><Pencil size={13} /><span className="hidden sm:inline">Edit item</span></button></article>;
+  if (!expanded) return <article className="surface item-catalog-card grid min-w-0 max-w-full grid-cols-[3.5rem_minmax(0,1fr)_2.5rem] items-center gap-3 p-3 sm:flex sm:gap-4 sm:p-4"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/5 bg-slate-950/60 sm:h-16 sm:w-16"><img loading="lazy" decoding="async" width={64} height={64} src={auctionImageUrl(item.id, 0, item.imageVersion)} alt={item.name} className="h-full w-full object-contain" /></div><div className="min-w-0"><h4 className="truncate text-sm font-semibold text-slate-200" title={item.name}>{item.name}</h4><div className="mt-2 flex min-w-0 flex-wrap gap-1.5">{item.requiredRoles.map((role) => <RoleBadge key={role} role={role} gameClass />)}<span className="self-center text-[10px] text-slate-500">{item.bossType} / {item.imageCount} image{item.imageCount === 1 ? '' : 's'}</span></div></div><button type="button" className="secondary-button h-10 w-10 shrink-0 !p-0 sm:h-auto sm:w-auto sm:!px-4" onClick={() => setExpanded(true)} aria-label={`Edit ${item.name}`}><Pencil size={13} /><span className="hidden sm:inline">Edit item</span></button></article>;
 
   return (
     <form onSubmit={save} className="surface grid min-w-0 max-w-full gap-4 p-4 sm:grid-cols-[5rem_minmax(0,1fr)_auto] sm:items-center sm:p-5"><div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/5 pb-3 sm:col-span-3"><p className="truncate text-xs font-semibold text-slate-300">Editing {item.name}</p><button type="button" className="secondary-button" disabled={saving} onClick={() => setExpanded(false)}>Done</button></div>
       <div className="relative h-20 w-20 overflow-hidden rounded-xl bg-slate-900">
         <img
-          src={`/api/auction/image?id=${encodeURIComponent(item.id)}&index=0&v=${imageVersion}`}
+          src={auctionImageUrl(item.id, 0, item.imageVersion)}
           loading="lazy" decoding="async" width={80} height={80}
-          key={imageVersion}
+          key={item.imageVersion}
           alt={item.name}
           className="h-full w-full object-contain"
         />
@@ -232,6 +232,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
     updatedRequiredRoles: string[],
     updatedBossType: string,
     imageCount?: number,
+    imageVersion?: string,
   ) => {
     catalogChanged();
     setItems((current) => current
@@ -242,6 +243,7 @@ export default function AuctionItemsPanel({ active = true }: { active?: boolean 
             requiredRoles: updatedRequiredRoles,
             bossType: updatedBossType,
             imageCount: imageCount ?? item.imageCount,
+            imageVersion: imageVersion ?? item.imageVersion,
           }
         : item)
       .sort((first, second) => first.name.localeCompare(second.name)));

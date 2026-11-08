@@ -2,15 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ImageOff, Sparkles } from 'lucide-react';
+import { auctionImageUrl } from '@/lib/auctionImageUrl';
 
-export default function AuctionItemImage({ itemId, imageCount, alt, className, showNavigation = true, showNameOnError = false }: {itemId:string; imageCount:number; alt:string; className:string; showNavigation?:boolean; showNameOnError?:boolean}) {
+export default function AuctionItemImage({ itemId, imageCount, imageVersion, alt, className, showNavigation = true, showNameOnError = false }: {itemId:string; imageCount:number; imageVersion?:string; alt:string; className:string; showNavigation?:boolean; showNameOnError?:boolean}) {
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const [imageIndex, setImageIndex] = useState(0);
   const [readyItemId, setReadyItemId] = useState<string | null>(null);
   const [loadedSource, setLoadedSource] = useState<string | null>(null);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const total = Math.max(1,imageCount);
-  const source = `/api/auction/image?id=${encodeURIComponent(itemId)}&index=${imageIndex}`;
+  const source = auctionImageUrl(itemId, imageIndex, imageVersion);
   const shouldLoad = readyItemId === itemId;
   const loaded = loadedSource === source;
   const failed = failedSource === source;
@@ -31,7 +32,7 @@ export default function AuctionItemImage({ itemId, imageCount, alt, className, s
     }, { rootMargin: '220px 0px' });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [itemId]);
+  }, [itemId, imageVersion]);
 
   const changeImage = (index:number) => setImageIndex(index);
   return <div className={`${className} relative overflow-hidden`}>

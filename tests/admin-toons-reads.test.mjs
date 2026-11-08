@@ -1,13 +1,13 @@
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { getLinkedSheetRecordRows } from '../lib/sheetRecordLinks.ts';
+import { createSheetRecordLinkResolver, getLinkedSheetRecordRows } from '../lib/sheetRecordLinks.ts';
 
 // Exercise the real read handler and identity resolver without a live database.
 const state = globalThis.__adminToonReads = {};
-state.resolveLinks = (user, roster) => {
-  state.linkReads++;
-  return getLinkedSheetRecordRows(user, roster);
+state.createResolver = (roster) => {
+  const resolve = createSheetRecordLinkResolver(roster);
+  return (user) => { state.linkReads++; return resolve(user); };
 };
 state.query = (kind, filter) => {
   state.queries.push({ kind, filter });
@@ -25,9 +25,9 @@ const mocks = {
   '@/lib/auth/session': `export async function getSessionUser(){return globalThis.__adminToonReads.actor;}
     export function canManageClan(role){return role==='chief'||role==='general';}`,
   '@/lib/auth/rateLimit': `export async function limitMemberRequests(...args){globalThis.__adminToonReads.limits.push(args);}`,
-  '@/lib/googleSheets': `export async function getSheetRoster(){globalThis.__adminToonReads.rosterReads++;return globalThis.__adminToonReads.roster;}
-    ${unused(['changeClanToon', 'ensureWeeklyDkpReset', 'resetToonDkp'])}`,
-  '@/lib/sheetRecordLinks': `export const getLinkedSheetRecordRows=(user,roster)=>globalThis.__adminToonReads.resolveLinks(user,roster);`,
+  '@/lib/sheetRosterSnapshot': `export async function getSheetRoster(){globalThis.__adminToonReads.rosterReads++;return globalThis.__adminToonReads.roster;}`,
+  '@/lib/googleSheets': unused(['changeClanToon', 'ensureWeeklyDkpReset', 'resetToonDkp']),
+  '@/lib/sheetRecordLinks': `export const createSheetRecordLinkResolver=(roster)=>globalThis.__adminToonReads.createResolver(roster);`,
   '@/lib/models/User': `export default {find(filter){return globalThis.__adminToonReads.query('users',filter);}};`,
   '@/lib/models/RosterMutation': `export default {findOne(filter){return globalThis.__adminToonReads.query('pending',filter);}};`,
   '@/lib/models/ClanAuditEvent': 'export default {};',
