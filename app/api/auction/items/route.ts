@@ -15,6 +15,7 @@ import { guardMutationRequest, readJsonObject, readFormDataLimited, requestError
 import { withClanAdministrationTransaction } from '@/lib/auth/administration';
 import User from '@/lib/models/User';
 import { limitMemberRequests } from '@/lib/auth/rateLimit';
+import { ensureCatalogNameIndex } from '@/lib/catalogNameIndex';
 
 const MAX_TOTAL_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_TOTAL_UPLOAD_BYTES + 128 * 1024;
@@ -30,6 +31,9 @@ function canManageItems(role: string) {
 }
 
 async function withItemManager<T>(userId: mongoose.Types.ObjectId, operation: (session: mongoose.ClientSession, nickname: string) => Promise<T>) {
+  // Index changes must finish outside the item transaction. Archived names
+  // remain reusable even on databases created with the old global index.
+  await ensureCatalogNameIndex();
   return withClanAdministrationTransaction(async (session) => {
     const actor = await User.findById(userId).select('nickname role status').session(session);
     if (!actor || actor.status !== 'approved') throw new RequestValidationError('Your session is no longer authorized.', 401);

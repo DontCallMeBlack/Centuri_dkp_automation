@@ -48,6 +48,8 @@ The follow-up auction review found two client issues: a removed leading auction 
 
 ## Operations and validation
 
+- Catalog writes check the name index before opening their transaction. [Index migration](./lib/catalogNameIndex.ts) replaces legacy global name uniqueness with a case-insensitive constraint on listed items only, so deleted names can be reused while archived auction images remain intact. Existing listed-name conflicts stop the migration before writes; the replacement index is installed before the old one is removed.
+
 - Production: https://centuri-dkp-automation.vercel.app; linked Vercel project `dcmbs-projects/centuri-dkp-automation`.
 - Preview deployments deliberately reject Mongo and Sheet access. `DKP_WRITES_PAUSED=true` pauses financial mutations; never remove these protections to make a preview work.
 - [Cron configuration](./vercel.json): DKP at 05:00 UTC and auctions at 05:05 UTC, requiring Bearer CRON_SECRET. [Instrumentation](./instrumentation.ts) deliberately starts no background scheduler. Auction reads use bounded Next `after()` expiry recovery.
