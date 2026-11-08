@@ -87,7 +87,8 @@ function SquareImageCropStep({
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.92));
       if (!blob) throw new Error('Your browser could not create this crop.');
       const baseName = file.name.replace(/\.[^.]+$/, '') || 'auction-item';
-      onComplete(new File([blob], `${baseName}-square.webp`, { type: 'image/webp' }));
+      const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/png' ? 'png' : 'webp';
+      onComplete(new File([blob], `${baseName}-square.${extension}`, { type: blob.type }));
     } catch (cropError) {
       setError(cropError instanceof Error ? cropError.message : 'Unable to crop this image.');
       setProcessing(false);

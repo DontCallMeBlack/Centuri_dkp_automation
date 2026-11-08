@@ -21,6 +21,10 @@ const WEBP_VARIANTS = [
   { width: 800, quality: 66 },
   { width: 700, quality: 60 },
   { width: 600, quality: 54 },
+  { width: 512, quality: 50 },
+  { width: 384, quality: 44 },
+  { width: 256, quality: 40 },
+  { width: 192, quality: 38 },
 ] as const;
 
 export async function optimizeAuctionImage(imageBytes: Uint8Array) {

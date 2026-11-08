@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
 import sharp from 'sharp';
+import { randomBytes } from 'node:crypto';
 import { canBindAuctionHold, getConsistentReservationIdentity, hasMovedAuctionReservation, holdMatchesIdentity, isAuctionBidInput, isAuctionPoster, serializeAuctionBid } from '../lib/auctionSecurity.ts';
 import { optimizeAuctionImage, verifyAuctionImageType, AuctionImageError, MAX_AUCTION_IMAGE_BYTES, MAX_AUCTION_UPLOAD_IMAGE_BYTES } from '../lib/auctionImage.ts';
 import Auction from '../lib/models/Auction.ts';
@@ -178,4 +179,17 @@ test('uploaded raster images are resized, reencoded, and stripped of original me
   assert.ok(optimized.byteLength <= MAX_AUCTION_IMAGE_BYTES);
   assert.equal(metadata.exif, undefined);
   assert.equal(metadata.orientation, undefined);
+});
+
+test('detailed transparent images resize further to fit the unchanged storage limit', async () => {
+  const source = await sharp(randomBytes(480 * 480 * 4), {
+    raw: { width: 480, height: 480, channels: 4 },
+  }).webp({ lossless: true }).toBuffer();
+  assert.ok(source.length <= MAX_AUCTION_UPLOAD_IMAGE_BYTES);
+  const optimized = await optimizeAuctionImage(source);
+  const metadata = await sharp(optimized).metadata();
+  assert.ok(optimized.length <= MAX_AUCTION_IMAGE_BYTES);
+  assert.ok(metadata.width < 480);
+  assert.equal(metadata.format, 'webp');
+  assert.equal(metadata.hasAlpha, true);
 });
