@@ -628,7 +628,11 @@ export async function POST(req: Request) {
           holdChanges.set(rowIndex, (holdChanges.get(rowIndex) ?? 0) + amount);
           for (const [holdRow, delta] of holdChanges) {
             const identity = holdRow === rowIndex ? toon : currentBid!;
-            const hold = await getBoundAuctionHold({ ...identity, rowIndex: holdRow }, session);
+            // The previous bid is a Mongoose subdocument; spreading it loses
+            // owner/account and prevents its reservation from being released.
+            const hold = await getBoundAuctionHold({
+              rowIndex: holdRow, owner: identity.owner, account: identity.account,
+            }, session);
             const heldPointsBeforeChange = hold.heldPoints;
             const nextHeldPoints = hold.heldPoints + delta;
             if (!Number.isSafeInteger(nextHeldPoints) || nextHeldPoints < 0) {

@@ -1,9 +1,10 @@
-import test, { beforeEach } from 'node:test';
+import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { Types } from 'mongoose';
 
 const state = globalThis.__auctionReads = {};
+state.sheetModuleLoads = 0;
 const id = n => new Types.ObjectId(n.toString(16).padStart(24, '0'));
 const at = value => value?.toString();
 function matches(record, filter) {
@@ -28,7 +29,9 @@ state.model = kind => ({ find(filter = {}) {
     select(fields) { call.fields = fields; return this; },
     sort(value) { order = value; return this; },
     limit(value) { cap = value; call.limit = value; return this; },
-    async lean() { return (kind === 'Auction' ? state.auctions : kind === 'AuctionItem' ? state.items : [])
+    async lean() {
+      state.beforeRead?.(call);
+      const result = (kind === 'Auction' ? state.auctions : kind === 'AuctionItem' ? state.items : [])
       .filter(row => matches(row, filter)).sort((a,b) => {
         for (const [key,direction] of Object.entries(order)) {
           const left=a[key] instanceof Date ? a[key].getTime() : at(a[key]);
@@ -36,7 +39,10 @@ state.model = kind => ({ find(filter = {}) {
           if(left<right)return -direction; if(left>right)return direction;
         }
         return 0;
-      }).slice(0, cap); },
+      }).slice(0, cap);
+      return typeof call.fields === 'string' ? result.map(row => Object.fromEntries(
+        ['_id', ...call.fields.split(' ')].filter(key => key in row).map(key => [key, row[key]]))) : result;
+    },
   };
 } });
 const unused = names => names.map(name => `export function ${name}(){throw Error('Unexpected write: ${name}');}`).join('\n');
@@ -44,9 +50,9 @@ const mocks = {
   'next/server': `export const NextResponse = {json: (value, init) => Response.json(value, init)}; export function after(){globalThis.__auctionReads.sweeps++;}`,
   '@/lib/auth/session': `export async function getSessionUser(){return globalThis.__auctionReads.user;}`,
   '@/lib/auth/rateLimit': `export async function limitMemberRequests(){}`,
-  '@/lib/googleSheets': `export async function getSheetRosterSnapshot(){globalThis.__auctionReads.rosterReads++; return {roster:[],fetchedAt:new Date(),stale:false,refreshDelayed:false};} ${unused(['adjustPlayersDKP','getSheetRoster','withDkpLedgerLock'])}`,
-  '@/lib/dkpWeeklyEarned': `export async function getRosterWithWeeklyEarned(rows){return rows;}`,
-  '@/lib/readToonRoleSchedules': `export async function readToonRoleSchedules(){return {roleChanges:[],roleApprovals:[]};}`,
+  '@/lib/googleSheets': `globalThis.__auctionReads.sheetModuleLoads++; export async function getSheetRosterSnapshot(){globalThis.__auctionReads.rosterReads++; return {roster:globalThis.__auctionReads.roster,fetchedAt:new Date(),stale:false,refreshDelayed:false};} ${unused(['adjustPlayersDKP','getSheetRoster','withDkpLedgerLock'])}`,
+  '@/lib/dkpWeeklyEarned': `export async function getRosterWithWeeklyEarned(rows){globalThis.__auctionReads.weeklyReads++; globalThis.__auctionReads.weeklyRosterRows=rows; return rows;}`,
+  '@/lib/readToonRoleSchedules': `export async function readToonRoleSchedules(identities){globalThis.__auctionReads.roleIdentities=identities;return {roleChanges:[],roleApprovals:[]};}`,
   '@/lib/auctionFollowUpReads': `export async function readAuctionCreatorRoles(){return [];}`,
   '@/lib/auctionSettlementWorker': unused(['settleExpiredAuctions']),
   '@/lib/auctionHold': unused(['getBoundAuctionHold']),
@@ -61,7 +67,7 @@ const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   return nextResolve(specifier,context);
 } });
 const { GET } = await import('../app/api/auction/route.ts');
-hooks.deregister();
+after(() => hooks.deregister());
 const auction = (n, extra = {}) => ({ _id:id(n), itemId:id(900), itemName:'Boots', requiredRoles:['tank'],
   createdBy:'Chief', createdByUserId:id(800), createdAt:new Date('2026-11-01'), endsAt:new Date('2026-11-05'),
   status:'active', deliveryStatus:'not-required', bidVersion:0, ...extra });
@@ -70,7 +76,73 @@ const read = async suffix => { const response = await GET(new Request('https://c
 const token = a => `${a.bidVersion}:${a.status}:${a.endsAt.toISOString()}:${a.deliveryStatus}:${a.itemId}`;
 beforeEach(() => {
   state.user = {_id:id(800),nickname:'Chief',role:'chief',sheetRecords:[]}; state.calls=[]; state.rosterReads=0; state.sweeps=0;
+  state.roster=[]; state.weeklyReads=0; state.roleIdentities=[]; state.beforeRead=null;
   state.items=[{_id:id(900),name:'Boots',requiredRoles:['tank'],imageCount:1,isListed:true}]; state.auctions=[];
+});
+
+test('38 unchanged future auctions use only version fields and do not schedule idle settlement work', async () => {
+  const future = new Date(Date.now() + 24 * 60 * 60_000);
+  state.auctions = Array.from({length:38}, (_, n) => auction(n + 1, { endsAt: future, highBid: bid }));
+  const versions = encodeURIComponent(JSON.stringify(state.auctions.map(a => [at(a._id), token(a)])));
+  assert.deepEqual(await read('?live=1&versions=' + versions), { changed:false });
+  assert.equal(state.sweeps, 0);
+  assert.equal(state.rosterReads, 0);
+  assert.equal(state.weeklyReads, 0);
+  assert.equal(state.sheetModuleLoads, 0, 'A cold unchanged live request does not load the Sheets SDK');
+  assert.deepEqual(state.calls.map(call => call.kind), ['Auction']);
+  assert.equal(state.calls[0].fields, '_id itemId bidVersion status endsAt deliveryStatus');
+});
+
+test('future full reads skip the worker and unlinked accounts skip private weekly calculations', async () => {
+  state.auctions = Array.from({length:38}, (_, n) => auction(n + 1, {endsAt:new Date(Date.now() + 86_400_000)}));
+  state.roster=[{rowIndex:3,owner:'Another account',account:'Main',subClass:'tank',dkpIssues:[]}];
+  const result = await read('');
+  assert.equal(result.auctions.length, 38);
+  assert.equal(state.sweeps, 0);
+  assert.equal(state.weeklyReads, 0);
+  assert.deepEqual(state.roleIdentities, []);
+  assert.deepEqual(result.toons, []);
+  assert.equal(result.weeklyEarnedTotal, 0);
+  assert.equal(result.canBidWeekly, result.weeklyEarnedTotal >= result.weeklyMinimum);
+});
+
+test('linked accounts read only their role schedules but retain the whole weekly matching context', async () => {
+  state.roster = [
+    {rowIndex:3,owner:'Chief',account:'Main',subClass:'tank',weeklyEarned:12,available:100,dkpIssues:[]},
+    {rowIndex:4,owner:'Chief',account:'Main',subClass:'tank',weeklyEarned:0,available:50,dkpIssues:[]},
+    {rowIndex:5,owner:'Other',account:'Alt',subClass:'ranger',weeklyEarned:0,available:10,dkpIssues:[]},
+  ];
+  state.user.sheetRecords=[{rowIndex:3,owner:'Chief',account:'Main'}];
+  const result = await read('');
+  assert.equal(state.weeklyReads, 1);
+  assert.deepEqual(state.weeklyRosterRows, state.roster, 'Duplicate matching must not narrow the roster');
+  assert.deepEqual(state.roleIdentities, [JSON.stringify(['chief', 'main'])]);
+  assert.deepEqual(result.toons.map(toon => toon.rowIndex), [3]);
+  assert.equal(result.weeklyEarnedTotal, 12);
+});
+
+test('expired discovery records and targeted polls still schedule the global expiry worker', async () => {
+  const realNow = Date.now;
+  let now = realNow() + 60_000;
+  Date.now = () => now;
+  try {
+    state.auctions = [auction(1, {endsAt:new Date(now)})];
+    await read('?live=1');
+    assert.equal(state.sweeps, 1);
+    now += 3_000;
+    state.auctions = [auction(2, {endsAt:new Date(now + 86_400_000)})];
+    await read('?live=1&ids='+encodeURIComponent(JSON.stringify([at(id(2))])));
+    assert.equal(state.sweeps, 2, 'A future targeted auction cannot rule out expiry elsewhere');
+  } finally { Date.now = realNow; }
+});
+
+test('live detail reads report a tracked auction deleted between version and detail queries', async () => {
+  state.auctions=[auction(1)];
+  state.beforeRead=call => {
+    if (call.fields?.includes('highBid')) state.auctions=[];
+  };
+  const result=await read('?live=1&versions='+encodeURIComponent(JSON.stringify([[at(id(1)), 'old']])));
+  assert.deepEqual(result, {changed:true, auctions:[], removedIds:[at(id(1))]});
 });
 
 test('initial load excludes resolved history but preserves every outstanding workflow',async()=>{

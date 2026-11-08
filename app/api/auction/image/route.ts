@@ -21,9 +21,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Invalid auction image index' }, { status: 400 });
     }
 
+    type StoredImage = { data: Buffer | mongoose.mongo.Binary; contentType: string };
     const item = await AuctionItem.findById(itemId).select({
       images: { $slice: [requestedImageIndex, 1] }, image: 1, imageType: 1,
-    });
+    }).lean<{ images?: StoredImage[]; image?: Buffer | mongoose.mongo.Binary; imageType?: string }>();
     if (!item) return NextResponse.json({ error: 'Auction item not found' }, { status: 404 });
     const storedImage = item.images?.[0];
     const legacyImage = requestedImageIndex === 0 && item.image && item.imageType
@@ -33,7 +34,9 @@ export async function GET(request: Request) {
     if (!selectedImage) {
       return NextResponse.json({ error: 'Auction item image not found' }, { status: 404 });
     }
-    const image = Buffer.from(selectedImage.data);
+    // Lean reads avoid hydrating image arrays and Mongoose buffers. BSON Binary
+    // value() respects its used length, including buffers with spare capacity.
+    const image = Buffer.isBuffer(selectedImage.data) ? selectedImage.data : selectedImage.data.value();
     const etag = `"${createHash('sha256').update(image).digest('base64url')}"`;
     const cacheHeaders = {
       'Cache-Control': 'private, max-age=60, must-revalidate',

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import sharp from 'sharp';
+import mongoose from 'mongoose';
 import { optimizeAuctionImage, AuctionImageError } from '../lib/auctionImage.ts';
 
 // Exercise the real route handlers and validators with isolated session/database
@@ -118,7 +119,7 @@ test('image reads are sliced, private, non-sniffable and conditionally cached af
     reads++; assert.equal(itemId, id);
     return { select(projection) {
       assert.deepEqual(projection, { images: { $slice: [7, 1] }, image: 1, imageType: 1 });
-      return { images: [{ data: bytes, contentType: 'image/webp' }] };
+      return { lean: async () => ({ images: [{ data: bytes, contentType: 'image/webp' }] }) };
     } };
   };
   const path = `/api/auction/image?id=${id}&index=7`;
@@ -137,10 +138,29 @@ test('image reads are sliced, private, non-sniffable and conditionally cached af
 });
 
 test('missing items and missing image slots return 404', async () => {
-  state.findById = () => ({ select: async () => null });
+  state.findById = () => ({ select: () => ({ lean: async () => null }) });
   assert.equal((await images.GET(request())).status, 404);
-  state.findById = () => ({ select: async () => ({ images: [] }) });
+  state.findById = () => ({ select: () => ({ lean: async () => ({ images: [] }) }) });
   assert.equal((await images.GET(request())).status, 404);
+});
+
+test('lean BSON images preserve bytes, legacy slot rules, and changed-image revalidation', async () => {
+  const first = new mongoose.mongo.Binary();
+  for (const byte of Buffer.from('first-image')) first.put(byte);
+  assert.ok(first.buffer.byteLength > first.position, 'Exercise spare BSON buffer capacity');
+  let item = { images: [{ data: first, contentType: 'image/webp' }] };
+  state.findById = () => ({ select: () => ({ lean: async () => item }) });
+  const response = await images.GET(request());
+  assert.equal(Buffer.from(await response.arrayBuffer()).toString(), 'first-image');
+  assert.equal(response.headers.get('content-length'), '11');
+  const etag = response.headers.get('etag');
+  item = { images: [], image: new mongoose.mongo.Binary(Buffer.from('legacy-image')), imageType: 'image/png' };
+  const updated = await images.GET(request(undefined, { 'if-none-match': etag }));
+  assert.equal(updated.status, 200);
+  assert.notEqual(updated.headers.get('etag'), etag);
+  assert.equal(updated.headers.get('content-type'), 'image/png');
+  assert.equal(Buffer.from(await updated.arrayBuffer()).toString(), 'legacy-image');
+  assert.equal((await images.GET(request(`/api/auction/image?id=${id}&index=1`))).status, 404);
 });
 
 test('create and edit reject executable images, MIME spoofing, corrupt rasters and too many files', async () => {
