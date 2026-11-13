@@ -126,7 +126,8 @@ const createPoll = new Function('dependencies', `const {dataRef,fullRefreshCount
   clientDataVersion,liveEpoch,auctionPollPlan,lastDiscoveryAt,lastTargetAt,checkedAuctionWindows,
   refreshRef,readAuctionLiveUpdates,auctionBalanceChanged,setError,setLastSyncedAt,setData,
   rememberAuctionData,setArchiveAuctions,setWonHistory}=dependencies;
-  let mounted=true,pollInFlight=false;
+  let mounted=true,pollInFlight=false,pushConnected=false;
+  const pendingPush=dependencies.pendingPush ?? {current:undefined};
   ${stripTypeScriptTypes(source.slice(start,end))}
   return pollLiveAuctions;`);
 

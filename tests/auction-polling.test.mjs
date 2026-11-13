@@ -6,6 +6,15 @@ const auction=(remaining,extra={})=>({id:'a',status:'active',endsAt:new Date(now
 const toon={rowIndex:3,subClass:'Tank',available:100,heldPoints:0};
 const data=(a,toons=[toon],extra={})=>({auctions:[a],toons,canBidWeekly:true,...extra});
 const checked=a=>new Set([`${a.id}:${a.endsAt}`]);
+
+test('connected push spaces empty final-window checks by five minutes, with one-minute expiry recovery',()=>{
+ const a=auction(4);
+ const plan=auctionPollPlan(data(a),now,now,now,checked(a),true);
+ assert.equal(plan.delay,4*60_000, 'wake locally at expiry before the next recovery check');
+ const expired=auction(-1,{highBid:{isMine:true,rowIndex:3,amount:10},status:'settling'});
+ assert.equal(auctionPollPlan(data(expired),now,now,now,checked(expired),true).delay,60_000);
+ assert.equal(auctionPollPlan(data(a),now,now,now,checked(a),false).delay,60_000);
+});
 test('outside the final five minutes, only a local timer wakes at the boundary',()=>{
  const a=auction(6);const plan=auctionPollPlan(data(a),now,now,0);
  assert.deepEqual(plan.ids,[]);assert.deepEqual(plan.eligibilityWindows,[]);assert.equal(plan.discover,false);assert.equal(plan.delay,60_000);

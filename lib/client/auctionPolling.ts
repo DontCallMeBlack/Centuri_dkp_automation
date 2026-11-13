@@ -17,10 +17,11 @@ interface PollData { auctions: PollAuction[]; toons: PollToon[]; canBidWeekly: b
 
 /** Display scheduling only: bid acceptance always checks current server state. */
 export function auctionPollPlan(data: PollData, now: number, lastDiscoveryAt: number, lastTargetAt: number,
-  checkedWindows: ReadonlySet<string> = new Set()) {
+  checkedWindows: ReadonlySet<string> = new Set(), pushConnected = false) {
   const ids: string[] = [];
   const eligibilityWindows: string[] = [];
   let nextWindowAt = Infinity;
+  let expiredTrackedAuction = false;
   for (const auction of data.auctions) {
     const remaining = Date.parse(auction.endsAt) - now;
     if (!Number.isFinite(remaining) || remaining < -AUCTION_FINAL_WINDOW_MS) continue;
@@ -43,11 +44,18 @@ export function auctionPollPlan(data: PollData, now: number, lastDiscoveryAt: nu
         toon.available - toon.heldPoints + ownHold >= (auction.highBid?.amount ?? 0) + 1;
     });
     if (!eligible && !ownsBid) continue;
-    if (remaining <= AUCTION_FINAL_WINDOW_MS) ids.push(auction.id);
+    if (remaining <= AUCTION_FINAL_WINDOW_MS) {
+      ids.push(auction.id);
+      if (remaining <= 0) expiredTrackedAuction = true;
+      else if (pushConnected) nextWindowAt = Math.min(nextWindowAt, now + remaining);
+    }
     else nextWindowAt = Math.min(nextWindowAt, now + remaining - AUCTION_FINAL_WINDOW_MS);
   }
   const discoveryIn = Math.max(0, lastDiscoveryAt + AUCTION_DISCOVERY_MS - now);
-  const targetIn = ids.length ? Math.max(0, lastTargetAt + AUCTION_FINAL_POLL_MS - now) : Infinity;
+  // Push replaces empty checks during bidding. Expiry still drives settlement
+  // promptly, even if a notification is lost or the publisher is unavailable.
+  const interval = pushConnected && !expiredTrackedAuction ? 5 * 60_000 : AUCTION_FINAL_POLL_MS;
+  const targetIn = ids.length ? Math.max(0, lastTargetAt + interval - now) : Infinity;
   return {
     ids,
     eligibilityWindows,

@@ -98,14 +98,16 @@ fixtures['/api/auction'].auctions=[{
  id:'000000000000000000000002',itemId:'000000000000000000000003',imageCount:0,
  itemName:'Expiry check',bossType:'Bt',requiredRoles:['ranger'],createdBy:user.nickname,
  isPoster:true,isWinner:false,canMarkDelivered:false,canRemove:true,
- createdAt:new Date().toISOString(),endsAt:new Date(Date.now()+5000).toISOString(),
+ createdAt:new Date().toISOString(),endsAt:new Date(Date.now()+15_000).toISOString(),
  biddingClosed:false,status:'active',highBid:null,winner:null,deliveryStatus:'not-required',
  deliveredBy:null,deliveredAt:null,settlementError:null,canResolveNoBid:false
 }];
 await page.goto(origin+'/dashboard?view=auction');
 const expiring=page.locator('article').filter({has:page.getByRole('heading',{name:'Expiry check'})});
-await expiring.getByText('LIVE',{exact:true}).waitFor();
-await expiring.getByText('FINALIZING',{exact:true}).waitFor({timeout:10000});
+await expiring.locator('.auction-countdown').waitFor();
+assert.equal(await expiring.getAttribute('data-active'), 'true');
+await expiring.getByText('FINALIZING',{exact:true}).waitFor({timeout:25_000});
+assert.equal(await expiring.getAttribute('data-active'), 'false');
 await page.goto(origin+'/login');
 await page.getByRole('textbox',{name:'In-game nickname'}).waitFor();
 await page.getByRole('button',{name:'Request access',exact:true}).click();

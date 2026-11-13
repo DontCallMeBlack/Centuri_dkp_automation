@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 
 // Exercise the production cache/lease algorithm with isolated persistence.
-const state = globalThis.__rosterSnapshot = { mutationLoads: 0 };
+const state = globalThis.__rosterSnapshot = { readModuleLoads: 0 };
 const project = (document, fields) => {
   if (!document) return null;
   const value = structuredClone(document);
@@ -50,7 +50,9 @@ const mocks = {
     updateOne(filter,update){return globalThis.__rosterSnapshot.update(filter,update);},
   };`,
   '@/lib/mongodb': `export default async function(){globalThis.__rosterSnapshot.connections++;}`,
-  './googleSheets': `globalThis.__rosterSnapshot.mutationLoads++;
+  './googleSheets': `throw new Error('Display reads must not load financial mutations');
+    export async function fetchSheetRoster(){}`,
+  './googleSheetsRead': `globalThis.__rosterSnapshot.readModuleLoads++;
     export async function fetchSheetRoster(){globalThis.__rosterSnapshot.fetches++;return globalThis.__rosterSnapshot.fetch();}`,
 };
 const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
@@ -80,9 +82,9 @@ beforeEach(() => {
 });
 
 test('fresh cached snapshots never import financial mutations or the Sheets SDK', async () => {
-  assert.equal(state.mutationLoads, 0);
+  assert.equal(state.readModuleLoads, 0);
   const result = await getSheetRosterSnapshot();
-  assert.equal(state.mutationLoads, 0);
+  assert.equal(state.readModuleLoads, 0);
   assert.equal(state.fetches, 0);
   assert.equal(result.cacheStatus, 'cache');
   assert.equal(result.roster[0].available, 10);
@@ -98,13 +100,22 @@ test('a held refresh lease serves the stale display snapshot without loading mut
   assert.equal(result.cacheStatus, 'stale');
   assert.equal(result.roster[0].available, 10);
   assert.equal(state.fetches, 0);
-  assert.equal(state.mutationLoads, 0);
+  assert.equal(state.readModuleLoads, 0);
+});
+
+test('display snapshots reuse recent Sheet reads for two minutes', async () => {
+  state.cache.fetchedAt = new Date(Date.now() - 60_000);
+  const result = await getSheetRosterSnapshot();
+  assert.equal(result.cacheStatus, 'cache');
+  assert.equal(result.roster[0].available, 10);
+  assert.equal(state.fetches, 0);
+  assert.equal(state.readModuleLoads, 0);
 });
 
 test('stale refresh loads the Sheet fetch implementation only after acquiring the lease', async () => {
   state.cache.fetchedAt = new Date(0);
   const result = await getSheetRosterSnapshot();
-  assert.equal(state.mutationLoads, 1);
+  assert.equal(state.readModuleLoads, 1);
   assert.equal(state.fetches, 1);
   assert.equal(result.roster[0].available, 20);
   assert.equal(result.cacheStatus, 'sheet');
@@ -116,7 +127,7 @@ test('stale refresh loads the Sheet fetch implementation only after acquiring th
   state.cache.fetchedAt = new Date(0);
   await getSheetRosterSnapshot();
   assert.equal(state.fetches, 2);
-  assert.equal(state.mutationLoads, 1);
+  assert.equal(state.readModuleLoads, 1);
 });
 
 test('explicit fresh reads bypass a valid cached TTL and normal in-flight sharing', async () => {

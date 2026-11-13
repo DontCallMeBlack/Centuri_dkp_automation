@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
+import { auctionRealtimeEnabled, publishAuctionChanges } from '@/lib/auctionRealtime';
 import { createHash } from 'node:crypto';
 import type { ClientSession } from 'mongoose';
 import User from '@/lib/models/User';
@@ -670,6 +671,7 @@ export async function POST(request: Request) {
         const audit = await ClanAuditEvent.findOne({ operationKey: transferAuditKey }).select('withdrawnBids promotedBids').lean();
         bidChanges = { withdrawnBids: audit?.withdrawnBids ?? 0, promotedBids: audit?.promotedBids ?? 0 };
       }
+      if (bidChanges.withdrawnBids && auctionRealtimeEnabled()) after(() => publishAuctionChanges());
       return NextResponse.json({ success: true, ...result, ...bidChanges,
         message: `${account || owner} transferred to the new account. Its DKP was reset to 0; ${bidChanges.withdrawnBids} open bid(s) withdrawn and ${bidChanges.promotedBids} next bid(s) promoted.` }, { headers: privateHeaders });
     }

@@ -6,6 +6,7 @@ import { DkpIntegrityError } from '@/lib/dkpAccounting';
 import { RequestValidationError } from '@/lib/security/request';
 import { needsSettlementManualReview, getAuctionSettlementMutationKey } from '@/lib/auctionSettlement';
 import { auctionSettlementRecoveryStates } from '@/lib/auctionExpiryWork';
+import { publishAuctionChanges } from '@/lib/auctionRealtime';
 
 export async function settleExpiredAuctions() {
   if (process.env.DKP_WRITES_PAUSED === 'true') return;
@@ -136,4 +137,5 @@ export async function settleExpiredAuctions() {
       console.error(`Failed to settle auction ${claimed._id.toString()}`, error instanceof Error ? error.name : 'UnknownError');
     }
   }
+  if (expiredAuctions.length) await publishAuctionChanges(expiredAuctions.map((auction) => auction._id.toString()));
 }

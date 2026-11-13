@@ -7,7 +7,7 @@ export function proxy(request: NextRequest) {
     "default-src 'self'", "base-uri 'self'", "object-src 'none'", "frame-ancestors 'none'", "form-action 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${development ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'", "img-src 'self' blob: data:", "font-src 'self' data:",
-    `connect-src 'self'${development ? ' ws: wss:' : ''}`,
+    `connect-src 'self'${process.env.ABLY_API_KEY ? ' https://main.realtime.ably.net' : ''}${development ? ' ws: wss:' : ''}`,
   ].join('; ');
   const headers = new Headers(request.headers);
   headers.set('x-nonce', nonce);

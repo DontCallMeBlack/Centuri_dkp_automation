@@ -1,5 +1,7 @@
 import { getSessionUser, canManageClan } from '@/lib/auth/session';
 import { createHash } from 'node:crypto';
+import { after } from 'next/server';
+import { auctionRealtimeEnabled, publishAuctionChanges } from '@/lib/auctionRealtime';
 import { getSheetRoster } from '@/lib/sheetRosterSnapshot';
 import { createSheetRecordLinkResolver } from '@/lib/sheetRecordLinks';
 import { ITEM_SUBROLES } from '@/lib/auctionRules';
@@ -102,6 +104,7 @@ export async function POST(request: Request) {
         const audit = await ClanAuditEvent.findOne({ operationKey: `${actor._id.toString()}:${body.requestId}` }).select('withdrawnBids promotedBids').lean();
         bidChanges = { withdrawnBids: audit?.withdrawnBids ?? 0, promotedBids: audit?.promotedBids ?? 0 };
       }
+      if (bidChanges.withdrawnBids && auctionRealtimeEnabled()) after(() => publishAuctionChanges());
       return Response.json({ success: true, ...result, ...bidChanges,
         message: `Available DKP reset to 0. ${bidChanges.withdrawnBids} open auction bid(s) withdrawn; ${bidChanges.promotedBids} next bid(s) promoted.` });
     } else throw new RequestValidationError('Unknown clan toon action.');

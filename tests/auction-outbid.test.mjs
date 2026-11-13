@@ -55,14 +55,21 @@ state.model = kind => ({
 });
 state.transaction = async operation => {
   const snapshots = Object.fromEntries(Object.keys(schemaModels).map(kind => [kind, state[kind].map(plain)]));
+  state.transactionActive = true;
   try { return await operation({}); }
   catch (error) {
     for (const [kind, records] of Object.entries(snapshots)) state[kind] = records.map(record => document(kind, record));
     throw error;
   }
+  finally { state.transactionActive = false; }
 };
 const mocks = {
-  'next/server': 'export const NextResponse={json:(value,init)=>Response.json(value,init)}; export function after(){}',
+  'next/server': 'export const NextResponse={json:(value,init)=>Response.json(value,init)}; export function after(callback){globalThis.__auctionOutbid.notifications.push(callback);}',
+  '@/lib/auctionRealtime': `export function auctionRealtimeEnabled(){return true;}
+    export async function publishAuctionChanges(ids){
+      if(globalThis.__auctionOutbid.transactionActive)throw Error('Notification before commit');
+      globalThis.__auctionOutbid.published.push(ids);
+    }`,
   '@/lib/auth/session': 'export async function getSessionUser(){return globalThis.__auctionOutbid.user;}',
   '@/lib/auth/rateLimit': 'export async function limitMemberRequests(){}',
   '@/lib/auth/administration': 'export const withClanAdministrationTransaction=operation=>globalThis.__auctionOutbid.transaction(operation);',
@@ -94,6 +101,7 @@ async function bid(amount, rowIndex = 4) {
   return { status: response.status, body: await response.json() };
 }
 beforeEach(() => {
+  state.notifications = []; state.published = []; state.transactionActive = false;
   state.roster = [
     { rowIndex: 3, owner: 'Ada', account: 'Main', subClass: 'Tank', weeklyEarned: 0, weeklySpent: 0, spent: 0, available: 100, dkpIssues: [] },
     { rowIndex: 4, owner: 'Bea', account: 'Alt', subClass: 'Tank', weeklyEarned: 0, weeklySpent: 0, spent: 0, available: 100, dkpIssues: [] },
@@ -123,6 +131,10 @@ test('another user outbids a hydrated bid, releases its hold and records both bi
     ['Ada', 'Main', 20], ['Bea', 'Alt', 30],
   ]);
   assert.equal(state.AuctionHold.find(hold => hold.rowIndex === 3).owner, 'Ada');
+  assert.equal(state.published.length, 0, 'publishing is deferred until after the response');
+  assert.equal(state.notifications.length, 1);
+  await state.notifications[0]();
+  assert.deepEqual(state.published, [[current()._id.toString()]]);
 });
 
 test('a toon increases its own bid using only the additional unreserved DKP', async () => {
@@ -143,6 +155,7 @@ test('an unaffordable outbid rolls back the previous hold, new hold and bid hist
   assert.equal(current().highBid.owner, 'Ada');
   assert.equal(current().highBid.amount, 20); assert.equal(current().bidVersion, 0);
   assert.equal(state.AuctionBidHistory.length, 0);
+  assert.equal(state.notifications.length, 0, 'failed transactions never publish a change');
 });
 
 test('equal and stale bids cannot change the leader or reservations', async () => {

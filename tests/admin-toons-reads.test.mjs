@@ -35,6 +35,7 @@ const mocks = {
   '@/lib/auctionBidWithdrawal': unused(['withdrawToonOpenAuctionBids']),
 };
 const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier === 'next/server') return nextResolve('next/server.js', context);
   if (mocks[specifier]) return { url: `data:text/javascript,${encodeURIComponent(mocks[specifier])}`, shortCircuit: true };
   if (specifier.startsWith('@/')) return nextResolve(new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, context);
   return nextResolve(specifier, context);

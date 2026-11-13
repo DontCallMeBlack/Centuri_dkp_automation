@@ -19,6 +19,7 @@ import { useSessionUser } from '@/components/AppShell';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';
 import { auctionPollPlan } from '@/lib/client/auctionPolling';
 import { auctionBalanceChanged, readAuctionLiveUpdates } from '@/lib/client/auctionLiveUpdates';
+import { subscribeAuctionChanges } from '@/lib/client/auctionRealtime';
 
 interface AuctionToon {
   rowIndex: number;
@@ -89,6 +90,7 @@ function mailedItemSummary(auction: Auction) {
 }
 
 interface AuctionData {
+  realtimeEnabled?: boolean;
   nextCursor?: string | null;
   dkpIssues?: DkpCellIssue[];
   manager: boolean;
@@ -191,6 +193,9 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   const liveEpoch = useRef(0);
   const lastDiscoveryAt = useRef(Date.now());
   const lastTargetAt = useRef(0);
+  const [pushConnected, setPushConnected] = useState(false);
+  const pendingPush = useRef<Set<string> | null | undefined>(undefined);
+  const pushWake = useRef<() => void>(() => undefined);
   const checkedAuctionWindows = useRef(new Set<string>());
   const initialRefreshStarted = useRef(false);
   const refreshRef = useRef<(maxAgeMs?: number) => Promise<unknown>>(async () => undefined);
@@ -240,6 +245,18 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
   }, []);
 
   useEffect(() => {
+    if (!active || auctionView !== 'live' || !data?.realtimeEnabled || !sessionUser?.id) return;
+    return subscribeAuctionChanges((ids) => {
+      if (ids === null) pendingPush.current = null;
+      else if (pendingPush.current !== null) {
+        pendingPush.current ??= new Set();
+        for (const id of ids) pendingPush.current.add(id);
+      }
+      pushWake.current();
+    }, setPushConnected);
+  }, [active, auctionView, data?.realtimeEnabled, sessionUser?.id]);
+
+  useEffect(() => {
     if (!active || auctionView !== 'live') return;
     let mounted = true;
     let pollInFlight = false;
@@ -251,18 +268,22 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       const pollGeneration = clientDataVersion();
       const epoch = liveEpoch.current;
       try {
-        const plan = auctionPollPlan(current, Date.now(), lastDiscoveryAt.current, lastTargetAt.current, checkedAuctionWindows.current);
+        const plan = auctionPollPlan(current, Date.now(), lastDiscoveryAt.current, lastTargetAt.current, checkedAuctionWindows.current, pushConnected);
         if (plan.eligibilityWindows.length) {
           for (const key of plan.eligibilityWindows) checkedAuctionWindows.current.add(key);
           await refreshRef.current();
           lastTargetAt.current = Date.now();
           return;
         }
-        if (!plan.discover && !plan.ids.length) return;
-        const scopedAuctions = plan.discover ? current.auctions : current.auctions.filter((auction) => plan.ids.includes(auction.id));
-        if (plan.discover) lastDiscoveryAt.current = Date.now();
+        const pushed = pendingPush.current;
+        pendingPush.current = undefined;
+        const discover = plan.discover || pushed === null || Boolean(pushed && [...pushed].some((id) => !current.auctions.some((auction) => auction.id === id)));
+        const ids = pushed ? [...pushed] : plan.ids;
+        if (!discover && !ids.length) return;
+        const scopedAuctions = discover ? current.auctions : current.auctions.filter((auction) => ids.includes(auction.id));
+        if (discover) lastDiscoveryAt.current = Date.now();
         lastTargetAt.current = Date.now();
-        const result = await readAuctionLiveUpdates(scopedAuctions, plan.discover);
+        const result = await readAuctionLiveUpdates(scopedAuctions, discover);
         if (!mounted || pollGeneration !== clientDataVersion() || epoch !== liveEpoch.current) return;
         setError('');
         setLastSyncedAt(Date.now());
@@ -303,24 +324,27 @@ export default function AuctionHousePanel({ active = true }: { active?: boolean 
       window.clearTimeout(refreshTimer);
       const current = dataRef.current;
       if (!current) return;
-      const plan = auctionPollPlan(current, Date.now(), lastDiscoveryAt.current, lastTargetAt.current, checkedAuctionWindows.current);
-      const delay = document.visibilityState !== 'visible' || navigator.onLine === false ? 60_000 : plan.delay;
+      const plan = auctionPollPlan(current, Date.now(), lastDiscoveryAt.current, lastTargetAt.current, checkedAuctionWindows.current, pushConnected);
+      const delay = document.visibilityState !== 'visible' || navigator.onLine === false ? 60_000 : pendingPush.current !== undefined ? 250 : plan.delay;
       refreshTimer = window.setTimeout(() => {
         void pollLiveAuctions().finally(schedulePoll);
       }, delay);
     };
     // The local timer wakes at the final-five-minute boundary without a server call.
     const wake = () => schedulePoll();
+    const push = () => { void pollLiveAuctions().finally(schedulePoll); };
+    pushWake.current = push;
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('online', wake);
     schedulePoll();
     return () => {
       mounted = false;
+      if (pushWake.current === push) pushWake.current = () => undefined;
       window.clearTimeout(refreshTimer);
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('online', wake);
     };
-  }, [active, auctionView, data?.auctions, data?.toons, data?.canBidWeekly]);
+  }, [active, auctionView, data?.auctions, data?.toons, data?.canBidWeekly, pushConnected]);
 
   // Re-render the auction list at expiry; only countdown text updates each second.
   useEffect(() => {

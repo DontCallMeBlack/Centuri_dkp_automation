@@ -1,5 +1,6 @@
 import { after, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
+import { auctionRealtimeEnabled, publishAuctionChanges } from '@/lib/auctionRealtime';
 import mongoose from 'mongoose';
 import Auction, { type IAuction } from '@/lib/models/Auction';
 import User from '@/lib/models/User';
@@ -142,6 +143,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       manager: isManager(user.role),
+      realtimeEnabled: auctionRealtimeEnabled(),
       weeklyEarnedTotal,
       weeklyMinimum: AUCTION_WEEKLY_MINIMUM,
       canBidWeekly: weeklyEarnedTotal >= AUCTION_WEEKLY_MINIMUM,
@@ -335,6 +337,11 @@ export async function POST(req: Request) {
     }
 
     payload = await readJsonObject(req);
+    const respond = (body: Record<string, unknown>) => {
+      const ids = [payload?.auctionId, body.auctionId].filter((id): id is string => typeof id === 'string');
+      if (auctionRealtimeEnabled()) after(() => publishAuctionChanges(ids));
+      return NextResponse.json(body);
+    };
     const { withClanAdministrationTransaction } = await import('@/lib/auth/administration');
 
     if (payload.action === 'retry-settlement') {
@@ -355,7 +362,7 @@ export async function POST(req: Request) {
         await auction.save({ session });
       });
       scheduleExpirySweep();
-      return NextResponse.json({ success: true, message: 'Settlement queued for a safe retry. Reserved DKP stays protected until it finishes.' });
+      return respond({ success: true, message: 'Settlement queued for a safe retry. Reserved DKP stays protected until it finishes.' });
     }
 
     if (payload.action === 'create-auction') {
@@ -399,7 +406,7 @@ export async function POST(req: Request) {
         await AuctionCreationRequest.create([{ _id: receiptId, actorUserId: actor._id, itemId: currentItem._id, auctionId: created._id }], { session });
         return created;
       });
-      return NextResponse.json({ success: true, auctionId: auction._id.toString() });
+      return respond({ success: true, auctionId: auction._id.toString() });
     }
 
     if (payload.action === 'resolve-no-bid') {
@@ -482,7 +489,7 @@ export async function POST(req: Request) {
           }
         });
 
-        return NextResponse.json({
+        return respond({
           success: true,
           message: resolution === 'banked'
             ? 'Item marked as mailed to the bank.'
@@ -539,7 +546,7 @@ export async function POST(req: Request) {
         if (deletion.deletedCount !== 1) throw new Error('Auction could not be removed; manual review is required.');
       });
 
-      return NextResponse.json({ success: true, message: 'Auction removed and its reserved DKP released.' });
+      return respond({ success: true, message: 'Auction removed and its reserved DKP released.' });
     }
 
     if (payload.action === 'close-auction') {
@@ -579,7 +586,7 @@ export async function POST(req: Request) {
       if (!closedAuction) return NextResponse.json({ error: 'This auction ended or changed while you were closing it' }, { status: 409 });
 
       scheduleExpirySweep();
-      return NextResponse.json({ success: true, message: 'Bidding closed. The leading bid will be settled.' });
+      return respond({ success: true, message: 'Bidding closed. The leading bid will be settled.' });
     }
 
     if (payload.action === 'bid') {
@@ -690,7 +697,7 @@ export async function POST(req: Request) {
           return { highBid: currentAuction.highBid, endsAt };
         });
       });
-      return NextResponse.json({
+      return respond({
         success: true,
         message: 'Bid placed and DKP reserved until the auction ends or you are outbid.',
         highBid: serializeBid(accepted.highBid, user._id),
@@ -736,7 +743,7 @@ export async function POST(req: Request) {
       if (!auction) {
         return NextResponse.json({ error: 'This winner is already marked done or is not awaiting delivery' }, { status: 409 });
       }
-      return NextResponse.json({
+      return respond({
         success: true,
         message: 'Item marked mailed. DKP was deducted when the auction was won.',
       });

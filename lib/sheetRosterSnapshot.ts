@@ -2,7 +2,10 @@ import SheetRosterCache, { type ISheetRosterRecord } from '@/lib/models/SheetRos
 import dbConnect from '@/lib/mongodb';
 import { RequestValidationError } from '@/lib/security/request';
 
-const ROSTER_CACHE_TTL_MS = 30_000;
+// App writes invalidate this shared snapshot; financial actions still acquire
+// the ledger lock and read Sheets afresh. Only display reads reuse it for two
+// minutes, reducing repeated external refreshes while users browse the app.
+const ROSTER_CACHE_TTL_MS = 120_000;
 const ROSTER_REFRESH_LOCK_MS = 20_000;
 const ROSTER_REFRESH_WAIT_MS = 15_000;
 const ROSTER_CACHE_POLL_MS = 250;
@@ -134,7 +137,7 @@ async function readSheetRosterSnapshot(options: { fresh?: boolean } = {}) {
 
     if (acquired) {
       try {
-        const { fetchSheetRoster } = await import('./googleSheets');
+        const { fetchSheetRoster } = await import('./googleSheetsRead');
         const roster = await fetchSheetRoster();
         const saved = await SheetRosterCache.updateOne(
           {
