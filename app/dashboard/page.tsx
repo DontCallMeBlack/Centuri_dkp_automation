@@ -104,6 +104,7 @@ function Dashboard() {
   const deferredMemberQuery = useDeferredValue(memberQuery);
   const [submitting, setSubmitting] = useState(false);
   const [pendingAward, setPendingAward] = useState<{ rows: number[]; points: number; bossName: string } | null>(null);
+  const [confirmingAward, setConfirmingAward] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const router = useRouter();
 
@@ -143,6 +144,7 @@ function Dashboard() {
 
   const openAwardPicker = async () => {
     setAwardError('');
+    setConfirmingAward(false);
     setPickerQuery('');
     setPickerOpen(true);
     setPickerRefreshing(true);
@@ -161,6 +163,10 @@ function Dashboard() {
     if (!sessionUser?.id) { setAwardError('Your session is still loading. Try again in a moment.'); return; }
     if (selectedMembers.length === 0 || submitting) {
       setAwardError('Please select at least one member.');
+      return;
+    }
+    if (!confirmingAward) {
+      setConfirmingAward(true);
       return;
     }
 
@@ -356,7 +362,7 @@ function Dashboard() {
       </div>
 
       {pickerOpen && (
-        <Dialog labelledBy="award-picker-title" busy={submitting} onClose={() => setPickerOpen(false)}>
+        <Dialog labelledBy={confirmingAward ? 'award-confirm-title' : 'award-picker-title'} busy={submitting} onClose={() => { setPickerOpen(false); setConfirmingAward(false); }}>
             <div className="relative shrink-0 overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950/80 via-slate-900 to-violet-950/80 px-4 py-3.5 sm:px-5">
               <div className="pointer-events-none absolute -right-8 -top-16 h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl" />
               <div className="relative flex min-w-0 items-start justify-between gap-3">
@@ -377,7 +383,29 @@ function Dashboard() {
               </div>
             </div>
 
-            <form onSubmit={handleDkpSubmit} className="flex min-h-0 flex-1 flex-col"><fieldset disabled={submitting} className="contents"><legend className="sr-only">Boss and participants</legend>
+            <form onSubmit={handleDkpSubmit} className="flex min-h-0 flex-1 flex-col">{confirmingAward ? (
+              <section className="relative flex min-h-[420px] flex-1 flex-col items-center justify-center overflow-hidden px-5 py-10 text-center sm:px-10" aria-labelledby="award-confirm-title">
+                <div className="pointer-events-none absolute -left-16 -top-20 h-56 w-56 rounded-full bg-amber-300/10 blur-3xl" />
+                <div className="pointer-events-none absolute -bottom-24 -right-12 h-64 w-64 rounded-full bg-indigo-400/15 blur-3xl" />
+                <div className="relative w-full max-w-md">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-amber-200/20 bg-gradient-to-br from-amber-300/20 to-orange-400/10 text-amber-200 shadow-lg shadow-amber-950/30"><Swords className="h-7 w-7" /></div>
+                  <p className="mt-5 text-[10px] font-bold uppercase tracking-[.22em] text-indigo-300">Award review · step 2 of 2</p>
+                  <h2 id="award-confirm-title" className="mt-3 text-2xl font-black leading-tight text-white sm:text-3xl">Do you confirm having drops for another set?</h2>
+                  <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-400">Confirm to award DKP for this kill to the selected attendees.</p>
+                  <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-slate-950/50 p-3 text-left">
+                    <div><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Boss defeated</p><p className="mt-1 text-sm font-semibold text-white">{selectedBoss}</p></div>
+                    <div><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Attendance reward</p><p className="mt-1 text-sm font-semibold text-emerald-300">+{BOSSES.find((boss) => boss.name === selectedBoss)?.points ?? 0} DKP</p></div>
+                    <div className="col-span-2 border-t border-white/[.07] pt-2"><p className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Attendees</p><p className="mt-1 text-sm font-semibold text-indigo-200">{selectedMembers.length} selected</p></div>
+                  </div>
+                  {awardError && <p role="alert" className="mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-200">{awardError}</p>}
+                  <div className="mt-6 flex flex-col-reverse justify-center gap-2 sm:flex-row">
+                    <button type="button" onClick={() => { setPickerOpen(false); setConfirmingAward(false); setSelectedMembers([]); setPickerQuery(''); setAwardError(''); }} disabled={submitting} className="h-11 rounded-xl border border-slate-700 bg-slate-900/70 px-5 text-sm font-semibold text-slate-300 transition hover:border-slate-500 hover:bg-slate-800 disabled:opacity-50">Cancel</button>
+                    <button type="submit" disabled={submitting || selectedMembers.length === 0} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 px-5 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-950/40 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">{submitting ? <Zap className="h-4 w-4 animate-pulse" /> : <CheckCircle2 className="h-4 w-4" />}{submitting ? 'Awarding DKP…' : 'Confirm & award DKP'}</button>
+                  </div>
+                </div>
+              </section>
+            ) : (
+            <fieldset disabled={submitting} className="contents"><legend className="sr-only">Boss and participants</legend>
               {awardError && <p role="alert" className="mx-5 mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-xs text-rose-200">{awardError}</p>}
               <div className="grid gap-3 border-b border-slate-800 px-5 py-3.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,.8fr)] sm:px-6">
                 <label className="block text-[10px] font-bold uppercase tracking-[.14em] text-slate-400">
@@ -469,7 +497,7 @@ function Dashboard() {
               <div className="flex flex-col-reverse gap-1.5 border-t border-slate-800 bg-slate-950/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <button
                   type="button"
-                  onClick={() => setPickerOpen(false)}
+                  onClick={() => { setPickerOpen(false); setSelectedMembers([]); setPickerQuery(''); setAwardError(''); }}
                   disabled={submitting}
                   className="h-8 rounded-lg border border-slate-700 px-3 text-[11px] font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
                 >
@@ -481,10 +509,11 @@ function Dashboard() {
                   className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-3.5 text-xs font-bold text-white shadow-md shadow-indigo-950/30 transition hover:from-indigo-400 hover:to-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? <Zap className="h-4 w-4 animate-pulse" /> : <Plus className="h-4 w-4" />}
-                  {submitting ? 'Recording kill...' : `Record kill · ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
+                  {submitting ? 'Recording kill...' : `Review award · ${selectedMembers.length} toon${selectedMembers.length === 1 ? '' : 's'}`}
                 </button>
               </div>
-            </fieldset></form>
+            </fieldset>
+            )}</form>
         </Dialog>
       )}
     </div>
