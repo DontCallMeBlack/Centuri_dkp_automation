@@ -523,10 +523,10 @@ The website’s client performs useful validation and disables many invalid cont
 ## 18. DG and BDG gear requests
 
 - Chiefs and Generals manage the Gear requests page. They enter requests that were made in Discord against the toon chosen for that set type.
-- Google Sheets columns J and K are labeled **DG** and **BDG**. A blank cell means no request or gear record, `R` means requested (including a winner pending mail), and `X` means the set was mailed and the toon is geared.
+- Google Sheets columns J and K are labeled **DG** and **BDG**. A blank cell means no request or gear record, `R` means requested (including a winner pending mail), and `X by <source toon>` means the recipient was mailed that set using the source toon’s DKP.
 - DG winners rank by all-time earned DKP (column F); BDG winners rank by five-week activity (column I). Equal scores go to the oldest saved request.
-- Each toon is tracked separately for each set type. A toon marked `X` cannot be reused for that same type; a player may use another toon they own.
-- Reveal claims the next eligible request and marks it pending mail in the app. Further reveals skip pending-mail and geared requests without resetting any sheet status. Confirm mailed changes the corresponding Sheet marker from `R` to `X`.
+- Each request is tied to the requester’s linked account and the toon whose DKP is used. After reveal, staff choose one of that account’s linked toons as the recipient. A source toon whose DKP has been used for a set cannot request that set type again; the requester may use another toon.
+- Reveal claims the next eligible request and marks it pending mail in the app. Further reveals skip pending-mail and spent-source requests without resetting any sheet status. Confirm mailed clears the source toon’s `R` and writes `X by <source toon>` on the recipient toon.
 - Staff may remove a request before it wins. The app retains its prior request record and timestamps. Manager and mailing actor details are stored with the request history.
 - Interrupted changes can be completed with **Finish interrupted change** by a Chief or General. The next financial worker also recovers a staged change before starting new financial work. Direct Sheet edits still require coordinated maintenance; Google Sheets and MongoDB do not share one atomic transaction.
 - Management reads permit 120 requests per member per minute; roster writes permit 20. Mutations require the same origin and bounded JSON, and respond with safe errors.

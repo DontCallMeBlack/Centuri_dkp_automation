@@ -307,7 +307,7 @@ export async function withDkpLedgerLock<T>(operation: (roster: ISheetRosterRecor
   });
 }
 
-export async function writeGearStatus(input: { rowIndex: number; setType: 'DG' | 'BDG'; status: '' | 'R' | 'X'; expected: '' | 'R' | 'X'; expectedIdentity: { owner: string; account: string } }) {
+export async function writeGearStatus(input: { rowIndex: number; setType: 'DG' | 'BDG'; status: string; expected: string; expectedIdentity: { owner: string; account: string } }) {
   assertDkpWritesEnabled();
   await dbConnect();
   const spreadsheetId = getSpreadsheetId();
@@ -339,7 +339,7 @@ export async function writeGearStatus(input: { rowIndex: number; setType: 'DG' |
     if (getSheetRecordKey({ owner, account }) !== getSheetRecordKey(input.expectedIdentity)) {
       throw new DkpIntegrityError('That roster row now belongs to a different toon. Refresh the gear list before changing its gear status.');
     }
-    const actual = String(statuses[input.rowIndex - 3]?.[input.setType === 'DG' ? 0 : 1] ?? '') as '' | 'R' | 'X';
+    const actual = String(statuses[input.rowIndex - 3]?.[input.setType === 'DG' ? 0 : 1] ?? '');
     if (actual !== input.expected) throw new DkpIntegrityError('The gear status changed in Google Sheets. Refresh the gear list before trying again.');
     await assertLedgerLock(spreadsheetId, lockId);
     await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
@@ -349,6 +349,66 @@ export async function writeGearStatus(input: { rowIndex: number; setType: 'DG' |
     await assertLedgerLock(spreadsheetId, lockId);
     await invalidateSheetRosterCache();
     return { owner, account };
+  });
+}
+
+export async function writeGearAward(input: {
+  setType: 'DG' | 'BDG'; source: { rowIndex: number; owner: string; account: string };
+  recipient: { rowIndex: number; owner: string; account: string };
+}) {
+  assertDkpWritesEnabled();
+  await dbConnect();
+  const spreadsheetId = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(spreadsheetId);
+  return withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    const sheets = await createSheetsClient();
+    const header = await withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({
+      spreadsheetId, range: `${SHEET_NAME}!J2:K2`, valueRenderOption: 'UNFORMATTED_VALUE',
+    }), true);
+    const headerValues = header.data.values?.[0] ?? [];
+    const dgHeader = String(headerValues[0] ?? '').trim();
+    const bdgHeader = String(headerValues[1] ?? '').trim();
+    if ((dgHeader && dgHeader !== 'DG') || (bdgHeader && bdgHeader !== 'BDG')) {
+      throw new DkpIntegrityError('Google Sheets columns J and K must be labeled DG and BDG before gear tracking can be used.');
+    }
+    if (!dgHeader || !bdgHeader) {
+      await assertLedgerLock(spreadsheetId, lockId);
+      await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
+        spreadsheetId, range: `${SHEET_NAME}!J2:K2`, valueInputOption: 'RAW', requestBody: { values: [['DG', 'BDG']] },
+      }), false);
+    }
+    const sourceColumn = `${input.setType === 'DG' ? 'J' : 'K'}`;
+    const [sourceIdentity, recipientIdentity, statuses] = await Promise.all([
+      withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({ spreadsheetId, range: `${SHEET_NAME}!A${input.source.rowIndex}:B${input.source.rowIndex}`, valueRenderOption: 'UNFORMATTED_VALUE' }), true),
+      input.source.rowIndex === input.recipient.rowIndex ? Promise.resolve(null) : withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({ spreadsheetId, range: `${SHEET_NAME}!A${input.recipient.rowIndex}:B${input.recipient.rowIndex}`, valueRenderOption: 'UNFORMATTED_VALUE' }), true),
+      readGearStatuses(sheets),
+    ]);
+    const actualIdentity = (result: typeof sourceIdentity) => ({ owner: String(result.data.values?.[0]?.[0] ?? '').trim(), account: String(result.data.values?.[0]?.[1] ?? '').trim() });
+    const source = actualIdentity(sourceIdentity);
+    const recipient = recipientIdentity ? actualIdentity(recipientIdentity) : source;
+    if (!source.owner || getSheetRecordKey(source) !== getSheetRecordKey(input.source) || !recipient.owner || getSheetRecordKey(recipient) !== getSheetRecordKey(input.recipient)) {
+      throw new DkpIntegrityError('A selected roster toon changed. Refresh the gear list and choose the recipient again.');
+    }
+    const statusIndex = input.setType === 'DG' ? 0 : 1;
+    const sourceStatus = String(statuses[input.source.rowIndex - 3]?.[statusIndex] ?? '');
+    const recipientStatus = input.source.rowIndex === input.recipient.rowIndex ? sourceStatus : String(statuses[input.recipient.rowIndex - 3]?.[statusIndex] ?? '');
+    if (sourceStatus !== 'R' || recipientStatus !== (input.source.rowIndex === input.recipient.rowIndex ? 'R' : '')) {
+      throw new DkpIntegrityError('A source or recipient gear status changed. Refresh the gear list before confirming mail.');
+    }
+    const attribution = `X by ${input.source.account || input.source.owner}`;
+    const data = input.source.rowIndex === input.recipient.rowIndex
+      ? [{ range: `${SHEET_NAME}!${sourceColumn}${input.source.rowIndex}`, values: [[attribution]] }]
+      : [
+          { range: `${SHEET_NAME}!${sourceColumn}${input.source.rowIndex}`, values: [['']] },
+          { range: `${SHEET_NAME}!${sourceColumn}${input.recipient.rowIndex}`, values: [[attribution]] },
+        ];
+    await assertLedgerLock(spreadsheetId, lockId);
+    await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId, requestBody: { valueInputOption: 'RAW', data },
+    }), false);
+    await assertLedgerLock(spreadsheetId, lockId);
+    await invalidateSheetRosterCache();
+    return { attribution };
   });
 }
 
@@ -894,9 +954,11 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
     }
     for (const move of pending.compaction?.moves ?? []) {
       await GearRequest.updateMany({ rowIndex: move.fromRow, owner: move.owner, account: move.account }, { $set: { rowIndex: move.toRow } }, { session });
+      await GearRequest.updateMany({ recipientRowIndex: move.fromRow, recipientOwner: move.owner, recipientAccount: move.account }, { $set: { recipientRowIndex: move.toRow } }, { session });
     }
     if (pending.action === 'restore') {
       await GearRequest.updateMany({ owner: pending.owner, account: pending.account }, { $set: { rowIndex: pending.rowIndex } }, { session });
+      await GearRequest.updateMany({ recipientOwner: pending.owner, recipientAccount: pending.account }, { $set: { recipientRowIndex: pending.rowIndex } }, { session });
     }
     if (pending.action === 'remove') {
       await AuctionHold.deleteMany({ $or: [
