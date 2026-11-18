@@ -138,6 +138,14 @@ export async function POST(request: Request) {
 
     if (action === 'request') {
       if (current && ['requested', 'pending-mail'].includes(current.status)) return NextResponse.json({ error: 'This toon already has an active request for this set type.' }, { status: 409 });
+      const sourceAlreadyAwarded = await GearRequest.exists({
+        setType,
+        rowIndex: toon.rowIndex,
+        owner: toon.owner,
+        account: toon.account,
+        status: { $in: ['awarded', 'geared'] },
+      });
+      if (sourceAlreadyAwarded) return NextResponse.json({ error: `This DKP toon has already funded its one ${setType} set.` }, { status: 409 });
       const members = await User.find({ status: 'approved' }).select('_id nickname sheetRecordName sheetRecords').lean();
       const requester = members.find((member) => getLinkedSheetRecordRows(member, snapshot.roster).includes(toon.rowIndex));
       if (!requester) return NextResponse.json({ error: 'Link this requester toon to an approved account before adding a gear request.' }, { status: 409 });
