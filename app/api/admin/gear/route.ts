@@ -4,7 +4,7 @@ import { getSheetRosterSnapshot } from '@/lib/sheetRosterSnapshot';
 import GearRequest from '@/lib/models/GearRequest';
 import User from '@/lib/models/User';
 import { getSheetRecordKey, getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
-import { writeGearAward, writeGearStatus } from '@/lib/googleSheets';
+import { normalizeGearStatusMarkers, writeGearAward, writeGearStatus } from '@/lib/googleSheets';
 import { readGearStatuses } from '@/lib/googleSheetsRead';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
 
@@ -13,6 +13,11 @@ export const maxDuration = 30;
 const noStore = { 'Cache-Control': 'private, no-store' };
 type SetType = 'DG' | 'BDG';
 const validSetType = (value: unknown): value is SetType => value === 'DG' || value === 'BDG';
+const gearFlag = (value: unknown) => {
+  const marker = String(value ?? '').trim().toUpperCase();
+  return marker === 'X' || marker.startsWith('X BY ') ? 'X' : '';
+};
+const activeKeyFor = (setType: SetType, toon: { owner: string; account: string }) => `${setType}:${getSheetRecordKey(toon)}`;
 
 async function requireManager() {
   const user = await getSessionUser();
@@ -25,10 +30,14 @@ export async function GET() {
   try {
     const auth = await requireManager();
     if (!auth.ok) return auth.response;
-    const [snapshot, records, gearStatuses, members] = await Promise.all([
+    let gearStatuses = await readGearStatuses();
+    if (gearStatuses.some((row) => row.some((marker) => marker && gearFlag(marker) !== marker))) {
+      await normalizeGearStatusMarkers();
+      gearStatuses = await readGearStatuses();
+    }
+    const [snapshot, records, members] = await Promise.all([
       getSheetRosterSnapshot({ fresh: true }),
       GearRequest.find().sort({ requestedAt: -1 }).lean(),
-      readGearStatuses(),
       User.find({ status: 'approved' }).select('_id nickname sheetRecordName sheetRecords').lean(),
     ]);
     const requesterByRow = new Map<number, { id: string; nickname: string; toons: Array<{ rowIndex: number; owner: string; account: string }> }>();
@@ -47,8 +56,8 @@ export async function GET() {
     }
     const toons = snapshot.roster.map((toon) => ({
       ...toon,
-      dg: gearStatuses[toon.rowIndex - 3]?.[0] ?? '',
-      bdg: gearStatuses[toon.rowIndex - 3]?.[1] ?? '',
+      dg: gearFlag(gearStatuses[toon.rowIndex - 3]?.[0]),
+      bdg: gearFlag(gearStatuses[toon.rowIndex - 3]?.[1]),
       requester: requesterByRow.get(toon.rowIndex) ? { id: requesterByRow.get(toon.rowIndex)!.id, nickname: requesterByRow.get(toon.rowIndex)!.nickname } : null,
       requesterToons: requesterByRow.get(toon.rowIndex)?.toons ?? [],
       dgRequest: latest.get(`DG:${getSheetRecordKey(toon)}`) ?? null,
@@ -90,9 +99,8 @@ export async function POST(request: Request) {
       const candidates = snapshot.roster.flatMap((toon) => {
         const record = latest.get(getSheetRecordKey(toon));
         const score = toon[scoreField];
-        const marker = gearStatuses[toon.rowIndex - 3]?.[setType === 'DG' ? 0 : 1] ?? '';
         const requester = requesterByRow.get(toon.rowIndex);
-        return record?.status === 'requested' && marker === 'R' && typeof score === 'number' && requester
+        return record?.status === 'requested' && typeof score === 'number' && requester
           ? [{ record, toon, score, requester }]
           : [];
       }).sort((a, b) => b.score - a.score || a.record.requestedAt.getTime() - b.record.requestedAt.getTime());
@@ -108,8 +116,8 @@ export async function POST(request: Request) {
           requesterId: String(candidate.requester._id), requesterNickname: candidate.requester.nickname,
           recipientToons: getLinkedSheetRecordRows(candidate.requester, snapshot.roster).flatMap((linkedRow) => {
             const recipient = snapshot.roster.find((entry) => entry.rowIndex === linkedRow);
-            const recipientMarker = gearStatuses[linkedRow - 3]?.[setType === 'DG' ? 0 : 1] ?? '';
-            return recipient && (recipientMarker === '' || linkedRow === candidate.toon.rowIndex)
+            const recipientMarker = gearFlag(gearStatuses[linkedRow - 3]?.[setType === 'DG' ? 0 : 1]);
+            return recipient && recipientMarker === ''
               ? [{ rowIndex: recipient.rowIndex, owner: recipient.owner, account: recipient.account }]
               : [];
           }),
@@ -125,32 +133,34 @@ export async function POST(request: Request) {
     const toon = snapshot.roster.find((item) => item.rowIndex === Number(rowIndex));
     if (!toon) return NextResponse.json({ error: 'That toon is no longer on the roster.' }, { status: 404 });
     const gearStatuses = await readGearStatuses();
-    const currentStatus = gearStatuses[toon.rowIndex - 3]?.[setType === 'DG' ? 0 : 1] ?? '';
+    const currentStatus = String(gearStatuses[toon.rowIndex - 3]?.[setType === 'DG' ? 0 : 1] ?? '').trim();
     const current = await GearRequest.findOne({ setType, rowIndex: Number(rowIndex), owner: toon.owner, account: toon.account }).sort({ requestedAt: -1 }).lean();
 
     if (action === 'request') {
-      if (await GearRequest.exists({ setType, owner: toon.owner, account: toon.account, status: { $in: ['awarded', 'geared'] } })) {
-        return NextResponse.json({ error: 'This toon has already spent its DKP on a set of this type. Use another toon.' }, { status: 409 });
-      }
-      if (currentStatus !== '' || current && current.status !== 'cancelled') return NextResponse.json({ error: 'This toon already has an active or completed gear record.' }, { status: 409 });
+      if (current && ['requested', 'pending-mail'].includes(current.status)) return NextResponse.json({ error: 'This toon already has an active request for this set type.' }, { status: 409 });
       const members = await User.find({ status: 'approved' }).select('_id nickname sheetRecordName sheetRecords').lean();
       const requester = members.find((member) => getLinkedSheetRecordRows(member, snapshot.roster).includes(toon.rowIndex));
       if (!requester) return NextResponse.json({ error: 'Link this requester toon to an approved account before adding a gear request.' }, { status: 409 });
       const score = setType === 'DG' ? toon.earned : toon.fiveWeekActivity;
       if (typeof score !== 'number') return NextResponse.json({ error: `The ${setType} ranking score for this toon is unavailable in the Sheet.` }, { status: 409 });
-      const linkedStatus = await writeGearStatus({ rowIndex: Number(rowIndex), setType, status: 'R', expected: '', expectedIdentity: toon });
-      const record = await GearRequest.create({ setType, rowIndex: Number(rowIndex), ...linkedStatus,
-        requesterUserId: String(requester._id), status: 'requested', requestedBy: auth.user.nickname, requestedAt: new Date() });
-      return NextResponse.json({ success: true, message: `${linkedStatus.account || linkedStatus.owner} added to ${setType} requests.`, requestId: String(record._id) }, { headers: noStore });
+      if (currentStatus === 'R' || currentStatus.toUpperCase().startsWith('X BY ')) {
+        await writeGearStatus({ rowIndex: Number(rowIndex), setType, status: currentStatus === 'R' ? '' : 'X', expected: currentStatus, expectedIdentity: toon });
+      }
+      const record = await GearRequest.create({ setType, rowIndex: Number(rowIndex), owner: toon.owner, account: toon.account,
+        activeKey: activeKeyFor(setType, toon), requesterUserId: String(requester._id), status: 'requested',
+        requestedBy: auth.user.nickname, requestedAt: new Date() });
+      return NextResponse.json({ success: true, message: `${toon.account || toon.owner} added to ${setType} requests.`, requestId: String(record._id) }, { headers: noStore });
     }
 
     if (action === 'cancel') {
-      if (!current || !['requested', 'cancelled'].includes(current.status) || currentStatus !== 'R') return NextResponse.json({ error: 'Only a request that has not won can be removed.' }, { status: 409 });
+      if (!current || !['requested', 'cancelled'].includes(current.status)) return NextResponse.json({ error: 'Only a request that has not won can be removed.' }, { status: 409 });
       if (current.status === 'requested') {
-        const cancelled = await GearRequest.findOneAndUpdate({ _id: current._id, status: 'requested' }, { $set: { status: 'cancelled' } }, { returnDocument: 'after' }).lean();
+        const cancelled = await GearRequest.findOneAndUpdate({ _id: current._id, status: 'requested' }, { $set: { status: 'cancelled' }, $unset: { activeKey: 1 } }, { returnDocument: 'after' }).lean();
         if (!cancelled) return NextResponse.json({ error: 'This request was already claimed as a winner. Refresh the gear list.' }, { status: 409 });
       }
-      await writeGearStatus({ rowIndex: Number(rowIndex), setType, status: '', expected: 'R', expectedIdentity: toon });
+      if (currentStatus === 'R' || currentStatus.toUpperCase().startsWith('X BY ')) {
+        await writeGearStatus({ rowIndex: Number(rowIndex), setType, status: currentStatus === 'R' ? '' : 'X', expected: currentStatus, expectedIdentity: toon });
+      }
       return NextResponse.json({ success: true, message: `${toon.account || toon.owner} removed from ${setType} requests.` }, { headers: noStore });
     }
 
@@ -168,23 +178,29 @@ export async function POST(request: Request) {
       const recipientIsLinked = getLinkedSheetRecordRows(requester, snapshot.roster).includes(selectedRecipientRow);
       const recipientToon = recipientIsLinked ? snapshot.roster.find((entry) => entry.rowIndex === selectedRecipientRow) : undefined;
       if (!recipientToon) return NextResponse.json({ error: 'Choose a toon linked to the requester account.' }, { status: 400 });
-      const recipientStatus = gearStatuses[selectedRecipientRow - 3]?.[setType === 'DG' ? 0 : 1] ?? '';
-      const expectedAttribution = `X by ${toon.account || toon.owner}`;
-      const sourceStatus = gearStatuses[toon.rowIndex - 3]?.[setType === 'DG' ? 0 : 1] ?? '';
-      const awardAlreadyWritten = recipientStatus === expectedAttribution && (selectedRecipientRow === toon.rowIndex || sourceStatus === '');
-      if (recipientStatus !== '' && selectedRecipientRow !== toon.rowIndex && !awardAlreadyWritten) return NextResponse.json({ error: 'That toon already has a request or a gear record for this set type.' }, { status: 409 });
+      const recipientStatus = gearFlag(gearStatuses[selectedRecipientRow - 3]?.[setType === 'DG' ? 0 : 1]);
+      const recipientAlreadyAwarded = await GearRequest.exists({ setType, recipientOwner: recipientToon.owner, recipientAccount: recipientToon.account, status: { $in: ['awarded', 'geared'] } });
+      const competingPending = current.recipientRowIndex === selectedRecipientRow && await GearRequest.exists({
+        _id: { $ne: current._id }, setType, recipientRowIndex: selectedRecipientRow, status: 'pending-mail',
+      });
+      const awardAlreadyWritten = recipientStatus === 'X' && current.recipientRowIndex === selectedRecipientRow && !competingPending && !recipientAlreadyAwarded;
+      if (recipientStatus === 'X' && !awardAlreadyWritten) return NextResponse.json({ error: 'That recipient toon is already geared for this set type.' }, { status: 409 });
+      if (recipientAlreadyAwarded && !awardAlreadyWritten) return NextResponse.json({ error: 'That recipient toon already has a saved gear award for this set type.' }, { status: 409 });
       if (selectedRecipientRow !== toon.rowIndex && await GearRequest.exists({ setType, rowIndex: selectedRecipientRow, owner: recipientToon.owner, account: recipientToon.account, status: { $in: ['requested', 'pending-mail'] } })) {
         return NextResponse.json({ error: 'That toon has an active request of its own. Choose a different toon.' }, { status: 409 });
       }
+      if (await GearRequest.exists({ setType, owner: toon.owner, account: toon.account,
+        recipientOwner: recipientToon.owner, recipientAccount: recipientToon.account,
+        status: { $in: ['awarded', 'geared'] } })) {
+        if (!awardAlreadyWritten) return NextResponse.json({ error: 'This DKP toon has already funded a set of this type for that recipient.' }, { status: 409 });
+      }
       if (awardAlreadyWritten) {
-        const terminalStatus = selectedRecipientRow === toon.rowIndex ? 'geared' : 'awarded';
         await GearRequest.updateOne({ _id: current._id, status: 'pending-mail' }, { $set: {
-          status: terminalStatus, requesterUserId: String(requester._id), recipientRowIndex: selectedRecipientRow,
+          status: 'awarded', requesterUserId: String(requester._id), recipientRowIndex: selectedRecipientRow,
           recipientOwner: recipientToon.owner, recipientAccount: recipientToon.account, mailedAt: current.mailedAt ?? new Date(), mailedBy: current.mailedBy ?? auth.user.nickname,
-        } });
+        }, $unset: { activeKey: 1 } });
         return NextResponse.json({ success: true, message: `${recipientToon.account || recipientToon.owner} marked as geared for ${setType} by ${toon.account || toon.owner}.` }, { headers: noStore });
       }
-      if (sourceStatus !== 'R') return NextResponse.json({ error: 'The source request status changed. Refresh the gear list before confirming mail.' }, { status: 409 });
       await GearRequest.updateOne({ _id: current._id, status: 'pending-mail' }, { $set: {
         requesterUserId: String(requester._id), recipientRowIndex: selectedRecipientRow,
         recipientOwner: recipientToon.owner, recipientAccount: recipientToon.account,
@@ -195,10 +211,10 @@ export async function POST(request: Request) {
         recipient: { rowIndex: recipientToon.rowIndex, owner: recipientToon.owner, account: recipientToon.account },
       });
       await GearRequest.updateOne({ _id: current._id, status: 'pending-mail' }, { $set: {
-        status: selectedRecipientRow === toon.rowIndex ? 'geared' : 'awarded', requesterUserId: String(requester._id), recipientRowIndex: selectedRecipientRow,
+        status: 'awarded', requesterUserId: String(requester._id), recipientRowIndex: selectedRecipientRow,
         recipientOwner: recipientToon.owner, recipientAccount: recipientToon.account,
         mailedAt: new Date(), mailedBy: auth.user.nickname,
-      } });
+      }, $unset: { activeKey: 1 } });
       return NextResponse.json({ success: true, message: `${recipientToon.account || recipientToon.owner} marked as geared for ${setType} by ${toon.account || toon.owner}.` }, { headers: noStore });
     }
 

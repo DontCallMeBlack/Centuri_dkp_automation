@@ -6,6 +6,7 @@ export interface IGearRequest extends mongoose.Document {
   owner: string;
   account: string;
   status: 'requested' | 'pending-mail' | 'geared' | 'awarded' | 'cancelled';
+  activeKey?: string;
   requesterUserId?: string;
   requestedBy: string;
   requestedAt: Date;
@@ -25,6 +26,7 @@ const GearRequestSchema = new Schema<IGearRequest>({
   owner: { type: String, required: true },
   account: { type: String, default: '' },
   status: { type: String, enum: ['requested', 'pending-mail', 'geared', 'awarded', 'cancelled'], required: true },
+  activeKey: { type: String },
   requesterUserId: { type: String },
   requestedBy: { type: String, required: true },
   requestedAt: { type: Date, required: true },
@@ -38,6 +40,7 @@ const GearRequestSchema = new Schema<IGearRequest>({
 
 GearRequestSchema.index({ setType: 1, rowIndex: 1, createdAt: -1 });
 GearRequestSchema.index({ setType: 1, status: 1, requestedAt: 1 });
+GearRequestSchema.index({ activeKey: 1 }, { unique: true, sparse: true });
 
 const GearRequest: Model<IGearRequest> = mongoose.models.GearRequest || mongoose.model<IGearRequest>('GearRequest', GearRequestSchema);
 export default GearRequest;

@@ -352,6 +352,36 @@ export async function writeGearStatus(input: { rowIndex: number; setType: 'DG' |
   });
 }
 
+/** Keep Sheet columns J/K as geared/not-geared flags; request state lives in MongoDB. */
+export async function normalizeGearStatusMarkers() {
+  await dbConnect();
+  const spreadsheetId = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(spreadsheetId);
+  return withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    const sheets = await createSheetsClient();
+    const rows = await readGearStatuses(sheets);
+    const data: Array<{ range: string; values: string[][] }> = [];
+    for (const [rowOffset, row] of rows.entries()) {
+      for (const [columnOffset, raw] of row.entries()) {
+        const marker = String(raw ?? '').trim();
+        if (!marker) continue;
+        const normalized = marker.toUpperCase() === 'X' || marker.toUpperCase().startsWith('X BY ') ? 'X' : '';
+        if (normalized === marker) continue;
+        const column = columnOffset === 0 ? 'J' : 'K';
+        data.push({ range: `${SHEET_NAME}!${column}${rowOffset + 3}`, values: [[normalized]] });
+      }
+    }
+    if (!data.length) return false;
+    await assertLedgerLock(spreadsheetId, lockId);
+    await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId, requestBody: { valueInputOption: 'RAW', data },
+    }), false);
+    await assertLedgerLock(spreadsheetId, lockId);
+    await invalidateSheetRosterCache();
+    return true;
+  });
+}
+
 export async function writeGearAward(input: {
   setType: 'DG' | 'BDG'; source: { rowIndex: number; owner: string; account: string };
   recipient: { rowIndex: number; owner: string; account: string };
@@ -390,25 +420,25 @@ export async function writeGearAward(input: {
       throw new DkpIntegrityError('A selected roster toon changed. Refresh the gear list and choose the recipient again.');
     }
     const statusIndex = input.setType === 'DG' ? 0 : 1;
-    const sourceStatus = String(statuses[input.source.rowIndex - 3]?.[statusIndex] ?? '');
-    const recipientStatus = input.source.rowIndex === input.recipient.rowIndex ? sourceStatus : String(statuses[input.recipient.rowIndex - 3]?.[statusIndex] ?? '');
-    if (sourceStatus !== 'R' || recipientStatus !== (input.source.rowIndex === input.recipient.rowIndex ? 'R' : '')) {
-      throw new DkpIntegrityError('A source or recipient gear status changed. Refresh the gear list before confirming mail.');
+    const sourceStatus = String(statuses[input.source.rowIndex - 3]?.[statusIndex] ?? '').trim();
+    const recipientStatus = String(statuses[input.recipient.rowIndex - 3]?.[statusIndex] ?? '').trim();
+    if (recipientStatus === 'X' || recipientStatus.toUpperCase().startsWith('X BY ')) {
+      throw new DkpIntegrityError('That recipient toon is already geared for this set type.');
     }
-    const attribution = `X by ${input.source.account || input.source.owner}`;
-    const data = input.source.rowIndex === input.recipient.rowIndex
-      ? [{ range: `${SHEET_NAME}!${sourceColumn}${input.source.rowIndex}`, values: [[attribution]] }]
-      : [
-          { range: `${SHEET_NAME}!${sourceColumn}${input.source.rowIndex}`, values: [['']] },
-          { range: `${SHEET_NAME}!${sourceColumn}${input.recipient.rowIndex}`, values: [[attribution]] },
-        ];
+    const data: Array<{ range: string; values: string[][] }> = [
+      { range: `${SHEET_NAME}!${sourceColumn}${input.recipient.rowIndex}`, values: [['X']] },
+    ];
+    if (input.source.rowIndex !== input.recipient.rowIndex) {
+      if (sourceStatus === 'R') data.push({ range: `${SHEET_NAME}!${sourceColumn}${input.source.rowIndex}`, values: [['']] });
+      else if (sourceStatus.toUpperCase().startsWith('X BY ')) data.push({ range: `${SHEET_NAME}!${sourceColumn}${input.source.rowIndex}`, values: [['X']] });
+    }
     await assertLedgerLock(spreadsheetId, lockId);
     await withGoogleSheetsRetry(() => sheets.spreadsheets.values.batchUpdate({
       spreadsheetId, requestBody: { valueInputOption: 'RAW', data },
     }), false);
     await assertLedgerLock(spreadsheetId, lockId);
     await invalidateSheetRosterCache();
-    return { attribution };
+    return { geared: true };
   });
 }
 
