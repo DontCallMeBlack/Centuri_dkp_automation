@@ -54,10 +54,15 @@ export async function GET() {
       const key = `${record.setType}:${getSheetRecordKey(record)}`;
       if (!latest.has(key)) latest.set(key, record);
     }
+    const awardedSources = new Set(records
+      .filter((record) => record.status === 'awarded' || record.status === 'geared')
+      .map((record) => `${record.setType}:${getSheetRecordKey(record)}`));
     const toons = snapshot.roster.map((toon) => ({
       ...toon,
       dg: gearFlag(gearStatuses[toon.rowIndex - 3]?.[0]),
       bdg: gearFlag(gearStatuses[toon.rowIndex - 3]?.[1]),
+      dgFunded: awardedSources.has(`DG:${getSheetRecordKey(toon)}`),
+      bdgFunded: awardedSources.has(`BDG:${getSheetRecordKey(toon)}`),
       requester: requesterByRow.get(toon.rowIndex) ? { id: requesterByRow.get(toon.rowIndex)!.id, nickname: requesterByRow.get(toon.rowIndex)!.nickname } : null,
       requesterToons: requesterByRow.get(toon.rowIndex)?.toons ?? [],
       dgRequest: latest.get(`DG:${getSheetRecordKey(toon)}`) ?? null,
@@ -149,6 +154,10 @@ export async function POST(request: Request) {
       const members = await User.find({ status: 'approved' }).select('_id nickname sheetRecordName sheetRecords').lean();
       const requester = members.find((member) => getLinkedSheetRecordRows(member, snapshot.roster).includes(toon.rowIndex));
       if (!requester) return NextResponse.json({ error: 'Link this requester toon to an approved account before adding a gear request.' }, { status: 409 });
+      const hasEligibleRecipient = getLinkedSheetRecordRows(requester, snapshot.roster).some((linkedRow) =>
+        gearFlag(gearStatuses[linkedRow - 3]?.[setType === 'DG' ? 0 : 1]) === '',
+      );
+      if (!hasEligibleRecipient) return NextResponse.json({ error: `This account has no ungeared toon eligible to receive ${setType}.` }, { status: 409 });
       const score = setType === 'DG' ? toon.earned : toon.fiveWeekActivity;
       if (typeof score !== 'number') return NextResponse.json({ error: `The ${setType} ranking score for this toon is unavailable in the Sheet.` }, { status: 409 });
       if (currentStatus === 'R' || currentStatus.toUpperCase().startsWith('X BY ')) {

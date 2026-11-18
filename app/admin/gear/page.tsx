@@ -10,7 +10,7 @@ import { ApiError, clearClientData, readResponse } from '@/lib/client/api';
 
 type SetType = 'DG' | 'BDG';
 type RequestRecord = { _id: string; status: 'requested' | 'pending-mail' | 'geared' | 'awarded' | 'cancelled'; requestedAt: string; requestedBy: string; requesterUserId?: string; recipientRowIndex?: number; recipientOwner?: string; recipientAccount?: string; mailedAt?: string; mailedBy?: string };
-type Toon = { rowIndex: number; owner: string; account: string; subClass: string; earned: number | null; fiveWeekActivity: number | null; dg: string; bdg: string; requester: { id: string; nickname: string } | null; requesterToons: Array<{ rowIndex: number; owner: string; account: string }>; dgRequest: RequestRecord | null; bdgRequest: RequestRecord | null };
+type Toon = { rowIndex: number; owner: string; account: string; subClass: string; earned: number | null; fiveWeekActivity: number | null; dg: string; bdg: string; dgFunded: boolean; bdgFunded: boolean; requester: { id: string; nickname: string } | null; requesterToons: Array<{ rowIndex: number; owner: string; account: string }>; dgRequest: RequestRecord | null; bdgRequest: RequestRecord | null };
 type Data = { toons: Toon[] };
 type Winner = { rowIndex: number; owner: string; account: string; score: number; requestedAt: string; requesterNickname: string; recipientToons: Array<{ rowIndex: number; owner: string; account: string }> };
 
@@ -99,6 +99,8 @@ export default function GearPage() {
       <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy) || !selectedRecipient} onClick={() => void act('mailed', toon.rowIndex, Number(selectedRecipient))}><MailCheck size={14} /> {busyThis ? 'Saving…' : 'Confirm mailed'}</button>
     </div>;
     if (record?.status === 'requested') return <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button>;
+    if (toon[setType === 'DG' ? 'dgFunded' : 'bdgFunded']) return <span className="text-xs text-slate-500">DKP already used for {setType}</span>;
+    if (toon.requester && recipientOptions.length === 0) return <span className="text-xs text-slate-500">No eligible recipient toons</span>;
     if (toon.requester) return <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy)} onClick={() => void act('request', toon.rowIndex)}><UserPlus size={14} /> {busyThis ? 'Saving…' : 'Add request'}</button>;
     return <span className="text-xs text-slate-500">No linked requester</span>;
   };
