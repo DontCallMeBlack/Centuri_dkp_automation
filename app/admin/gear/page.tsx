@@ -86,7 +86,7 @@ export default function GearPage() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-        <p className="text-sm leading-6 text-slate-400">{setType === 'DG' ? 'Highest all-time earned DKP wins. Equal scores go to the oldest request.' : 'Highest five-week activity wins. Equal scores go to the oldest request.'} Toon statuses are saved in Sheet column {setType === 'DG' ? 'J' : 'K'}.</p>
+        <p className="text-sm leading-6 text-slate-400">{setType === 'DG' ? 'Highest all-time earned DKP wins. Equal scores go to the oldest request.' : 'Highest five-week activity wins. Equal scores go to the oldest request.'}</p>
         <label className="search-field sm:w-72"><Search /><input type="search" placeholder="Search toons…" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search toons" /></label>
       </div>
 
