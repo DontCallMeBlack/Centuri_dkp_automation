@@ -65,6 +65,43 @@ export default function GearPage() {
     .filter((toon) => `${toon.owner} ${toon.account} ${toon.subClass}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => (b[scoreField] ?? -Infinity) - (a[scoreField] ?? -Infinity) || a.owner.localeCompare(b.owner));
 
+  const getRowDetails = (toon: Toon) => {
+    const status = toon[statusField];
+    const record = toon[requestField];
+    const attributed = status.startsWith('X by ') ? status.slice(5) : '';
+    const displayStatus = attributed ? `Geared by ${attributed}` : status === 'X' || record?.status === 'geared' ? 'Geared' : record?.status === 'awarded' ? 'DKP used' : record?.status === 'pending-mail' ? 'Pending mail' : status === 'R' ? 'Requested' : 'Not requested';
+    const selectionKey = `${setType}:${toon.rowIndex}`;
+    const selectedRecipient = recipientSelections[selectionKey] ?? (record?.recipientRowIndex ? String(record.recipientRowIndex) : '');
+    const recipientOptions = toon.requesterToons.filter((recipient) => recipient.rowIndex === toon.rowIndex || data?.toons.find((candidate) => candidate.rowIndex === recipient.rowIndex)?.[statusField] === '');
+    return { status, record, displayStatus, selectedRecipient, selectionKey, recipientOptions };
+  };
+
+  const renderStatus = (displayStatus: string) => {
+    const tone = displayStatus.startsWith('Geared') || displayStatus === 'Geared'
+      ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+      : displayStatus === 'Pending mail' ? 'border-amber-300/20 bg-amber-300/10 text-amber-100'
+        : displayStatus === 'Requested' ? 'border-indigo-300/20 bg-indigo-400/10 text-indigo-200'
+          : 'border-white/10 bg-white/[0.03] text-slate-400';
+    return <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${tone}`}>{displayStatus === 'Geared' || displayStatus.startsWith('Geared by') ? <Check size={12} /> : displayStatus === 'Pending mail' ? <Clock3 size={12} /> : null}{displayStatus}</span>;
+  };
+
+  const renderAction = (toon: Toon, details: ReturnType<typeof getRowDetails>) => {
+    const { status, record, selectedRecipient, selectionKey, recipientOptions } = details;
+    const busyThis = busy.endsWith(`:${toon.rowIndex}`);
+    if (status.startsWith('X by ') || status === 'X' || record?.status === 'geared' || record?.status === 'awarded') return <span className="text-xs text-slate-500">Complete</span>;
+    if (record?.status === 'pending-mail') return <div className="flex min-w-56 items-center gap-2 max-lg:flex-col max-lg:items-stretch">
+      <select className="min-h-10 min-w-36 rounded-lg border border-white/10 bg-slate-950 px-2 text-xs text-slate-200" aria-label={`Choose recipient toon for ${toon.account || toon.owner}`} value={selectedRecipient} onChange={(event) => setRecipientSelections((current) => ({ ...current, [selectionKey]: event.target.value }))}>
+        <option value="">Choose recipient toon</option>
+        {recipientOptions.map((recipient) => <option key={recipient.rowIndex} value={recipient.rowIndex}>{recipient.account || recipient.owner}</option>)}
+      </select>
+      <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy) || !selectedRecipient} onClick={() => void act('mailed', toon.rowIndex, Number(selectedRecipient))}><MailCheck size={14} /> {busyThis ? 'Saving…' : 'Confirm mailed'}</button>
+    </div>;
+    if (status === 'R' && ['requested', 'cancelled'].includes(record?.status ?? '')) return <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button>;
+    if ((status === '' || record?.status === 'cancelled') && toon.requester) return <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy)} onClick={() => void act('request', toon.rowIndex)}><UserPlus size={14} /> {busyThis ? 'Saving…' : 'Add request'}</button>;
+    if (record?.status === 'requested') return <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button>;
+    return <span className="text-xs text-slate-500">{toon.requester ? 'Complete' : 'No linked requester'}</span>;
+  };
+
   if (!user) return <LoadingSurface fullLayout label="Checking leadership access" title="Gear requests" />;
   if (!['chief', 'general'].includes(user.role)) return <div className="mx-auto max-w-3xl py-16"><EmptyState title="Leadership access required" description="Gear tracking is available to Chiefs and Generals." /></div>;
   if (!data && !error) return <LoadingSurface fullLayout label="Loading gear tracking" title="Gear requests" />;
@@ -93,33 +130,42 @@ export default function GearPage() {
 
       {winner && <div className="rounded-2xl border border-indigo-300/25 bg-indigo-400/10 p-4" role="status"><div className="flex items-center gap-2 text-sm font-semibold text-indigo-100"><Award size={17} /> Next {setType} winner · pending mail</div><p className="mt-2 text-lg font-semibold text-white">{winner.account || winner.owner}</p><p className="mt-1 text-xs text-indigo-100/70">Requester {winner.requesterNickname} · DKP toon {winner.account || winner.owner} · Score {points(winner.score)} · Requested {dateLabel(winner.requestedAt)}</p></div>}
 
-      {!visibleToons.length ? <EmptyState title="No matching toons" description="Try another search or refresh the roster." /> : <div className="overflow-x-auto rounded-xl border border-white/10"><table className="w-full min-w-[920px] text-left text-sm">
-        <thead className="bg-white/[0.03] text-xs uppercase tracking-wide text-slate-400"><tr><th className="px-4 py-3">Toon</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">{setType === 'DG' ? 'All-time earned' : '5-week activity'}</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Requester</th><th className="px-4 py-3">Action</th></tr></thead>
-        <tbody className="divide-y divide-white/[0.06]">{visibleToons.map((toon) => {
-          const status = toon[statusField];
-          const record = toon[requestField];
-          const busyThis = busy.endsWith(`:${toon.rowIndex}`);
-          const selectionKey = `${setType}:${toon.rowIndex}`;
-          const attributed = status.startsWith('X by ') ? status.slice(5) : '';
-          const displayStatus = attributed ? `Geared by ${attributed}` : status === 'X' || record?.status === 'geared' ? 'Geared' : record?.status === 'awarded' ? 'DKP used' : record?.status === 'pending-mail' ? 'Pending mail' : status === 'R' ? 'Requested' : 'Not requested';
-          const selectedRecipient = recipientSelections[selectionKey] ?? (record?.recipientRowIndex ? String(record.recipientRowIndex) : '');
-          const recipientOptions = toon.requesterToons.filter((recipient) => recipient.rowIndex === toon.rowIndex || data?.toons.find((candidate) => candidate.rowIndex === recipient.rowIndex)?.[statusField] === '');
-          return <tr key={toon.rowIndex}>
-            <td className="px-4 py-3"><div className="font-medium text-white">{toon.account || toon.owner}</div><div className="mt-1 text-xs text-slate-500">{toon.subClass || 'Unassigned'}</div></td>
-            <td className="px-4 py-3 text-slate-300">{toon.owner}</td>
-            <td className="px-4 py-3 font-mono text-slate-200">{points(toon[scoreField])}</td>
-            <td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${displayStatus.startsWith('Geared') || displayStatus === 'Geared' ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200' : displayStatus === 'Pending mail' ? 'border-amber-300/20 bg-amber-300/10 text-amber-100' : displayStatus === 'Requested' ? 'border-indigo-300/20 bg-indigo-400/10 text-indigo-200' : 'border-white/10 bg-white/[0.03] text-slate-400'}`}>{displayStatus === 'Geared' ? <Check size={12} /> : displayStatus === 'Pending mail' ? <Clock3 size={12} /> : null}{displayStatus}</span>{record && <div className="mt-1 text-[11px] text-slate-500">Requested {dateLabel(record.requestedAt)}</div>}</td>
-            <td className="px-4 py-3 text-xs text-slate-400">{toon.requester?.nickname ?? record?.requestedBy ?? '—'}</td>
-            <td className="px-4 py-3">{status.startsWith('X by ') || status === 'X' || record?.status === 'geared' || record?.status === 'awarded' ? <span className="text-xs text-slate-500">Complete</span> : record?.status === 'pending-mail' ? <div className="flex min-w-56 items-center gap-2">
-              <select className="min-h-10 min-w-36 rounded-lg border border-white/10 bg-slate-950 px-2 text-xs text-slate-200" aria-label={`Choose recipient toon for ${toon.account || toon.owner}`} value={selectedRecipient} onChange={(event) => setRecipientSelections((current) => ({ ...current, [selectionKey]: event.target.value }))}>
-                <option value="">Choose recipient toon</option>
-                {recipientOptions.map((recipient) => <option key={recipient.rowIndex} value={recipient.rowIndex}>{recipient.account || recipient.owner}</option>)}
-              </select>
-              <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy) || !selectedRecipient} onClick={() => void act('mailed', toon.rowIndex, Number(selectedRecipient))}><MailCheck size={14} /> {busyThis ? 'Saving…' : 'Confirm mailed'}</button>
-            </div> : status === 'R' && ['requested', 'cancelled'].includes(record?.status ?? '') ? <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button> : (status === '' || record?.status === 'cancelled') && toon.requester ? <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy)} onClick={() => void act('request', toon.rowIndex)}><UserPlus size={14} /> {busyThis ? 'Saving…' : 'Add request'}</button> : record?.status === 'requested' ? <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button> : <span className="text-xs text-slate-500">{toon.requester ? 'Complete' : 'No linked requester'}</span>}</td>
-          </tr>;
-        })}</tbody>
-      </table></div>}
+      {!visibleToons.length ? <EmptyState title="No matching toons" description="Try another search or refresh the roster." /> : <>
+        <div className="space-y-3 lg:hidden" aria-label="Gear roster">
+          {visibleToons.map((toon) => {
+            const details = getRowDetails(toon);
+            return <article key={toon.rowIndex} className="rounded-xl border border-white/10 bg-slate-950/35 p-4">
+              <header className="flex items-start justify-between gap-3">
+                <div className="min-w-0"><h3 className="truncate text-sm font-semibold text-white">{toon.account || toon.owner}</h3><p className="mt-1 text-xs text-slate-500">{toon.subClass || 'Unassigned'}</p></div>
+                {renderStatus(details.displayStatus)}
+              </header>
+              <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-white/[0.07] pt-3 text-xs">
+                <div><dt className="text-slate-500">Owner</dt><dd className="mt-1 break-words text-slate-200">{toon.owner}</dd></div>
+                <div><dt className="text-slate-500">{setType === 'DG' ? 'All-time earned' : '5-week activity'}</dt><dd className="mt-1 font-mono text-slate-200">{points(toon[scoreField])}</dd></div>
+                <div><dt className="text-slate-500">Requester</dt><dd className="mt-1 break-words text-slate-200">{toon.requester?.nickname ?? details.record?.requestedBy ?? '—'}</dd></div>
+                <div><dt className="text-slate-500">Request date</dt><dd className="mt-1 text-slate-200">{details.record ? dateLabel(details.record.requestedAt) : '—'}</dd></div>
+              </dl>
+              <div className="mt-4 border-t border-white/[0.07] pt-3"><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Action</p>{renderAction(toon, details)}</div>
+            </article>;
+          })}
+        </div>
+        <div className="hidden overflow-x-auto rounded-xl border border-white/10 lg:block">
+          <table className="w-full min-w-[920px] text-left text-sm">
+            <thead className="bg-white/[0.03] text-xs uppercase tracking-wide text-slate-400"><tr><th className="px-4 py-3">Toon</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">{setType === 'DG' ? 'All-time earned' : '5-week activity'}</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Requester</th><th className="px-4 py-3">Action</th></tr></thead>
+            <tbody className="divide-y divide-white/[0.06]">{visibleToons.map((toon) => {
+              const details = getRowDetails(toon);
+              return <tr key={toon.rowIndex}>
+                <td className="px-4 py-3"><div className="font-medium text-white">{toon.account || toon.owner}</div><div className="mt-1 text-xs text-slate-500">{toon.subClass || 'Unassigned'}</div></td>
+                <td className="px-4 py-3 text-slate-300">{toon.owner}</td>
+                <td className="px-4 py-3 font-mono text-slate-200">{points(toon[scoreField])}</td>
+                <td className="px-4 py-3">{renderStatus(details.displayStatus)}{details.record && <div className="mt-1 text-[11px] text-slate-500">Requested {dateLabel(details.record.requestedAt)}</div>}</td>
+                <td className="px-4 py-3 text-xs text-slate-400">{toon.requester?.nickname ?? details.record?.requestedBy ?? '—'}</td>
+                <td className="px-4 py-3">{renderAction(toon, details)}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
+      </>}
     </section>
   </div>;
 }
