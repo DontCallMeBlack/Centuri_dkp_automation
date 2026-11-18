@@ -1065,7 +1065,7 @@ export async function changeClanToon(actorUserId: string, requestId: string, inp
       }));
     if (input.action === 'create' || input.action === 'restore') retained.push({
       record: { rowIndex, owner, account, subClass,
-        weeklyEarned: Number(after[3]), weeklySpent: Number(after[4]), earned: Number(after[5]), spent: Number(after[6]), available: Number(after[7]), fiveWeekActivity: Number(after[8]), dkpIssues: [] },
+        weeklyEarned: Number(after[3]), weeklySpent: Number(after[4]), earned: Number(after[5]), spent: Number(after[6]), available: Number(after[7]), fiveWeekActivity: Number(after[8]), dkpIssues: [], dg: '', bdg: '' },
       values: after.map(String),
     });
     const lastOccupiedRow = roster.reduce((highest, record) => Math.max(highest, record.rowIndex), 3);
