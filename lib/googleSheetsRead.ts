@@ -66,6 +66,14 @@ export async function readSheetRows(sheets?: ReturnType<typeof googleSheets>) {
   return (response.data.values ?? []).map((row) => row.map((value) => String(value ?? '')));
 }
 
+export async function readGearStatuses(sheets?: ReturnType<typeof googleSheets>) {
+  const client = sheets ?? await createSheetsClient();
+  const response = await withGoogleSheetsRetry(() => client.spreadsheets.values.get({
+    spreadsheetId: getSpreadsheetId(), range: `${SHEET_NAME}!J3:K1000`, valueRenderOption: 'UNFORMATTED_VALUE',
+  }), true);
+  return (response.data.values ?? []).map((row) => row.map((value) => String(value ?? '').trim()));
+}
+
 export function rosterFromRows(rows: string[][]): ISheetRosterRecord[] {
   return parseSheetRoster(rows, { allowInvalid: true });
 }

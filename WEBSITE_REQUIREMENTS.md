@@ -43,7 +43,7 @@ Accounts have one of two statuses: **pending** or **approved**. Only approved ac
 | `/admin/role-changes` | Members request subclass changes for their linked toons; Generals review all roster requests and activity. |
 | `/admin/boss-history` | Standalone boss history page; any approved clan account can view it, while Chief, General, and Guardian can edit/delete awards. |
 
-The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, **Auction house**, **Kill history**, **Item catalog** for staff, **My role changes** for members, **Role request review** for Generals, and **Members & access** for Chiefs/Generals. The duplicate horizontal workspace button bar is removed. The header names the current section and the active link exposes `aria-current`. Views use `/dashboard?view=auction|items|boss-history`; Roster uses `/dashboard`. The older `/admin/boss-history` address remains supported. Sidebar history uses the embedded view so switching sections preserves visited views and drafts.
+The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, **Auction house**, **Kill history**, **Item catalog** for staff, **My role changes** for members, **Role request review** for Generals, and **Gear requests** and **Members & access** for Chiefs/Generals. The duplicate horizontal workspace button bar is removed. The header names the current section and the active link exposes `aria-current`. Views use `/dashboard?view=auction|items|boss-history`; Roster uses `/dashboard`. The older `/admin/boss-history` address remains supported. Sidebar history uses the embedded view so switching sections preserves visited views and drafts.
 
 ### 3.2 HTTP API routes
 
@@ -54,6 +54,8 @@ The desktop sidebar and mobile drawer are the workspace navigation: **Roster**, 
 | `/api/auth/logout` | `POST` revoke the current server session and expire its HttpOnly cookie. |
 | `/api/dkp` | `GET` roster, linked approved members, user role, and sheet sync status; `POST` records a boss attendance award and changes DKP. |
 | `/api/admin/requests` | `GET` administration data; `POST` approve, deny, link, unlink, remove, or change a role. Chief/General only. |
+| `/admin/gear` | Chief/General management screen for DG and BDG requests, winner selection, and mailed confirmation. |
+| `/api/admin/gear` | `GET` fresh roster and gear state; `POST` add/remove requests, reveal the next winner, or confirm mailing. Chief/General only. |
 | `/api/admin/toons` | `GET` clan roster and pending change; `POST` create/remove a toon or finish an interrupted change. Chief/General only. |
 | `/api/role-changes` | `GET` visible requests, schedules, and recent activity; `POST` request, approve, deny, or cancel a subclass change. All approved members may request/cancel their own; Generals may review or cancel any. |
 | `/api/admin/boss-history` | `GET` awards; `PATCH` edit attendance; `DELETE` a boss award. Reads require a session; mutations require Chief/General/Guardian. |
@@ -380,6 +382,7 @@ The implementation uses MongoDB/Mongoose for:
 - **Authentication rate limits**: hashed account/proxy identities, fixed-window counters and TTL expiry. Raw passwords and cookie tokens are not stored here.
 - **Administration state**: transaction revision fence and one-time bootstrap claim.
 - **Roster cache**: spreadsheet-keyed roster values including five-week activity, fetch time, generation, refresh lock/error, weekly reset marker, renewable ledger lease/owner token, rolling activity history, and pending reset plan with exact cells, before-values, identities, next history, and cycle marker.
+- **Gear requests**: set type, roster row, toon identity, request state and timestamp, manager who entered the Discord request, winner reveal time, and mailing confirmation details.
 - **DKP sheet mutations**: spreadsheet ID, unique operation key, optional authorizing actor user ID, immutable request fingerprint, pending/applied status, exact sheet before/after cells, participant identities, optional corrected activity-history snapshot, and timestamps. No automatic journal TTL is defined.
 - **Boss awards**: boss, points, participant row/owner/account identities, creator/editor, original request ID/fingerprint, completed edit/delete request IDs and fingerprints, pending operation with target identities/editor/kind, pending/applied/failed/updating/deleted status, safe failure reason, and timestamps. Deleted records serve as retry tombstones and are omitted from normal history. TTL remains approximately 365 days.
 - **Auction holds**: unique row index and points reserved for current high bids.
@@ -516,6 +519,15 @@ The website’s client performs useful validation and disables many invalid cont
 - Each mutation requires a UUID v4 request ID; actor-scoped browser session storage retains opaque retry IDs. A permanent MongoDB roster receipt records the authorized actor, request fingerprint, exact before/after row and planned link changes before writing to Sheets.
 - Roster writes use the shared renewable DKP ledger lock and administration fence. Pending roster changes prevent conflicting administration mutations. Recovery accepts only the exact before or after Sheet state, finishes links, removes the retired activity bucket, invalidates the roster cache and writes one audit event in a MongoDB transaction. A mismatched external edit pauses recovery for reconciliation.
 - Creation/removal audit entries identify the acting manager and toon/owner. Removal retains the six original DKP/activity values in the audit record. The interface shows available and weekly-earned DKP at removal.
+
+## 18. DG and BDG gear requests
+
+- Chiefs and Generals manage the Gear requests page. They enter requests that were made in Discord against the toon chosen for that set type.
+- Google Sheets columns J and K are labeled **DG** and **BDG**. A blank cell means no request or gear record, `R` means requested (including a winner pending mail), and `X` means the set was mailed and the toon is geared.
+- DG winners rank by all-time earned DKP (column F); BDG winners rank by five-week activity (column I). Equal scores go to the oldest saved request.
+- Each toon is tracked separately for each set type. A toon marked `X` cannot be reused for that same type; a player may use another toon they own.
+- Reveal claims the next eligible request and marks it pending mail in the app. Further reveals skip pending-mail and geared requests without resetting any sheet status. Confirm mailed changes the corresponding Sheet marker from `R` to `X`.
+- Staff may remove a request before it wins. The app retains its prior request record and timestamps. Manager and mailing actor details are stored with the request history.
 - Interrupted changes can be completed with **Finish interrupted change** by a Chief or General. The next financial worker also recovers a staged change before starting new financial work. Direct Sheet edits still require coordinated maintenance; Google Sheets and MongoDB do not share one atomic transaction.
 - Management reads permit 120 requests per member per minute; roster writes permit 20. Mutations require the same origin and bounded JSON, and respond with safe errors.
 

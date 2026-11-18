@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import Link, { useLinkStatus } from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowUpRight, CalendarClock, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, UsersRound, X } from 'lucide-react';
+import { ArrowUpRight, CalendarClock, Command, Gavel, History, LayoutDashboard, LogOut, Menu, Package, ShieldCheck, Shirt, UsersRound, X } from 'lucide-react';
 import Dialog from './Dialog';
 import RoleBadge, { RoleIcon } from './RoleBadge';
 import { clearClientData, getData, notifyDkpChanged } from '@/lib/client/api';
@@ -120,8 +120,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isHistory = pathname === '/admin/boss-history' || pathname === '/dashboard' && currentView === 'boss-history';
   const isCatalog = pathname === '/dashboard' && currentView === 'items';
   const isAdministration = pathname.startsWith('/admin/requests');
+  const isGear = pathname.startsWith('/admin/gear');
   const isRoleChanges = pathname.startsWith('/admin/role-changes');
-  const currentLabel = isAdministration ? 'Clan administration' : isRoleChanges ? (user?.role === 'general' ? 'Role request review' : 'My role changes') : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : isRoster ? 'Roster' : 'Page not found';
+  const currentLabel = isAdministration ? 'Clan administration' : isGear ? 'Gear requests' : isRoleChanges ? (user?.role === 'general' ? 'Role request review' : 'My role changes') : isHistory ? 'Kill history' : isAuction ? 'Auction house' : isCatalog ? 'Item catalog' : isRoster ? 'Roster' : 'Page not found';
   useEffect(() => {
     document.title = `${publicPage ? 'Sign in' : pathname === '/dashboard' || pathname.startsWith('/admin/') ? currentLabel : 'Page not found'} · Centuri DKP`;
   }, [publicPage, pathname, currentLabel]);
@@ -155,7 +156,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <WorkspaceLink className={`shell-nav-link ${isHistory ? 'is-active' : ''}`} aria-current={isHistory ? 'page' : undefined} href="/dashboard?view=boss-history"><History /><span>Kill history</span></WorkspaceLink>
     {canManage && <><p className="nav-group-label mt-7">Management</p><WorkspaceLink className={`shell-nav-link ${isCatalog ? 'is-active' : ''}`} aria-current={isCatalog ? 'page' : undefined} href="/dashboard?view=items"><Package /><span>Item catalog</span></WorkspaceLink></>}
     {user && <WorkspaceLink className={`shell-nav-link ${isRoleChanges ? 'is-active' : ''}`} aria-current={isRoleChanges ? 'page' : undefined} href="/admin/role-changes"><CalendarClock /><span>{user.role === 'general' ? 'Role request review' : 'My role changes'}</span></WorkspaceLink>}
-    {canAdmin && <WorkspaceLink className={`shell-nav-link ${isAdministration ? 'is-active' : ''}`} aria-current={isAdministration ? 'page' : undefined} href="/admin/requests"><UsersRound /><span>Members & access</span></WorkspaceLink>}
+    {canAdmin && <><WorkspaceLink className={`shell-nav-link ${isGear ? 'is-active' : ''}`} aria-current={isGear ? 'page' : undefined} href="/admin/gear"><Shirt /><span>Gear requests</span></WorkspaceLink><WorkspaceLink className={`shell-nav-link ${isAdministration ? 'is-active' : ''}`} aria-current={isAdministration ? 'page' : undefined} href="/admin/requests"><UsersRound /><span>Members & access</span></WorkspaceLink></>}
   </>;
   return <SessionContext.Provider value={user}><div className="workspace">
     <a className="skip-link" href="#main-content">Skip to content</a>

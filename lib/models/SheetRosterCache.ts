@@ -34,6 +34,8 @@ const SheetRosterRecordSchema = new Schema<ISheetRosterRecord>({
   spent: { type: Number, default: null },
   available: { type: Number, default: null },
   fiveWeekActivity: { type: Number, default: null },
+  dg: { type: String, enum: ['', 'R', 'X'], default: '' },
+  bdg: { type: String, enum: ['', 'R', 'X'], default: '' },
   dkpIssues: { type: [{ field: String, cell: String, value: String, message: String, _id: false }], default: [] },
 }, { _id: false });
 

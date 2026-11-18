@@ -4,7 +4,7 @@ export const DKP_COLUMNS = { weeklyEarned: 'D', weeklySpent: 'E', earned: 'F', s
 export type DkpField = keyof typeof DKP_COLUMNS;
 export interface DkpCellIssue { field: DkpField; cell: string; value: string; message: string }
 interface RosterIdentity { rowIndex: number; owner: string; account: string; subClass: string }
-export type ReadableRosterRecord = RosterIdentity & Record<DkpField, number | null> & { dkpIssues: DkpCellIssue[] };
+export type ReadableRosterRecord = RosterIdentity & Record<DkpField, number | null> & { dkpIssues: DkpCellIssue[]; dg: '' | 'R' | 'X'; bdg: '' | 'R' | 'X' };
 export type StrictRosterRecord = RosterIdentity & Record<DkpField, number> & { dkpIssues: DkpCellIssue[] };
 
 export function requireRosterValues<K extends DkpField>(record: ReadableRosterRecord, fields: readonly K[]): asserts record is ReadableRosterRecord & Record<K, number> {
@@ -35,10 +35,15 @@ export function parseSheetRoster(rows: string[][], options?: { allowInvalid: tru
         return null;
       }
     };
+    const gearStatus = (value: unknown) => {
+      const normalized = String(value ?? '').trim().toUpperCase();
+      return normalized === 'R' || normalized === 'X' ? normalized : '';
+    };
     return [{
       rowIndex, owner, account: String(row[1] ?? '').trim(), subClass: String(row[2] ?? '').trim(),
       weeklyEarned: read('weeklyEarned', 3), weeklySpent: read('weeklySpent', 4),
       earned: read('earned', 5), spent: read('spent', 6), available: read('available', 7), fiveWeekActivity: read('fiveWeekActivity', 8), dkpIssues,
+      dg: gearStatus(row[9]), bdg: gearStatus(row[10]),
     }];
   });
 }

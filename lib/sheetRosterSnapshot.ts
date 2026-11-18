@@ -58,6 +58,8 @@ function serializeRosterRecord(record: ISheetRosterRecord): ISheetRosterRecord {
     spent: record.spent,
     available: record.available,
     fiveWeekActivity: record.fiveWeekActivity === undefined ? 0 : record.fiveWeekActivity,
+    dg: record.dg ?? '',
+    bdg: record.bdg ?? '',
     dkpIssues: record.dkpIssues ?? [],
   };
 }

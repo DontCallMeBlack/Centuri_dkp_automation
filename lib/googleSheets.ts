@@ -24,6 +24,7 @@ import ClanAuditEvent from '@/lib/models/ClanAuditEvent';
 import Auction from '@/lib/models/Auction';
 import AuctionBidHistory from '@/lib/models/AuctionBidHistory';
 import BossAward from '@/lib/models/BossAward';
+import GearRequest from '@/lib/models/GearRequest';
 import { getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { getReservationConflict } from '@/lib/auth/reservationProtection';
 import { ITEM_SUBROLES, normalizeAuctionRole } from '@/lib/auctionRules';
@@ -34,7 +35,7 @@ import { isApprovedToonRoleSchedule } from '@/lib/toonRoleChanges';
 import { planToonOwnerChange, planOwnerMutationReplay } from '@/lib/toonOwnerChange';
 import { readToonAwardCutoffs, isAwardInToonLifecycle } from '@/lib/toonAwardLifecycle';
 import { ensureSheetRosterCacheDocument, getSpreadsheetId, invalidateSheetRosterCache } from './sheetRosterSnapshot';
-import { createSheetsClient, fetchSheetRoster, readSheetRows, rosterFromRows, withGoogleSheetsRetry } from './googleSheetsRead';
+import { createSheetsClient, fetchSheetRoster, readGearStatuses, readSheetRows, rosterFromRows, withGoogleSheetsRetry } from './googleSheetsRead';
 export { getSheetRoster, getSheetRosterSnapshot, invalidateSheetRosterCache } from './sheetRosterSnapshot';
 export { fetchSheetRoster } from './googleSheetsRead';
 
@@ -303,6 +304,51 @@ export async function withDkpLedgerLock<T>(operation: (roster: ISheetRosterRecor
     const roster = await fetchSheetRoster();
     await assertLedgerLock(cacheKey, lockId);
     return operation(roster);
+  });
+}
+
+export async function writeGearStatus(input: { rowIndex: number; setType: 'DG' | 'BDG'; status: '' | 'R' | 'X'; expected: '' | 'R' | 'X'; expectedIdentity: { owner: string; account: string } }) {
+  assertDkpWritesEnabled();
+  await dbConnect();
+  const spreadsheetId = getSpreadsheetId();
+  await ensureSheetRosterCacheDocument(spreadsheetId);
+  return withWeeklyResetLock(spreadsheetId, async (lockId) => {
+    const sheets = await createSheetsClient();
+    const header = await withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({
+      spreadsheetId, range: `${SHEET_NAME}!J2:K2`, valueRenderOption: 'UNFORMATTED_VALUE',
+    }), true);
+    const headerValues = header.data.values?.[0] ?? [];
+    const dgHeader = String(headerValues[0] ?? '').trim();
+    const bdgHeader = String(headerValues[1] ?? '').trim();
+    if ((dgHeader && dgHeader !== 'DG') || (bdgHeader && bdgHeader !== 'BDG')) {
+      throw new DkpIntegrityError('Google Sheets columns J and K must be labeled DG and BDG before gear tracking can be used.');
+    }
+    if (!dgHeader || !bdgHeader) {
+      await assertLedgerLock(spreadsheetId, lockId);
+      await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
+        spreadsheetId, range: `${SHEET_NAME}!J2:K2`, valueInputOption: 'RAW', requestBody: { values: [['DG', 'BDG']] },
+      }), false);
+    }
+    const [identity, statuses] = await Promise.all([
+      withGoogleSheetsRetry(() => sheets.spreadsheets.values.get({ spreadsheetId, range: `${SHEET_NAME}!A${input.rowIndex}:B${input.rowIndex}`, valueRenderOption: 'UNFORMATTED_VALUE' }), true),
+      readGearStatuses(sheets),
+    ]);
+    const owner = String(identity.data.values?.[0]?.[0] ?? '').trim();
+    const account = String(identity.data.values?.[0]?.[1] ?? '').trim();
+    if (!owner) throw new DkpIntegrityError('That toon is no longer on the roster. Refresh the gear list and try again.');
+    if (getSheetRecordKey({ owner, account }) !== getSheetRecordKey(input.expectedIdentity)) {
+      throw new DkpIntegrityError('That roster row now belongs to a different toon. Refresh the gear list before changing its gear status.');
+    }
+    const actual = String(statuses[input.rowIndex - 3]?.[input.setType === 'DG' ? 0 : 1] ?? '') as '' | 'R' | 'X';
+    if (actual !== input.expected) throw new DkpIntegrityError('The gear status changed in Google Sheets. Refresh the gear list before trying again.');
+    await assertLedgerLock(spreadsheetId, lockId);
+    await withGoogleSheetsRetry(() => sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${SHEET_NAME}!${input.setType === 'DG' ? 'J' : 'K'}${input.rowIndex}`,
+      valueInputOption: 'RAW', requestBody: { values: [[input.status]] },
+    }), false);
+    await assertLedgerLock(spreadsheetId, lockId);
+    await invalidateSheetRosterCache();
+    return { owner, account };
   });
 }
 
@@ -845,6 +891,12 @@ async function replayPendingRosterMutation(spreadsheetId: string, lockId: string
     }
     if (pending.compaction?.deletedRows.length) {
       await AuctionHold.deleteMany({ rowIndex: { $in: pending.compaction.deletedRows }, heldPoints: 0 }, { session });
+    }
+    for (const move of pending.compaction?.moves ?? []) {
+      await GearRequest.updateMany({ rowIndex: move.fromRow, owner: move.owner, account: move.account }, { $set: { rowIndex: move.toRow } }, { session });
+    }
+    if (pending.action === 'restore') {
+      await GearRequest.updateMany({ owner: pending.owner, account: pending.account }, { $set: { rowIndex: pending.rowIndex } }, { session });
     }
     if (pending.action === 'remove') {
       await AuctionHold.deleteMany({ $or: [
