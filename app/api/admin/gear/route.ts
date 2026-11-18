@@ -6,6 +6,7 @@ import User from '@/lib/models/User';
 import { getSheetRecordKey, getLinkedSheetRecordRows } from '@/lib/sheetRecordLinks';
 import { normalizeGearStatusMarkers, writeGearAward, writeGearStatus } from '@/lib/googleSheets';
 import { readGearStatuses } from '@/lib/googleSheetsRead';
+import { dgPuresNeeded, normalizedDgScore, parseExcludedDgPieces } from '@/lib/dgGear';
 import { guardMutationRequest, readJsonObject, requestErrorResponse } from '@/lib/security/request';
 
 export const dynamic = 'force-dynamic';
@@ -103,10 +104,14 @@ export async function POST(request: Request) {
       const scoreField = setType === 'DG' ? 'earned' : 'fiveWeekActivity';
       const candidates = snapshot.roster.flatMap((toon) => {
         const record = latest.get(getSheetRecordKey(toon));
-        const score = toon[scoreField];
+        const baseScore = toon[scoreField];
+        const excludedParts = setType === 'DG' ? record?.excludedParts ?? [] : [];
+        const score = typeof baseScore === 'number' && setType === 'DG'
+          ? normalizedDgScore(baseScore, excludedParts)
+          : baseScore;
         const requester = requesterByRow.get(toon.rowIndex);
-        return record?.status === 'requested' && typeof score === 'number' && requester
-          ? [{ record, toon, score, requester }]
+        return record?.status === 'requested' && typeof score === 'number' && typeof baseScore === 'number' && requester
+          ? [{ record, toon, score, baseScore, excludedParts, requester }]
           : [];
       }).sort((a, b) => b.score - a.score || a.record.requestedAt.getTime() - b.record.requestedAt.getTime());
       for (const candidate of candidates) {
@@ -118,6 +123,9 @@ export async function POST(request: Request) {
         if (claimed) return NextResponse.json({ success: true, winner: {
           rowIndex: candidate.toon.rowIndex, owner: candidate.toon.owner, account: candidate.toon.account,
           score: candidate.score, requestedAt: claimed.requestedAt, requestId: String(claimed._id),
+          baseScore: candidate.baseScore,
+          requiredPures: setType === 'DG' ? dgPuresNeeded(candidate.excludedParts) : undefined,
+          excludedParts: candidate.excludedParts,
           requesterId: String(candidate.requester._id), requesterNickname: candidate.requester.nickname,
           recipientToons: getLinkedSheetRecordRows(candidate.requester, snapshot.roster).flatMap((linkedRow) => {
             const recipient = snapshot.roster.find((entry) => entry.rowIndex === linkedRow);
@@ -142,6 +150,10 @@ export async function POST(request: Request) {
     const current = await GearRequest.findOne({ setType, rowIndex: Number(rowIndex), owner: toon.owner, account: toon.account }).sort({ requestedAt: -1 }).lean();
 
     if (action === 'request') {
+      const excludedParts = setType === 'DG' ? parseExcludedDgPieces(body.excludedParts) : [];
+      if (excludedParts === null || (setType === 'DG' && dgPuresNeeded(excludedParts) < 1)) {
+        return NextResponse.json({ error: 'Choose valid excluded DG pieces and leave at least one piece in the request.' }, { status: 400 });
+      }
       if (current && ['requested', 'pending-mail'].includes(current.status)) return NextResponse.json({ error: 'This toon already has an active request for this set type.' }, { status: 409 });
       const sourceAlreadyAwarded = await GearRequest.exists({
         setType,
@@ -165,6 +177,7 @@ export async function POST(request: Request) {
       }
       const record = await GearRequest.create({ setType, rowIndex: Number(rowIndex), owner: toon.owner, account: toon.account,
         activeKey: activeKeyFor(setType, toon), requesterUserId: String(requester._id), status: 'requested',
+        excludedParts,
         requestedBy: auth.user.nickname, requestedAt: new Date() });
       return NextResponse.json({ success: true, message: `${toon.account || toon.owner} added to ${setType} requests.`, requestId: String(record._id) }, { headers: noStore });
     }

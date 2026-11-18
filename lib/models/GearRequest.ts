@@ -1,4 +1,5 @@
 import mongoose, { Schema, type Model } from 'mongoose';
+import { DG_PIECES, type DgPiece } from '@/lib/dgGear';
 
 export interface IGearRequest extends mongoose.Document {
   setType: 'DG' | 'BDG';
@@ -7,6 +8,7 @@ export interface IGearRequest extends mongoose.Document {
   account: string;
   status: 'requested' | 'pending-mail' | 'geared' | 'awarded' | 'cancelled';
   activeKey?: string;
+  excludedParts?: DgPiece[];
   requesterUserId?: string;
   requestedBy: string;
   requestedAt: Date;
@@ -27,6 +29,7 @@ const GearRequestSchema = new Schema<IGearRequest>({
   account: { type: String, default: '' },
   status: { type: String, enum: ['requested', 'pending-mail', 'geared', 'awarded', 'cancelled'], required: true },
   activeKey: { type: String },
+  excludedParts: { type: [{ type: String, enum: DG_PIECES.map((piece) => piece.key) }], default: [] },
   requesterUserId: { type: String },
   requestedBy: { type: String, required: true },
   requestedAt: { type: Date, required: true },
