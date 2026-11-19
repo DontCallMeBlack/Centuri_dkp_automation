@@ -27,6 +27,7 @@ export default function GearPage() {
   const [winner, setWinner] = useState<Winner | null>(null);
   const [recipientSelections, setRecipientSelections] = useState<Record<string, string>>({});
   const [requestingRow, setRequestingRow] = useState<number | null>(null);
+  const [editingExclusions, setEditingExclusions] = useState(false);
   const [excludedParts, setExcludedParts] = useState<DgPiece[]>([]);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState('');
@@ -46,16 +47,16 @@ export default function GearPage() {
 
   useEffect(() => { if (user) void load(); }, [user?.id, user?.role, load]);
 
-  const act = async (action: 'request' | 'cancel' | 'reveal' | 'mailed', rowIndex?: number, recipientRowIndex?: number, excludedParts: DgPiece[] = []) => {
+  const act = async (action: 'request' | 'update-exclusions' | 'cancel' | 'reveal' | 'mailed', rowIndex?: number, recipientRowIndex?: number, excludedParts: DgPiece[] = []) => {
     const key = `${action}:${rowIndex ?? setType}`;
     if (busy) return;
     setBusy(key); setError(''); setNotice('');
     try {
-      const response = await fetch('/api/admin/gear', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, setType, ...(rowIndex === undefined ? {} : { rowIndex }), ...(recipientRowIndex === undefined ? {} : { recipientRowIndex }), ...(action === 'request' && setType === 'DG' ? { excludedParts } : {}) }) });
+      const response = await fetch('/api/admin/gear', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, setType, ...(rowIndex === undefined ? {} : { rowIndex }), ...(recipientRowIndex === undefined ? {} : { recipientRowIndex }), ...((action === 'request' || action === 'update-exclusions') && setType === 'DG' ? { excludedParts } : {}) }) });
       const result = await readResponse<{ message?: string; winner?: Winner }>(response);
       setNotice(result.message ?? '');
       if (action === 'reveal' && result.winner) { setWinner(result.winner); setRecipientSelections((current) => ({ ...current, [`${setType}:${result.winner!.rowIndex}`]: '' })); }
-      if (action === 'request') { setRequestingRow(null); setExcludedParts([]); }
+      if (action === 'request' || action === 'update-exclusions') { setRequestingRow(null); setEditingExclusions(false); setExcludedParts([]); }
       await load();
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
@@ -109,11 +110,14 @@ export default function GearPage() {
       </select>
       <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy) || !selectedRecipient} onClick={() => void act('mailed', toon.rowIndex, Number(selectedRecipient))}><MailCheck size={14} /> {busyThis ? 'Saving…' : 'Confirm mailed'}</button>
     </div>;
-    if (record?.status === 'requested') return <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button>;
+    if (record?.status === 'requested') return <div className="flex flex-wrap items-center gap-2">
+      {setType === 'DG' && <button type="button" className="secondary-button whitespace-nowrap px-2.5" disabled={Boolean(busy)} onClick={() => { setExcludedParts(record.excludedParts ?? []); setEditingExclusions(true); setRequestingRow(toon.rowIndex); }}>Update excluded pieces</button>}
+      <button type="button" className="icon-button" aria-label={`Remove ${setType} request for ${toon.account || toon.owner}`} disabled={Boolean(busy)} onClick={() => void act('cancel', toon.rowIndex)} title="Remove request"><X size={16} /></button>
+    </div>;
     if (toon[setType === 'DG' ? 'dgFunded' : 'bdgFunded']) return <span className="text-xs text-slate-500">DKP already used for {setType}</span>;
     if (toon.requester && recipientOptions.length === 0) return <span className="text-xs text-slate-500">No eligible recipient toons</span>;
     if (toon.requester) return <button type="button" className="secondary-button whitespace-nowrap" disabled={Boolean(busy)} onClick={() => {
-      if (setType === 'DG') { setExcludedParts([]); setRequestingRow(toon.rowIndex); }
+      if (setType === 'DG') { setExcludedParts([]); setEditingExclusions(false); setRequestingRow(toon.rowIndex); }
       else void act('request', toon.rowIndex);
     }}><UserPlus size={14} /> {busyThis ? 'Saving…' : 'Add request'}</button>;
     return <span className="text-xs text-slate-500">No linked requester</span>;
@@ -188,11 +192,11 @@ export default function GearPage() {
         </div>
       </>}
     </section>
-    {requestingRow !== null && dgRequestToon && <Dialog labelledBy="dg-excluded-pieces-title" busy={Boolean(busy)} onClose={() => { setRequestingRow(null); setExcludedParts([]); }}>
+    {requestingRow !== null && dgRequestToon && <Dialog labelledBy="dg-excluded-pieces-title" busy={Boolean(busy)} onClose={() => { setRequestingRow(null); setEditingExclusions(false); setExcludedParts([]); }}>
       <div className="relative overflow-hidden border-b border-slate-800 bg-gradient-to-r from-indigo-950/80 via-slate-900 to-violet-950/80 px-5 py-5 sm:px-7">
         <div className="pointer-events-none absolute -right-8 -top-16 h-48 w-48 rounded-full bg-indigo-400/10 blur-3xl" />
         <p className="relative text-[10px] font-bold uppercase tracking-[.2em] text-indigo-300">DG request details</p>
-        <h2 id="dg-excluded-pieces-title" className="relative mt-1 text-xl font-black text-white">Which pieces are excluded?</h2>
+        <h2 id="dg-excluded-pieces-title" className="relative mt-1 text-xl font-black text-white">{editingExclusions ? 'Update excluded pieces' : 'Which pieces are excluded?'}</h2>
         <p className="relative mt-1 text-sm text-slate-400">{dgRequestToon.account || dgRequestToon.owner} · select pieces they already have.</p>
       </div>
       <div className="space-y-5 p-5 sm:p-7">
@@ -212,8 +216,8 @@ export default function GearPage() {
         </div>
         {error && <p role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/5 p-3 text-sm text-rose-200">{error}</p>}
         <div className="flex flex-col-reverse justify-end gap-2 sm:flex-row">
-          <button type="button" className="secondary-button justify-center" disabled={Boolean(busy)} onClick={() => { setRequestingRow(null); setExcludedParts([]); }}>Cancel</button>
-          <button type="button" className="primary-button justify-center" disabled={Boolean(busy) || dgRequestPures < 1} onClick={() => void act('request', requestingRow, undefined, excludedParts)}><UserPlus size={15} /> {busy === `request:${requestingRow}` ? 'Saving…' : 'Add DG request'}</button>
+          <button type="button" className="secondary-button justify-center" disabled={Boolean(busy)} onClick={() => { setRequestingRow(null); setEditingExclusions(false); setExcludedParts([]); }}>Cancel</button>
+          <button type="button" className="primary-button justify-center" disabled={Boolean(busy) || dgRequestPures < 1} onClick={() => void act(editingExclusions ? 'update-exclusions' : 'request', requestingRow, undefined, excludedParts)}><UserPlus size={15} /> {busy === `${editingExclusions ? 'update-exclusions' : 'request'}:${requestingRow}` ? 'Saving…' : editingExclusions ? 'Save piece updates' : 'Add DG request'}</button>
         </div>
       </div>
     </Dialog>}

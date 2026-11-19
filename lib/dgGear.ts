@@ -1,7 +1,7 @@
 export const DG_PIECES = [
   { key: 'gloves', label: 'Gloves', pures: 1 },
   { key: 'boots', label: 'Boots', pures: 2 },
-  { key: 'helm', label: 'Helm', pures: 3 },
+  { key: 'helm', label: 'Helmet', pures: 3 },
   { key: 'pants', label: 'Pants', pures: 4 },
   { key: 'top', label: 'Top', pures: 5 },
 ] as const;

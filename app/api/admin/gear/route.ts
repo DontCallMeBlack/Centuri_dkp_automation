@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     const body = await readJsonObject(request);
     const { action, setType, rowIndex, recipientRowIndex } = body;
     if (!validSetType(setType)) return NextResponse.json({ error: 'Choose DG or BDG.' }, { status: 400 });
-    if (!['request', 'cancel', 'reveal', 'mailed'].includes(String(action))) return NextResponse.json({ error: 'Invalid gear action.' }, { status: 400 });
+    if (!['request', 'update-exclusions', 'cancel', 'reveal', 'mailed'].includes(String(action))) return NextResponse.json({ error: 'Invalid gear action.' }, { status: 400 });
 
     if (action === 'reveal') {
       const [snapshot, gearStatuses, members] = await Promise.all([
@@ -148,6 +148,22 @@ export async function POST(request: Request) {
     const gearStatuses = await readGearStatuses();
     const currentStatus = String(gearStatuses[toon.rowIndex - 3]?.[setType === 'DG' ? 0 : 1] ?? '').trim();
     const current = await GearRequest.findOne({ setType, rowIndex: Number(rowIndex), owner: toon.owner, account: toon.account }).sort({ requestedAt: -1 }).lean();
+
+    if (action === 'update-exclusions') {
+      if (setType !== 'DG') return NextResponse.json({ error: 'Excluded pieces can only be changed for DG requests.' }, { status: 400 });
+      const excludedParts = parseExcludedDgPieces(body.excludedParts);
+      if (excludedParts === null || dgPuresNeeded(excludedParts) < 1) {
+        return NextResponse.json({ error: 'Choose valid excluded DG pieces and leave at least one piece in the request.' }, { status: 400 });
+      }
+      if (!current || current.status !== 'requested') return NextResponse.json({ error: 'Only an active DG request can have its excluded pieces changed.' }, { status: 409 });
+      const updated = await GearRequest.findOneAndUpdate(
+        { _id: current._id, status: 'requested' },
+        { $set: { excludedParts } },
+        { returnDocument: 'after' },
+      ).lean();
+      if (!updated) return NextResponse.json({ error: 'This request was already revealed. Refresh the gear list.' }, { status: 409 });
+      return NextResponse.json({ success: true, message: `Excluded DG pieces updated for ${toon.account || toon.owner}.` }, { headers: noStore });
+    }
 
     if (action === 'request') {
       const excludedParts = setType === 'DG' ? parseExcludedDgPieces(body.excludedParts) : [];
