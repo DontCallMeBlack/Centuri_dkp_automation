@@ -1322,3 +1322,28 @@ export async function isDkpMutationApplied(operationKey: string) {
   await dbConnect();
   return Boolean(await DkpSheetMutation.exists({ spreadsheetId: getSpreadsheetId(), operationKey, status: 'applied' }));
 }
+
+// Cached spreadsheet ID to reduce metadata API calls
+const spreadsheetIdCache = { id: '', timestamp: 0 };
+const SPREADSHEET_TTL = 60_000; // 1 minute cache
+
+export async function getSpreadsheetIdCached() {
+  const now = Date.now();
+  if (spreadsheetIdCache.id && now - spreadsheetIdCache.timestamp < SPREADSHEET_TTL) {
+    return spreadsheetIdCache.id;
+  }
+  const sheets = await createSheetsClient();
+  const response = await withGoogleSheetsRetry(
+    () => sheets.spreadsheets.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      fields: 'sheets.properties(sheetId,title)',
+    }),
+    true
+  );
+  const sheet = response.data.sheets?.find((entry) => entry.properties?.title === 'DKP_Sheet_automated');
+  if (sheet?.properties?.sheetId) {
+    spreadsheetIdCache.id = String(sheet.properties.sheetId);
+    spreadsheetIdCache.timestamp = now;
+  }
+  return spreadsheetIdCache.id;
+}
