@@ -87,6 +87,7 @@ export function clearClientData() {
 export function notifyDkpChanged() {
   invalidateData('/api/dkp');
   invalidateData('/api/admin/boss-history');
+  invalidateData('/api/admin/gear');
   invalidateData('/api/auction');
   invalidateData('/api/admin/toons');
   invalidateData('/api/admin/requests');

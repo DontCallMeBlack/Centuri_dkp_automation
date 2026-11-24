@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { SquareImageUpload, buildItemForm } from '@/components/AuctionItemUpload';
 import EmptyState from '@/components/EmptyState';
@@ -9,8 +10,11 @@ import ItemSubrolePicker from '@/components/ItemSubrolePicker';
 import { resolveItemSubroles } from '@/lib/auctionRules';
 import { ApiError, clearClientData, clientDataVersion, getData, invalidateData, peekData, rememberData } from '@/lib/client/api';
 import { LoaderCircle, Save, Search, Trash2, Pencil, Plus } from 'lucide-react';
-import AuctionItemCreateForm from '@/components/AuctionItemCreateForm';
 import { auctionImageUrl } from '@/lib/auctionImageUrl';
+
+const AuctionItemCreateForm = dynamic(() => import('@/components/AuctionItemCreateForm'), {
+  ssr: false,
+});
 
 interface CatalogItem {
   id: string;

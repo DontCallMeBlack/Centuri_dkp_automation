@@ -1,11 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Check, Gavel, LoaderCircle, PackageSearch, Plus, Search } from 'lucide-react';
 import AuctionItemImage from '@/components/AuctionItemImage';
-import AuctionItemCreateForm, { type AuctionCatalogItem } from '@/components/AuctionItemCreateForm';
+import type { AuctionCatalogItem } from '@/components/AuctionItemCreateForm';
 import Dialog from '@/components/Dialog';
 import { resolveItemSubroles } from '@/lib/auctionRules';
+
+const AuctionItemCreateForm = dynamic(() => import('@/components/AuctionItemCreateForm'), {
+  ssr: false,
+});
 
 export default function AuctionPostingPanel({ items, selectedItemId, onSelect, onItemCreated, onSubmit, onClose, saving }: {
   items: AuctionCatalogItem[];

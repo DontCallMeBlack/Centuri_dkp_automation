@@ -7,7 +7,11 @@ import { ApiError, clearClientData, getData, invalidateData, peekData } from '@/
 import RoleBadge, { RoleIcon } from '@/components/RoleBadge';
 import LoadingSurface from '@/components/LoadingSurface';
 import Dialog from '@/components/Dialog';
-import ClanToonsPanel from '@/components/ClanToonsPanel';
+import dynamic from 'next/dynamic';
+const ClanToonsPanel = dynamic(() => import('@/components/ClanToonsPanel'), {
+  ssr: false,
+  loading: () => <LoadingSurface fullLayout label="Loading clan toons" title="Clan roster" />,
+});
 import { CLAN_ROLES, canChangeMemberRole } from '@/lib/auth/permissions';
 import { ArrowRightLeft, Check, ClipboardList, History, Link2, LoaderCircle, Plus, Search, Shield, Swords, Trash2, Undo2, UserCheck, Users, X } from 'lucide-react';
 import { getActionRequestId, completeActionRequest } from '@/lib/client/actionRequests';

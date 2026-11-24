@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Award, Check, Clock3, MailCheck, RefreshCw, Search, UserPlus, X } from 'lucide-react';
 import { useSessionUser } from '@/components/AppShell';
 import Dialog from '@/components/Dialog';
 import LoadingSurface from '@/components/LoadingSurface';
 import EmptyState from '@/components/EmptyState';
-import { ApiError, clearClientData, readResponse } from '@/lib/client/api';
+import { ApiError, clearClientData, getData, invalidateData, peekData, readResponse } from '@/lib/client/api';
 import { DG_PIECES, dgPuresNeeded, normalizedDgScore, type DgPiece } from '@/lib/dgGear';
 
 type SetType = 'DG' | 'BDG';
@@ -22,7 +22,8 @@ function dateLabel(value: string | undefined) { return value ? new Intl.DateTime
 export default function GearPage() {
   const user = useSessionUser();
   const router = useRouter();
-  const [data, setData] = useState<Data | null>(null);
+  const initialData = peekData<Data>('/api/admin/gear');
+  const [data, setData] = useState<Data | null>(() => initialData);
   const [setType, setSetType] = useState<SetType>('DG');
   const [winner, setWinner] = useState<Winner | null>(null);
   const [recipientSelections, setRecipientSelections] = useState<Record<string, string>>({});
@@ -36,8 +37,7 @@ export default function GearPage() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch('/api/admin/gear', { cache: 'no-store', credentials: 'same-origin' });
-      const result = await readResponse<Data>(response);
+      const result = await getData<Data>('/api/admin/gear', { maxAgeMs: 15_000 });
       setData(result); setError('');
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
@@ -57,6 +57,9 @@ export default function GearPage() {
       setNotice(result.message ?? '');
       if (action === 'reveal' && result.winner) { setWinner(result.winner); setRecipientSelections((current) => ({ ...current, [`${setType}:${result.winner!.rowIndex}`]: '' })); }
       if (action === 'request' || action === 'update-exclusions') { setRequestingRow(null); setEditingExclusions(false); setExcludedParts([]); }
+      invalidateData('/api/admin/gear');
+      invalidateData('/api/dkp');
+      invalidateData('/api/auction');
       await load();
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) { clearClientData(); router.replace('/login'); }
@@ -73,9 +76,9 @@ export default function GearPage() {
       ? normalizedDgScore(baseScore, toon.dgRequest?.excludedParts ?? [])
       : baseScore;
   };
-  const visibleToons = (data?.toons ?? [])
+  const visibleToons = useMemo(() => (data?.toons ?? [])
     .filter((toon) => `${toon.owner} ${toon.account} ${toon.subClass}`.toLowerCase().includes(query.trim().toLowerCase()))
-    .sort((a, b) => (rankingScore(b) ?? -Infinity) - (rankingScore(a) ?? -Infinity) || a.owner.localeCompare(b.owner));
+    .sort((a, b) => (rankingScore(b) ?? -Infinity) - (rankingScore(a) ?? -Infinity) || a.owner.localeCompare(b.owner)), [data, query, setType]);
 
   const getRowDetails = (toon: Toon) => {
     const status = toon[statusField];
